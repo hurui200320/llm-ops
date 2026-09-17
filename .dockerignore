@@ -1,6 +1,7 @@
 .git/
 .github/
 scripts/test/
+templates/
 **/__pycache__/
 **/*.md
 LICENSE

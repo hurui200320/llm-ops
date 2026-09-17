@@ -10,7 +10,7 @@ With a gnome managed SMB mount, it's located at `/var/run/user/<uid>/gvfs/smb-sh
 
 Under the `LLM` folder, models are stored by `LLM/<Model Family>/<Variant>/`.
 
-Models are grouped by model family, for example: `gemma-4`, `muse-glimmer` and `ornith-1.5`. Model family should written in a-z0-9 and `-` only.
+Models are grouped by model family, for example: `gemma-4`, `muse-glimmer` and `ornith-1.5`. Model family names should be written in `a-z0-9`, `-` and `.` only.
 
 Under each family, each variant is a dedicated folder: `<owner>-<size>-<attribution>`.
 For example, under the `gemma-4` family, we might have: 
@@ -45,3 +45,23 @@ docker run --rm --pull=always -v /mnt/user/archive/LLM:/data:ro \
 ```
 
 Set `HF_TOKEN` at runtime (`-e HF_TOKEN=...`) for gated models; it is never part of the image. See [scripts/README.md](./scripts/README.md) for full usage details.
+
+## Chat templates
+
+GGUF can embed chat templates in the file, so one file for chat templates + weights.
+However, chat templates, as demonstrated by Gemma 4, can affect model's performance,
+thus the chat templates will get their updates after the release of weights.
+
+In this case, re-download a 30GB model just to get the latest chat template is not good.
+So I (asked LLM) to put up a script for that:
+
+```
+./templates/fetch-templates.sh
+```
+
+The script takes no arguments: it re-syncs every chat template listed in the
+`entries` array at the top of the script. Each entry is a `<family>/<file>.jinja|<url>`
+pair; the URL must point at the file itself (HF `resolve/main` always serves the
+latest revision), and the download replaces the local copy atomically. To track a
+new model, add an entry line — the family folder is created on first fetch. Gated
+repos (e.g. `google/gemma-*`) need a token: export `HF_TOKEN=...` before running.
