@@ -7,6 +7,7 @@ Download a file from a Hugging Face resolve URL with resume support. Write to a
 success, atomically rename it to the final filename and write a .sha256 companion.
 
 Usage:
+    download_hf <URL> <target_dir> [--token TOKEN]
     python3 download_hf.py <URL> <target_dir> [--token TOKEN]
 
 URL format:
@@ -27,32 +28,39 @@ Examples:
 
 The HF_TOKEN environment variable can be used instead of --token.
 
+The destination directory is resolved against the current working directory.
+Inside the maintenance toolbox image the library is mounted at /data, which is
+both the default working directory and the default library root.
+
 Exit codes: 0 = success; 1 = failure
 """
 
+import argparse
+import hashlib
 import os
 import re
+import shutil
 import sys
 import time
-import shutil
-import hashlib
-import argparse
 from pathlib import Path
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
-from urllib.parse import urlparse
+from urllib.parse import quote, unquote, urlparse
 
 # ---------------------------------------------------------------------------
-# Terminal colors
+# Terminal colors and progress bars (suppressed when stdout is not a TTY,
+# e.g. piped output)
 # ---------------------------------------------------------------------------
 
-RESET  = "\033[0m"
-RED    = "\033[91m"
-GREEN  = "\033[92m"
-YELLOW = "\033[93m"
-CYAN   = "\033[96m"
-BOLD   = "\033[1m"
-DIM    = "\033[2m"
+_TTY = sys.stdout.isatty()
+
+RESET  = "\033[0m" if _TTY else ""
+RED    = "\033[91m" if _TTY else ""
+GREEN  = "\033[92m" if _TTY else ""
+YELLOW = "\033[93m" if _TTY else ""
+CYAN   = "\033[96m" if _TTY else ""
+BOLD   = "\033[1m" if _TTY else ""
+DIM    = "\033[2m" if _TTY else ""
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -75,7 +83,12 @@ def fmt_size(n: float) -> str:
 
 
 def _clear_line() -> None:
-    """Blank the current line and return the cursor to its start for new output."""
+    """
+    Blank the current line and return the cursor to its start for new output.
+    Do nothing when stdout is not a TTY, e.g. piped output.
+    """
+    if not _TTY:
+        return
     cols = shutil.get_terminal_size().columns
     sys.stdout.write(f"\r{' ' * (cols - 1)}\r")
     sys.stdout.flush()
@@ -83,7 +96,12 @@ def _clear_line() -> None:
 
 def _print_bar(label: str, pct: float, done: int, total: int,
                speed: float | None = None) -> None:
-    """Write a progress bar without a newline, overwriting it on the next call."""
+    """
+    Write a progress bar without a newline, overwriting it on the next call.
+    Do nothing when stdout is not a TTY, e.g. piped output.
+    """
+    if not _TTY:
+        return
     bar_width = 20
     filled    = int(bar_width * pct)
     bar       = "█" * filled + "░" * (bar_width - filled)
@@ -116,6 +134,12 @@ def parse_hf_url(url: str) -> tuple[str, str, str]:
       - The scheme must be http or https.
       - The hostname must be huggingface.co or hf.co.
       - The path must match /{owner}/{repo}/resolve/{revision}/{path}.
+      - The file path must not contain ".." segments or a leading slash, so
+        the download can never escape the destination directory.
+
+    The file path is percent-decoded before being returned, so a pasted URL
+    such as ".../my%20file.gguf" yields the real repository file name
+    "my file.gguf"; request URLs re-encode it with quote().
 
     Return (repo_id, revision, path_in_repo); print an error and exit(1) on failure.
     """
@@ -139,6 +163,19 @@ def parse_hf_url(url: str) -> tuple[str, str, str]:
         sys.exit(1)
 
     owner, repo, revision, path_in_repo = m.groups()
+
+    # Decode percent-escapes so the local file name matches the repository
+    # file name; the request builders below re-encode with quote().
+    path_in_repo = unquote(path_in_repo)
+
+    # Reject paths that would escape the destination directory, which is
+    # built by joining this name under the target directory.
+    if path_in_repo.startswith("/") or ".." in path_in_repo.split("/"):
+        print(f"{RED}Error: Invalid file path in URL{RESET}")
+        print(f"  Received: {path_in_repo!r}")
+        print(f"  The file path must stay inside the repository (no .. segments and no leading /)")
+        sys.exit(1)
+
     return f"{owner}/{repo}", revision, path_in_repo
 
 # ---------------------------------------------------------------------------
@@ -150,10 +187,13 @@ def fetch_lfs_pointer(repo_id: str, revision: str, path_in_repo: str,
     """
     Fetch a Hugging Face LFS pointer and extract the expected SHA-256 and size.
 
+    path_in_repo is the percent-decoded repository path returned by
+    parse_hf_url; it is percent-encoded again for the request URL.
+
     Return (sha256, size), where size may be None.
     Print an error and exit(1) on failure.
     """
-    url     = f"https://huggingface.co/{repo_id}/raw/{revision}/{path_in_repo}"
+    url = f"https://huggingface.co/{repo_id}/raw/{revision}/{quote(path_in_repo, safe='/')}"
     headers = {"User-Agent": "download_hf/1.0"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -257,15 +297,18 @@ def download(url: str, tmp_path: Path, expected_size: int | None,
                     _print_bar(f"Downloading {label}", pct, done, total, speed)
                     last_render = now
 
-        # Render final progress (100%).
-        pct = done / total if total > 0 else 1.0
-        _print_bar(f"Downloading {label}", pct, done, total, speed)
-        sys.stdout.write("\n")
-        sys.stdout.flush()
+        # Render final progress (100%) and end the progress line. Skipped when
+        # stdout is not a TTY, where no progress line was drawn.
+        if _TTY:
+            pct = done / total if total > 0 else 1.0
+            _print_bar(f"Downloading {label}", pct, done, total, speed)
+            sys.stdout.write("\n")
+            sys.stdout.flush()
 
     except (IOError, OSError) as e:
-        sys.stdout.write("\n")
-        print(f"{RED}Write failed: {e}{RESET}")
+        if _TTY:
+            sys.stdout.write("\n")
+        print(f"{RED}Download aborted (network or write error): {e}{RESET}")
         sys.exit(1)
     finally:
         resp.close()
@@ -351,7 +394,10 @@ def main() -> None:
 
     # 4. Quick local check: if stored and remote hashes match, verify the local file.
     if sha256_path.exists():
-        local_hash = sha256_path.read_text(encoding="utf-8").strip()
+        try:
+            local_hash = sha256_path.read_text(encoding="utf-8").strip().lower()
+        except (OSError, UnicodeDecodeError):
+            local_hash = ""
         if local_hash == expected_sha256:
             if not final_path.exists():
                 print(f"  {YELLOW}Local .sha256 matches upstream, but the .gguf file is missing, downloading again{RESET}")
@@ -366,9 +412,17 @@ def main() -> None:
                     print(f"  {YELLOW}Local file is corrupt (hash mismatch), downloading again{RESET}")
                     print(f"    Expected: {expected_sha256}")
                     print(f"    Actual:   {actual}")
+        elif tmp_path.exists():
+            # The stored digest belongs to another (usually older) upstream
+            # version, so a leftover partial download of that version cannot
+            # be resumed and would only poison the verification.
+            tmp_path.unlink()
+            print(f"  {DIM}Removed stale partial download of an outdated version{RESET}")
 
-    # 5. Download to the temporary file.
-    download(args.url, tmp_path, expected_size, path_in_repo, token)
+    # 5. Download to the temporary file. The decoded repository path is
+    #    percent-encoded again for the request URL.
+    resolve_url = f"https://huggingface.co/{repo_id}/resolve/{revision}/{quote(path_in_repo, safe='/')}"
+    download(resolve_url, tmp_path, expected_size, path_in_repo, token)
 
     # 6. Verify SHA-256.
     actual_sha256 = compute_sha256(tmp_path, path_in_repo)

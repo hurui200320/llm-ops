@@ -1,0 +1,129 @@
+name: toolbox
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "scripts/**"
+      - "Dockerfile"
+      - ".dockerignore"
+      - ".github/workflows/toolbox.yml"
+  pull_request:
+    paths:
+      - "scripts/**"
+      - "Dockerfile"
+      - ".dockerignore"
+      - ".github/workflows/toolbox.yml"
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/hurui200320/llm-ops-toolbox
+
+permissions:
+  contents: read
+
+concurrency:
+  group: toolbox-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Run unit tests
+        run: python -m unittest discover -s scripts/test -v
+
+  build:
+    name: Build and smoke-test image
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build image
+        run: |
+          short_sha="${GITHUB_SHA::7}"
+          docker build --platform linux/amd64 -t "$IMAGE:ci" -t "$IMAGE:$short_sha" .
+
+      - name: Smoke-test command availability
+        run: docker run --rm "$IMAGE:ci" sh -c 'for cmd in check_updates verify_checksums download_hf; do command -v "$cmd" || exit 1; done'
+
+      - name: Smoke-test library-root handling
+        run: |
+          fixture="$RUNNER_TEMP/library"
+          mkdir -p "$fixture/gemma-4/google-test"
+          printf 'test weights' > "$fixture/gemma-4/google-test/w.gguf"
+          printf '%s\n' "$(sha256sum "$fixture/gemma-4/google-test/w.gguf" | cut -d' ' -f1)" \
+            > "$fixture/gemma-4/google-test/w.gguf.sha256"
+          printf -- '---\nsource: https://huggingface.co/example/test\n---\n\n# Smoke-test fixture\n' \
+            > "$fixture/gemma-4/google-test/README.md"
+
+          echo "Root resolved from the image default LLM_LIBRARY_ROOT=/data:"
+          docker run --rm -v "$fixture:/data" "$IMAGE:ci" verify_checksums
+
+          echo "Root resolved from an explicit --library-root while cwd is not a library:"
+          docker run --rm -v "$fixture:/library:ro" -w / "$IMAGE:ci" \
+            verify_checksums --library-root /library
+
+      # Push the exact image that passed the smoke tests; the publish job only
+      # adds the moving "latest" tag to the same digest.
+      - name: Push image
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/master'
+        run: docker push "$IMAGE:${GITHUB_SHA::7}"
+
+  publish:
+    name: Publish to GHCR
+    needs: build
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag the smoke-tested image as latest and push
+        run: |
+          short_sha="${GITHUB_SHA::7}"
+          docker pull "$IMAGE:$short_sha"
+          docker tag "$IMAGE:$short_sha" "$IMAGE:latest"
+          docker push "$IMAGE:latest"
+
+      - name: Record image digest
+        run: |
+          short_sha="${GITHUB_SHA::7}"
+          digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$short_sha" 2>/dev/null || true)"
+          {
+            echo "### Published toolbox image"
+            echo ""
+            echo "- \`$IMAGE:latest\`"
+            echo "- \`$IMAGE:$short_sha\`"
+            if [ -n "$digest" ]; then
+              echo "- Digest: \`$digest\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

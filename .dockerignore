@@ -1,0 +1,6 @@
+.git/
+.github/
+scripts/test/
+**/__pycache__/
+**/*.md
+LICENSE

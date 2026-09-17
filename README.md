@@ -21,3 +21,27 @@ For example, under the `gemma-4` family, we might have:
 
 Under each variant's folder, we will have a `README.md` and the GGUFs and the sha256 checksum files.
 See [scripts](./scripts/README.md) for more info.
+
+## Toolbox
+
+The maintenance scripts ship as a public container image built by GitHub Actions:
+
+```text
+ghcr.io/hurui200320/llm-ops-toolbox:latest
+```
+
+Run an interactive maintenance shell on the NAS (models assumed under `/mnt/user/archive/LLM`):
+
+```bash
+docker run -it --rm --pull=always -v /mnt/user/archive/LLM:/data \
+    ghcr.io/hurui200320/llm-ops-toolbox:latest
+```
+
+Inside the container, `check_updates`, `verify_checksums`, and `download_hf` are available on `PATH`, the library root defaults to `/data` (the mounted library), and downloads persist in the mounted library after the container is removed. A one-shot update check:
+
+```bash
+docker run --rm --pull=always -v /mnt/user/archive/LLM:/data:ro \
+    ghcr.io/hurui200320/llm-ops-toolbox:latest check_updates
+```
+
+Set `HF_TOKEN` at runtime (`-e HF_TOKEN=...`) for gated models; it is never part of the image. See [scripts/README.md](./scripts/README.md) for full usage details.

@@ -9,34 +9,79 @@ Usage:
     python verify_checksums.py              # Verify all models
     python verify_checksums.py -m 26B       # Verify only model paths containing "26B"
 
-Exit codes: 0 = all checks passed; 1 = failures, warnings, or no matching models
+The library root is the folder containing the <family>/<variant>/ model
+subdirectories. It is resolved with the following precedence:
+    1. --library-root PATH argument
+    2. LLM_LIBRARY_ROOT environment variable
+    3. Current working directory
+
+Exit codes: 0 = all checks passed; 1 = failures, warnings, or no matching
+models; 2 = invalid library root
 """
 
+import argparse
 import hashlib
+import os
 import shutil
 import sys
-import argparse
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Terminal colors
+# Terminal colors and progress bars (suppressed when stdout is not a TTY,
+# e.g. piped output)
 # ---------------------------------------------------------------------------
 
-RESET  = "\033[0m"
-RED    = "\033[91m"
-GREEN  = "\033[92m"
-YELLOW = "\033[93m"
-CYAN   = "\033[96m"
-BOLD   = "\033[1m"
-DIM    = "\033[2m"
+_TTY = sys.stdout.isatty()
+
+RESET  = "\033[0m" if _TTY else ""
+RED    = "\033[91m" if _TTY else ""
+GREEN  = "\033[92m" if _TTY else ""
+YELLOW = "\033[93m" if _TTY else ""
+CYAN   = "\033[96m" if _TTY else ""
+BOLD   = "\033[1m" if _TTY else ""
+DIM    = "\033[2m" if _TTY else ""
 
 # ---------------------------------------------------------------------------
 # Path constants
 # ---------------------------------------------------------------------------
 
-LIBRARY_ROOT = Path(__file__).parent
+LIBRARY_ROOT: Path | None = None
 
 CHUNK_SIZE = 8 * 1024 * 1024  # 8 MB
+
+# ---------------------------------------------------------------------------
+# Library root resolution
+# ---------------------------------------------------------------------------
+
+def resolve_library_root(explicit: str | None) -> Path:
+    """
+    Determine the model library root.
+
+    Precedence:
+      1. Explicit --library-root PATH argument
+      2. LLM_LIBRARY_ROOT environment variable
+      3. Current working directory
+
+    The root is the library folder itself, containing the <family>/<variant>/
+    model subdirectories, not a models/ subdirectory. Print an error and
+    exit(2) when the chosen root is not an existing directory.
+    """
+    if explicit:
+        root = Path(explicit).expanduser()
+        origin = "--library-root"
+    else:
+        env_root = os.environ.get("LLM_LIBRARY_ROOT")
+        if env_root:
+            root = Path(env_root).expanduser()
+            origin = "LLM_LIBRARY_ROOT"
+        else:
+            root = Path.cwd()
+            origin = "the current working directory"
+
+    if not root.is_dir():
+        print(f"{RED}Error: Library root {root} (from {origin}) is not an existing directory{RESET}")
+        sys.exit(2)
+    return root
 
 # ---------------------------------------------------------------------------
 # Helper functions
@@ -51,14 +96,24 @@ def fmt_size(n: int) -> str:
 
 
 def _clear_line() -> None:
-    """Blank the current terminal line and return the cursor to its start."""
+    """
+    Blank the current terminal line and return the cursor to its start.
+    Do nothing when stdout is not a TTY, e.g. piped output.
+    """
+    if not _TTY:
+        return
     cols = shutil.get_terminal_size().columns
     sys.stdout.write(f"\r{' ' * (cols - 1)}\r")
     sys.stdout.flush()
 
 
 def _print_progress(label: str, pct: float) -> None:
-    """Write a progress bar without a newline, overwriting it on the next call."""
+    """
+    Write a progress bar without a newline, overwriting it on the next call.
+    Do nothing when stdout is not a TTY, e.g. piped output.
+    """
+    if not _TTY:
+        return
     bar_width = 20
     filled = int(bar_width * pct)
     bar = "█" * filled + "░" * (bar_width - filled)
@@ -114,8 +169,11 @@ def verify_file(sha256_file: Path, model_dir: Path) -> str:
     gguf_path = sha256_file.with_suffix("")  # Remove the trailing .sha256 suffix.
     label = sha256_file.relative_to(model_dir).as_posix().removesuffix(".sha256")
 
-    # --- Validate the stored hash format ---
-    stored_hash = sha256_file.read_text(encoding="utf-8").strip().lower()
+    # --- Read and validate the stored hash format ---
+    try:
+        stored_hash = sha256_file.read_text(encoding="utf-8").strip().lower()
+    except (OSError, UnicodeDecodeError):
+        stored_hash = ""
     if len(stored_hash) != 64 or not all(c in "0123456789abcdef" for c in stored_hash):
         _clear_line()
         print(f"  {YELLOW}INVALID{RESET}  {label}")
@@ -180,14 +238,21 @@ def verify_model(model_dir: Path) -> tuple[int, int, int, int]:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    global LIBRARY_ROOT
+
     parser = argparse.ArgumentParser(
         description="Verify local GGUF file integrity using SHA-256.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
+            "Library root resolution precedence: --library-root argument, then\n"
+            "the LLM_LIBRARY_ROOT environment variable, then the current working\n"
+            "directory.\n"
+            "\n"
             "Examples:\n"
             "  python verify_checksums.py\n"
             "  python verify_checksums.py -m 26B\n"
             "  python verify_checksums.py -m gemma-4/google-E4B-it\n"
+            "  python verify_checksums.py --library-root /mnt/user/archive/LLM -m gemma-4\n"
         ),
     )
     parser.add_argument(
@@ -195,7 +260,14 @@ def main() -> None:
         metavar="PATTERN",
         help="Only verify model directories whose paths contain this string (case-insensitive)",
     )
+    parser.add_argument(
+        "--library-root",
+        metavar="PATH",
+        help="Model library root containing <family>/<variant>/ subdirectories (defaults to $LLM_LIBRARY_ROOT, then the current working directory)",
+    )
     args = parser.parse_args()
+
+    LIBRARY_ROOT = resolve_library_root(args.library_root)
 
     # Discover variants at <library root>/<family>/<variant>/README.md.
     all_dirs = sorted(p.parent for p in LIBRARY_ROOT.glob("*/*/README.md")

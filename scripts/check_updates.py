@@ -13,34 +13,79 @@ Usage:
     python check_updates.py              # Check all models
     python check_updates.py -m 26B       # Check only model paths containing "26B"
 
-Exit codes: 0 = no updates or warnings; 1 = updates, warnings, or no matching models
+The library root is the folder containing the <family>/<variant>/ model
+subdirectories. It is resolved with the following precedence:
+    1. --library-root PATH argument
+    2. LLM_LIBRARY_ROOT environment variable
+    3. Current working directory
+
+Exit codes: 0 = no updates or warnings; 1 = updates, warnings, or no matching
+models; 2 = invalid library root
 """
 
+import argparse
+import os
 import re
 import sys
-import argparse
 from pathlib import Path
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 # ---------------------------------------------------------------------------
-# Terminal colors
+# Terminal colors and progress bars (suppressed when stdout is not a TTY,
+# e.g. piped output)
 # ---------------------------------------------------------------------------
 
-RESET  = "\033[0m"
-RED    = "\033[91m"
-GREEN  = "\033[92m"
-YELLOW = "\033[93m"
-CYAN   = "\033[96m"
-BOLD   = "\033[1m"
-DIM    = "\033[2m"
+_TTY = sys.stdout.isatty()
+
+RESET  = "\033[0m" if _TTY else ""
+RED    = "\033[91m" if _TTY else ""
+GREEN  = "\033[92m" if _TTY else ""
+YELLOW = "\033[93m" if _TTY else ""
+CYAN   = "\033[96m" if _TTY else ""
+BOLD   = "\033[1m" if _TTY else ""
+DIM    = "\033[2m" if _TTY else ""
 
 # ---------------------------------------------------------------------------
 # Path constants
 # ---------------------------------------------------------------------------
 
-LIBRARY_ROOT = Path(__file__).parent
+LIBRARY_ROOT: Path | None = None
+
+# ---------------------------------------------------------------------------
+# Library root resolution
+# ---------------------------------------------------------------------------
+
+def resolve_library_root(explicit: str | None) -> Path:
+    """
+    Determine the model library root.
+
+    Precedence:
+      1. Explicit --library-root PATH argument
+      2. LLM_LIBRARY_ROOT environment variable
+      3. Current working directory
+
+    The root is the library folder itself, containing the <family>/<variant>/
+    model subdirectories, not a models/ subdirectory. Print an error and
+    exit(2) when the chosen root is not an existing directory.
+    """
+    if explicit:
+        root = Path(explicit).expanduser()
+        origin = "--library-root"
+    else:
+        env_root = os.environ.get("LLM_LIBRARY_ROOT")
+        if env_root:
+            root = Path(env_root).expanduser()
+            origin = "LLM_LIBRARY_ROOT"
+        else:
+            root = Path.cwd()
+            origin = "the current working directory"
+
+    if not root.is_dir():
+        print(f"{RED}Error: Library root {root} (from {origin}) is not an existing directory{RESET}")
+        sys.exit(2)
+    return root
 
 # ---------------------------------------------------------------------------
 # YAML front matter parsing
@@ -89,8 +134,8 @@ def parse_hf_repo(source_url: str) -> tuple[str, None] | tuple[None, str]:
     if parsed.scheme not in ("http", "https"):
         return None, f"Unsupported URL scheme: {parsed.scheme!r}"
 
-    if parsed.netloc != "huggingface.co":
-        return None, f"Unsupported source host: {parsed.netloc!r} (currently only huggingface.co is supported)"
+    if parsed.netloc not in ("huggingface.co", "hf.co"):
+        return None, f"Unsupported source host: {parsed.netloc!r} (only huggingface.co and hf.co are supported)"
 
     parts = [p for p in parsed.path.split("/") if p]
     if len(parts) < 2:
@@ -110,13 +155,14 @@ def fetch_lfs_sha256(
 
     remote_path is the path within the repository, matching the local companion
     file's path relative to the model directory without the .sha256 suffix,
-    e.g. "BF16/file.gguf" or "file.gguf".
+    e.g. "BF16/file.gguf" or "file.gguf". It is percent-encoded in the request
+    URL, so file names with spaces or other special characters are supported.
 
     Returns:
       (sha256_str, size_int)    On success (size may be None).
       (None, error_description) On failure.
     """
-    url = f"https://huggingface.co/{repo_id}/raw/main/{remote_path}"
+    url = f"https://huggingface.co/{repo_id}/raw/main/{quote(remote_path)}"
     req = Request(url, headers={"User-Agent": "check_updates/1.0"})
     try:
         with urlopen(req, timeout=30) as resp:
@@ -199,7 +245,18 @@ def check_model(model_dir: Path) -> tuple[int, int, int]:
     for sha256_file in sha256_files:
         # Derive the remote HF path from the companion path relative to the model root.
         remote_path = sha256_file.relative_to(model_dir).as_posix().removesuffix(".sha256")
-        local_hash  = sha256_file.read_text().strip()
+
+        # Validate the stored hash format before any network access; a corrupted
+        # or malformed companion file is a local problem, not an upstream update.
+        try:
+            local_hash = sha256_file.read_text(encoding="utf-8").strip().lower()
+        except (OSError, UnicodeDecodeError):
+            local_hash = ""
+        if len(local_hash) != 64 or not all(c in "0123456789abcdef" for c in local_hash):
+            print(f"  {YELLOW}WARN  {remote_path}{RESET}")
+            print(f"        The .sha256 file does not contain a valid 64-character hexadecimal hash")
+            warns += 1
+            continue
 
         result = fetch_lfs_sha256(repo_id, remote_path)
 
@@ -229,14 +286,21 @@ def check_model(model_dir: Path) -> tuple[int, int, int]:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    global LIBRARY_ROOT
+
     parser = argparse.ArgumentParser(
         description="Check local GGUF weights for upstream updates on Hugging Face.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
+            "Library root resolution precedence: --library-root argument, then\n"
+            "the LLM_LIBRARY_ROOT environment variable, then the current working\n"
+            "directory.\n"
+            "\n"
             "Examples:\n"
             "  python check_updates.py\n"
             "  python check_updates.py -m 26B\n"
             "  python check_updates.py -m gemma-4/google-E4B-it\n"
+            "  python check_updates.py --library-root /mnt/user/archive/LLM -m gemma-4\n"
         ),
     )
     parser.add_argument(
@@ -244,7 +308,14 @@ def main() -> None:
         metavar="PATTERN",
         help="Only check model directories whose paths contain this string (case-insensitive)",
     )
+    parser.add_argument(
+        "--library-root",
+        metavar="PATH",
+        help="Model library root containing <family>/<variant>/ subdirectories (defaults to $LLM_LIBRARY_ROOT, then the current working directory)",
+    )
     args = parser.parse_args()
+
+    LIBRARY_ROOT = resolve_library_root(args.library_root)
 
     # Discover variants at <library root>/<family>/<variant>/README.md.
     all_dirs = sorted(p.parent for p in LIBRARY_ROOT.glob("*/*/README.md")
