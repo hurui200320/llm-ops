@@ -1,7 +1,7 @@
 **/__pycache__/
 *.tmp
+bench/results/
 bench/.cache/
 bench/runs/
 bench/data/
-bench/results/
 .playwright-mcp/

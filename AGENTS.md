@@ -26,3 +26,11 @@ docker run --rm llm-ops-toolbox:local sh -c 'for cmd in check_updates verify_che
 ## Operational rule
 
 - DO NOT touch git after making changes. User should review the change and manually stage the changes.
+
+## bench/
+
+`bench/` holds the personal model-benchmark pipeline (speed, tool calling, reasoning, coding, RP). It is NOT part of the toolbox image and the `scripts/` quality gate does not apply to it, but keep its Python scripts standard-library-only anyway.
+
+- External tools (synbad, tool-eval-bench, aider, the SPEED-Bench client) are installed/fetched on the fly — never vendored into the repo.
+- This is a public repo: no API keys (`ZENMUX_API_KEY` is env-only), no copyrighted or private text (RP scenarios must be SFW rewrites, never exported chats).
+- `bench/results/`, `bench/.cache/`, `bench/runs/` and `bench/data/` are gitignored; aggregate findings go into `notes/bench.md`.
