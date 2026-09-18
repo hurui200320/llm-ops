@@ -30,6 +30,14 @@ non-streaming). It does not measure model intelligence. If this fails, fix the
 chat template / server flags first; capability numbers on a broken stack are
 meaningless.
 
+Wrapped up as [bench/run_synbad.sh](../bench/run_synbad.sh): installs/updates
+synbad via npm on the fly, then for every model in `deploy/llama-swap.config.yaml`
+(positional args subset it) runs `synbad eval --count 40` with and without
+`--stream`. Logs land in `bench/results/synbad/`; env overrides: `LLAMA_SWAP_URL`,
+`COUNT`, `LLAMA_SWAP_KEY`.
+
+Or manually:
+
 ```bash
 npm install -g @syntheticlab/synbad
 # synbad requires an env-var name for provider auth even against keyless
