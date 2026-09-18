@@ -105,7 +105,6 @@ macros:
     docker run --name ${MODEL_ID} --init --rm
       --device /dev/dri
       --group-add=video
-      --group-add=render
       --security-opt label=disable
       --security-opt seccomp=unconfined
       -p 127.0.0.1:${PORT}:8080
