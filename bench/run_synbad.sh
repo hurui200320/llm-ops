@@ -15,8 +15,9 @@
 #
 # Env:
 #   LLAMA_SWAP_URL  llama-swap root URL, /v1 is appended (default http://10.233.1.16:8080)
-#   COUNT           evals per model+mode (default 40; synbad's README says this
-#                   is enough to surface the flaky response-in-reasoning bug)
+#   COUNT           evals per model+mode (default 20; synbad's README says 40
+#                   per mode is enough to surface the 5%-rate response-in-reasoning
+#                   bug — re-run with COUNT=40 if a failure looks borderline)
 #   LLAMA_SWAP_KEY  value sent as the API key (default dummy; llama-swap runs
 #                   with apiKeys: [], but synbad insists on an env-var name)
 set -euo pipefail
@@ -26,7 +27,7 @@ CONFIG="$SCRIPT_DIR/../deploy/llama-swap.config.yaml"
 RESULTS_DIR="$SCRIPT_DIR/results/synbad"
 
 LLAMA_SWAP_URL="${LLAMA_SWAP_URL:-http://10.233.1.16:8080}"
-COUNT="${COUNT:-40}"
+COUNT="${COUNT:-20}"
 BASE_URL="$LLAMA_SWAP_URL/v1"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 

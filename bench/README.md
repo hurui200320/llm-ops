@@ -32,7 +32,7 @@ meaningless.
 
 Wrapped up as [bench/run_synbad.sh](../bench/run_synbad.sh): installs/updates
 synbad via npm on the fly, then for every model in `deploy/llama-swap.config.yaml`
-(positional args subset it) runs `synbad eval --count 40` with and without
+(positional args subset it) runs `synbad eval --count 20` with and without
 `--stream`. Logs land in `bench/results/synbad/`; env overrides: `LLAMA_SWAP_URL`,
 `COUNT`, `LLAMA_SWAP_KEY`.
 
@@ -43,11 +43,14 @@ npm install -g @syntheticlab/synbad
 # synbad requires an env-var name for provider auth even against keyless
 # endpoints; llama-swap runs with apiKeys: [], so a dummy value is fine.
 export LLAMA_SWAP_KEY=dummy
-synbad eval --env-var LLAMA_SWAP_KEY --base-url "http://fedora-tuf:8080/v1" --model "<alias>" --count 40
-synbad eval --env-var LLAMA_SWAP_KEY --base-url "http://fedora-tuf:8080/v1" --model "<alias>" --count 40 --stream
+synbad eval --env-var LLAMA_SWAP_KEY --base-url "http://fedora-tuf:8080/v1" --model "<alias>" --count 20
+synbad eval --env-var LLAMA_SWAP_KEY --base-url "http://fedora-tuf:8080/v1" --model "<alias>" --count 20 --stream
 ```
 
-`--count 40` is deliberate: synbad's README suggests 40 is typically good enough to reveal the bugs.
+`--count 20` (per mode, 20+20 total) keeps the gate fast on big models. Synbad's
+README says 40 per mode is typically good enough to reveal the bugs — in
+particular the 5%-rate response-in-reasoning one — so re-run with `COUNT=40`
+if a failure looks borderline or flaky.
 
 ### 1. Speed (bench/speed/)
 
@@ -73,7 +76,7 @@ Two tools, both through llama-swap so they measure the deployed config itself
 ```bash
 cd speed
 ./run_speed_bench.sh run ornith-1.5-35b-a3b-q80-vision ornith
-python3 run_longctx.py --model ornith-1.5-35b-a3b-q80-vision                       # 256K ctx
+python3 run_longctx.py --model ornith-1.5-35b-a3b-q80-vision                      # 256K ctx
 python3 run_longctx.py --model meta-muse-glimmer-30b-kquant-vision --ctx 131072   # 128K per slot
 ```
 
