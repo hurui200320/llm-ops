@@ -20,6 +20,13 @@
 #   4. ./run_speed_bench.sh compare ../results/speed/speed-bench-nospec.json \
 #                                   ../results/speed/speed-bench-spec.json
 #
+# NOTE — unload all models on llama-swap before every run (GET /unload, or
+# the UI). Requests keep the server's normal prompt caching (the client's
+# own default extra-inputs only pins temperature 0), so multi-turn samples
+# reuse the conversation prefix like real chat traffic; a model kept loaded
+# holds a stale prompt cache / ctx checkpoints, and a cache hit would fake
+# a fast result.
+#
 # Env:
 #   LLAMA_SWAP_URL   default http://fedora-tuf:8080
 #   SPEED_BENCH_REF  llama.cpp git ref to fetch the client from (default master)

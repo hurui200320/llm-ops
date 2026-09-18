@@ -13,7 +13,7 @@ artifacts land in `bench/results/` (gitignored).
 Everything assumes llama-swap is reachable at `http://fedora-tuf:8080` and
 speaks OpenAI-compatible API with the model alias as `model`. Each tool
 documents its own overrides: the Python scripts take flags (e.g. `--base-url`),
-the shell scripts read env vars (e.g. `LLAMA_SWAP_URL`, `MODELS_DIR`).
+the shell scripts read env vars (e.g. `LLAMA_SWAP_URL`, `LIMIT`).
 
 ## Pipeline per model
 
@@ -45,29 +45,52 @@ cost is time.
 
 ### 1. Speed (bench/speed/)
 
-Two complementary tools:
+Two tools, both through llama-swap so they measure the deployed config itself
+(chat template, ctx-checkpoints, cache, speculative decoding):
 
-- [`run_bench.sh`](speed/run_bench.sh) — llama-bench in the deployment docker
-  image: pp/tg at context depths 0 → 90% of max context (worst case;
-  muse-glimmer capped at its 128K per-slot context), per-model
-  flags from [`models.conf`](speed/models.conf). Cannot measure speculative decoding.
 - [`run_speed_bench.sh`](speed/run_speed_bench.sh) — NVIDIA SPEED-Bench client
-  (fetched from llama.cpp on the fly) against llama-swap: realistic prompts
-  (coding/roleplay/…), per-category t/s + draft acceptance, and
-  baseline-vs-spec comparison to decide if MTP/DFlash is worth the VRAM.
+  (fetched from llama.cpp on the fly): realistic short/medium prompts
+  (coding/roleplay/…), per-category pp/tg t/s + draft acceptance, and
+  baseline-vs-spec comparison. Requests keep the server's normal prompt
+  caching (the client pins temperature 0), so multi-turn samples reuse the
+  conversation prefix like real chat traffic. Because a model kept loaded
+  holds its prompt cache and ctx checkpoints, **unload all models on
+  llama-swap before every run** (`curl http://fedora-tuf:8080/unload`, or
+  the UI) — an accidental cache hit would fake a fast result. Throughput
+  splits (fixed 1k–32k ISL) are available through its arg passthrough, e.g.
+  `./run_speed_bench.sh run <alias> <tag> --bench throughput_32k --category mixed`.
+- [`run_longctx.py`](speed/run_longctx.py) — the near-full-context worst case:
+  85% of the max context of meaningful text in, 10% out — the shape of a
+  harness compaction request. Cold prefill per rep (distinct corpus segments,
+  `cache_prompt: false`), reports pp/tg t/s and spec accept rate at depth.
 
 ```bash
 cd speed
-./run_bench.sh --list
-./run_bench.sh ornith15-35b-a3b-q80
-./run_speed_bench.sh run ornith-nospec ornith-nospec
-./run_speed_bench.sh run ornith-mtp    ornith-mtp
-./run_speed_bench.sh compare ../results/speed/speed-bench-ornith-nospec.json \
-                              ../results/speed/speed-bench-ornith-mtp.json
+./run_speed_bench.sh run ornith-1.5-35b-a3b-q80-vision ornith
+python3 run_longctx.py --model ornith-1.5-35b-a3b-q80-vision                       # 256K ctx
+python3 run_longctx.py --model meta-muse-glimmer-30b-kquant-vision --ctx 131072   # 128K per slot
 ```
 
-A spec A/B needs two llama-swap aliases for the same model (one
-`--spec-type none`, one with spec enabled).
+Expect tens of minutes per `run_longctx.py` rep: a cold ~full-context prefill
+plus a long decode.
+
+Deployment heuristic — speed is mostly decided by whether things fit in VRAM:
+
+1. Pick the biggest quant that fits **with real headroom**. When VRAM is merely
+   "enough to load" (e.g. 23.1/23.9 GB), llama-server ends up fighting the
+   desktop stack (gnome shell etc.) for VRAM and everything silently slows
+   down; observed on gemma-4-31b-qat and ornith-1.5-35b.
+2. Start with MTP enabled, run the speed tests while watching VRAM (nvtop /
+   amdgpu-top). If usage is tight, drop the MTP — it is unstable and risky at
+   that point. The MTP head is under ~1 GB for 35B models, so dropping it
+   never bumps the main model a quant level; the decision is purely about
+   headroom.
+3. Rerun the tests after dropping MTP and compare the saved JSON runs to see
+   what it was actually costing.
+
+Draft acceptance only means something on meaningful input, which is why
+`run_longctx.py` feeds a real public-domain novel (Project Gutenberg, fetched
+on the fly, cached under `bench/.cache/`) instead of synthetic filler.
 
 ### 2. Tool calling (tool-eval-bench)
 
