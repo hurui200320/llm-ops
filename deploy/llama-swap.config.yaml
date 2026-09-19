@@ -304,7 +304,7 @@ models:
         -ngl 99
         --main-gpu 0 --split-mode layer --tensor-split 20,22
         --ctx-size 262144
-        --temp 1.0 --top-p 0.95 --top-k 40 --min-p 0.01 --repeat-penalty 1.05 --presence-penalty 0.0
+        --temp 0.9 --top-p 0.95 --top-k 40 --min-p 0.01 --repeat-penalty 1.0 --presence-penalty 1.2
         --load-mode mmap
         --no-kv-unified
         --flash-attn on
@@ -340,7 +340,7 @@ models:
         -ngl 99
         --main-gpu 0 --split-mode layer --tensor-split 20,22
         --ctx-size 262144
-        --temp 1.0 --top-p 0.95 --top-k 40 --min-p 0.01 --repeat-penalty 1.05 --presence-penalty 0.0
+        --temp 0.9 --top-p 0.95 --top-k 40 --min-p 0.01 --repeat-penalty 1.0 --presence-penalty 1.2
         --load-mode mmap
         --no-kv-unified
         --flash-attn on
