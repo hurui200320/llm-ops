@@ -30,8 +30,8 @@
 # Env:
 #   LLAMA_SWAP_URL   default http://fedora-tuf:8080
 #   SPEED_BENCH_REF  llama.cpp git ref to fetch the client from (default master)
-#   LIMIT            samples per category (default 10; set empty for full)
-#   OSL              output tokens per request (default 1024)
+#   LIMIT            samples per category (default full)
+#   OSL              output tokens per request (default 4096)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -40,8 +40,8 @@ RESULTS_DIR="$SCRIPT_DIR/../results/speed"
 
 LLAMA_SWAP_URL="${LLAMA_SWAP_URL:-http://fedora-tuf:8080}"
 SPEED_BENCH_REF="${SPEED_BENCH_REF:-master}"
-LIMIT="${LIMIT-10}"
-OSL="${OSL:-1024}"
+LIMIT=
+OSL="${OSL:-4096}"
 
 BASE_RAW="https://raw.githubusercontent.com/ggml-org/llama.cpp/${SPEED_BENCH_REF}/tools/server/bench/speed-bench"
 
@@ -82,6 +82,9 @@ case "$CMD" in
         LIMIT_ARGS=()
         if [[ -n "$LIMIT" ]]; then
             LIMIT_ARGS=(--limit "$LIMIT")
+            echo "Limit: $LIMIT"
+        else
+            echo "Limit: none"
         fi
         uvrun "$CACHE_DIR/speed_bench.py" \
             --url "$LLAMA_SWAP_URL" \
