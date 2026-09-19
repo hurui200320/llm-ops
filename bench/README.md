@@ -111,13 +111,16 @@ exercise the same schema path EXA-MCP traffic uses.
 
 ```bash
 uv tool install git+https://github.com/SeraphimSerapis/tool-eval-bench.git
-tool-eval-bench probe --base-url http://fedora-tuf:8080
-TOOL_EVAL_MODEL=<alias> tool-eval-bench run --base-url http://fedora-tuf:8080 --seed 42
-# later: tool-eval-bench compare <runA> <runB>
 ```
 
-Run it from `bench/` so its `runs/` + `data/` artifacts (written relative to the
-CWD) land in gitignored dirs.
+Wrapped up as [bench/run_tooleval.sh](run_tooleval.sh): for every model in
+`deploy/llama-swap.config.yaml` (positional args subset it) runs
+`tool-eval-bench run --seed 42`, cd'ing into `bench/` so its `runs/` + `data/`
+artifacts (written relative to the CWD) land in gitignored dirs. Each run is
+teed to `bench/results/tooleval/<model>-<stamp>.log`. Env overrides:
+`LLAMA_SWAP_URL`, `SEED`.
+
+Later, compare runs side by side: `tool-eval-bench compare <runA> <runB>`.
 
 Note: its safety category penalizes uncensored models — interpret abliterated
 variants' scores with that in mind.
