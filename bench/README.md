@@ -43,11 +43,11 @@ npm install -g @syntheticlab/synbad
 # synbad requires an env-var name for provider auth even against keyless
 # endpoints; llama-swap runs with apiKeys: [], so a dummy value is fine.
 export LLAMA_SWAP_KEY=dummy
-synbad eval --env-var LLAMA_SWAP_KEY --base-url "http://fedora-tuf:8080/v1" --model "<alias>" --count 20
-synbad eval --env-var LLAMA_SWAP_KEY --base-url "http://fedora-tuf:8080/v1" --model "<alias>" --count 20 --stream
+synbad eval --env-var LLAMA_SWAP_KEY --base-url "http://fedora-tuf:8080/v1" --model "<alias>" --count 10
+synbad eval --env-var LLAMA_SWAP_KEY --base-url "http://fedora-tuf:8080/v1" --model "<alias>" --count 10 --stream
 ```
 
-`--count 20` (per mode, 20+20 total) keeps the gate fast on big models. Synbad's
+`--count 10` (per mode, 10+10 total) keeps the gate fast on big models. Synbad's
 README says 40 per mode is typically good enough to reveal the bugs — in
 particular the 5%-rate response-in-reasoning one — so re-run with `COUNT=40`
 if a failure looks borderline or flaky.

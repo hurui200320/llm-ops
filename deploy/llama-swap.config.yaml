@@ -302,7 +302,7 @@ models:
         --jinja
         --spec-type none
         --reasoning on
-        -b 1024 -ub 512
+        -b 2048 -ub 512
         --image-min-tokens 512 --image-max-tokens 4096
         -ngl 99
         --main-gpu 0 --split-mode layer --tensor-split 20,22
@@ -338,7 +338,7 @@ models:
         --chat-template-file /templates/ornith-1.5/35B-chat-template.jinja
         --jinja
         --reasoning on
-        -b 1024 -ub 512
+        -b 2048 -ub 512
         --image-min-tokens 512 --image-max-tokens 4096
         -ngl 99
         --main-gpu 0 --split-mode layer --tensor-split 20,22
@@ -362,9 +362,9 @@ models:
 
 
   # Qwen3.8 27B with built-in mtp
-  "qwen3.8-27b-q80-vision-mtp":
+  "qwen3.8-27b-q80-vision":
     name: "Qwen3.8 27B Q8_0 vision"
-    description: "256K context, vision"
+    description: "256K context, vision on CPU"
     cmd: |
       ${docker-server-rocm}
         ${muse-ornith15-ctx-ckpt}
@@ -374,8 +374,8 @@ models:
         --spec-type draft-mtp --spec-draft-n-max 2
         --jinja
         --reasoning on
-        -b 1024 -ub 256
-        --image-min-tokens 1024 --image-max-tokens 4096
+        -b 2048 -ub 256
+        --image-min-tokens 1024 --image-max-tokens 8192
         -ngl 99
         --main-gpu 0 --split-mode layer --tensor-split 33,33
         --ctx-size 262144
@@ -388,6 +388,13 @@ models:
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
     concurrencyLimit: 2
+    filters:
+      # :npt alias strips historical <think> blocks via per-request
+      # chat_template_kwargs. Base ID keeps the preserve default.
+      setParamsByID:
+        "${MODEL_ID}:npt":
+          chat_template_kwargs:
+            preserve_thinking: false
     timeouts:
       connect: 30
       keepalive: 30
@@ -397,58 +404,23 @@ models:
       idleConn: 90
 
 
-  # Qwen3.8 27B without mtp. Not enough VRAM for MTP, enable it will slow down
-  "qwen3.8-27b-q80-vision":
-    name: "Qwen3.8 27B Q8_0 vision"
-    description: "256K context, vision"
-    cmd: |
-      ${docker-server-rocm}
-        ${muse-ornith15-ctx-ckpt}
-        --model                 /models/qwen3.8/unsloth-27B/Qwen3.8-27B-Q8_0.gguf
-        --mmproj                /models/qwen3.8/unsloth-27B/mmproj-BF16.gguf
-        --chat-template-file /templates/qwen3.8/27B-chat-template.jinja
-        --spec-type none
-        --jinja
-        --reasoning on
-        -b 1024 -ub 512
-        --image-min-tokens 1024 --image-max-tokens 4096
-        -ngl 99
-        --main-gpu 0 --split-mode layer --tensor-split 32,34
-        --ctx-size 262144
-        --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --repeat-penalty 1.0 --presence-penalty 0.0
-        --load-mode mmap
-        --no-kv-unified
-        --flash-attn on
-        --parallel 1
-    cmdStop: docker stop ${MODEL_ID}
-    proxy: http://127.0.0.1:${PORT}
-    checkEndpoint: /health
-    concurrencyLimit: 2
-    timeouts:
-      connect: 30
-      keepalive: 30
-      # pp may take a long time so we don't set a timeout here
-      responseHeader: 0
-      tlsHandshake: 10
-      idleConn: 90
-
-
-  # Qwen3.8 27B uncensored
+  # Qwen3.8 27B uncensored with built-in mtp
   "qwen3.8-27b-uncensored-q80-vision":
     name: "Qwen3.8 27B uncensored Q8_0 vision"
-    description: "256K context, vision, uncensored"
+    description: "256K context, vision on CPU, uncensored"
     cmd: |
       ${docker-server-rocm}
         ${muse-ornith15-ctx-ckpt}
         --model                 /models/qwen3.8/orcarouter-27B-uncensored/Qwen3.8-27B-Uncensored-Q8_0.gguf
         --mmproj                /models/qwen3.8/orcarouter-27B-uncensored/mmproj-Qwen3.8-27B-Uncensored-f16.gguf
         --chat-template-file /templates/qwen3.8/27B-chat-template.jinja
+        --spec-type draft-mtp --spec-draft-n-max 2
         --jinja
         --reasoning on
-        -b 1024 -ub 512
-        --image-min-tokens 1024 --image-max-tokens 4096
+        -b 2048 -ub 256
+        --image-min-tokens 1024 --image-max-tokens 8192
         -ngl 99
-        --main-gpu 0 --split-mode layer --tensor-split 32,34
+        --main-gpu 0 --split-mode layer --tensor-split 33,33
         --ctx-size 262144
         --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --repeat-penalty 1.0 --presence-penalty 0.0
         --load-mode mmap
@@ -459,6 +431,13 @@ models:
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
     concurrencyLimit: 2
+    filters:
+      # :npt alias strips historical <think> blocks via per-request
+      # chat_template_kwargs. Base ID keeps the preserve default.
+      setParamsByID:
+        "${MODEL_ID}:npt":
+          chat_template_kwargs:
+            preserve_thinking: false
     timeouts:
       connect: 30
       keepalive: 30
