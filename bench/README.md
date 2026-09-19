@@ -75,6 +75,12 @@ python3 run_longctx.py --model meta-muse-glimmer-30b-kquant-vision              
 python3 run_longctx.py --model <alias> --ctx 262144                              # override (warns if /props disagrees)
 ```
 
+Wrapped up as [bench/run_longctx.sh](../bench/run_longctx.sh): for every model
+in `deploy/llama-swap.config.yaml` (positional args subset it) runs
+`run_longctx.py --reps 2` (no ctx override — auto-detected), teeing each run to
+`bench/results/longctx/<model>-<stamp>.log` with the results JSON next to it.
+Env overrides: `LLAMA_SWAP_URL`, `REPS`.
+
 Expect tens of minutes per `run_longctx.py` rep: a cold ~full-context prefill
 plus a long decode.
 

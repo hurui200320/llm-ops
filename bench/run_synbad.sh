@@ -51,19 +51,7 @@ ensure_synbad() {
 }
 
 models_from_config() {
-    # model aliases are the two-space-indented quoted keys under the top-level
-    # "models:" map; the macro keys earlier in the file end in ": >" and the
-    # guard exits at the first non-indented line after "models:"
-    awk '
-        /^models:/            { in_models = 1; next }
-        in_models && /^[^ #]/ { exit }
-        in_models && /^  "[^"]+":$/ {
-            line = $0
-            sub(/^  "/, "", line)
-            sub(/":$/, "", line)
-            print line
-        }
-    ' "$CONFIG"
+    yq '.models | keys | .[]' "$CONFIG"
 }
 
 warmup() {
@@ -84,6 +72,8 @@ if (( $# > 0 )); then
     MODELS=("$@")
 else
     [[ -f "$CONFIG" ]] || { echo "error: config not found: $CONFIG" >&2; exit 1; }
+    command -v yq >/dev/null 2>&1 \
+        || { echo "error: yq (mikefarah v4) is required to read $CONFIG" >&2; exit 1; }
     mapfile -t MODELS < <(models_from_config)
 fi
 if (( ${#MODELS[@]} == 0 )); then
