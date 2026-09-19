@@ -60,14 +60,19 @@ One tool, through llama-swap so it measures the deployed config itself
 - [`run_longctx.py`](speed/run_longctx.py) — generation speed vs. context
   size. Defaults to the near-full-context worst case: 85% of the max context
   of meaningful text in, 10% out — the shape of a harness compaction request.
-  Other sizes: rerun with `--isl N --osl M` overrides. Cold prefill per rep
+  The max context is auto-detected from llama-server `/props` through the
+  llama-swap upstream passthrough (per-slot `n_ctx` when parallel slots are
+  configured — the cap for a single request); `--ctx N` overrides it with a
+  warning on mismatch and is needed for non-llama.cpp backends. Other sizes:
+  rerun with `--isl N --osl M` overrides. Cold prefill per rep
   (distinct corpus segments, `cache_prompt: false`), so no unload-before-run
   dance is needed; reports pp/tg t/s and spec accept rate at depth.
 
 ```bash
 cd speed
-python3 run_longctx.py --model ornith-1.5-35b-a3b-q80-vision                      # 256K ctx
-python3 run_longctx.py --model meta-muse-glimmer-30b-kquant-vision --ctx 131072   # 128K per slot
+python3 run_longctx.py --model ornith-1.5-35b-a3b-q80-vision                      # ctx auto-detected from /props
+python3 run_longctx.py --model meta-muse-glimmer-30b-kquant-vision               # 128K per slot, also auto-detected
+python3 run_longctx.py --model <alias> --ctx 262144                              # override (warns if /props disagrees)
 ```
 
 Expect tens of minutes per `run_longctx.py` rep: a cold ~full-context prefill

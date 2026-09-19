@@ -4,7 +4,7 @@
 Defaults target llama-swap on the LAN. Standard library only.
 
 Usage:
-    python3 run_longctx.py --model <llama-swap-alias> [--ctx 262144]
+    python3 run_longctx.py --model <llama-swap-alias> [--ctx N]
                            [--isl N --osl N] [--reps 2]
                            [--base-url http://fedora-tuf:8080]
                            [--corpus <path-or-url>] [--out results.json]
@@ -20,11 +20,18 @@ synthetic filler; run with MTP enabled first and watch VRAM (see
 bench/README.md). Per-rep prefill/decode t/s, latency, speculative draft
 acceptance and the cached-prefix token count (cache_n — 0 proves the prefill
 was cold) come from llama-server response timings; actual token counts come
-from response usage. Prompt sizing uses llama-server /tokenize through
-llama-swap's /upstream/<model> passthrough (llama-swap does not route plain
-/tokenize; a bare llama-server is covered by the plain path, and the warmup
-request makes sure the right model is loaded either way), with a
-max-tokens-1 calibration request as last resort. Results land in
+from response usage. The max context is auto-detected from llama-server
+/props through llama-swap's /upstream/<model> passthrough
+(default_generation_settings.n_ctx — per-slot when parallel slots are
+configured, which is the right cap for a single request; llama-swap does not
+route plain /props); --ctx overrides it with a warning when the two disagree
+and is required for backends that do not serve /props. Prompt sizing uses
+llama-server /tokenize through the same passthrough (llama-swap does not
+route plain /tokenize; a bare llama-server is covered by the plain path, and
+the warmup request makes sure the right model is loaded either way), with a
+max-tokens-1 calibration request as last resort. The /props probe records
+the loaded model's n_ctx, slot count, quant and model path into the results
+config for provenance. Results land in
 bench/results/longctx/ and are rewritten after every rep, so an
 interrupted run keeps its completed reps.
 """
@@ -71,6 +78,28 @@ def post_json(url, payload, timeout):
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read())
+
+
+def get_json(url, timeout):
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read())
+
+
+def props_fields(props):
+    fields = {}
+    if not isinstance(props, dict):
+        return fields
+    gen = props.get("default_generation_settings")
+    n_ctx = gen.get("n_ctx") if isinstance(gen, dict) else None
+    if not isinstance(n_ctx, int) or n_ctx <= 0:
+        n_ctx = props.get("n_ctx")
+    if isinstance(n_ctx, int) and n_ctx > 0:
+        fields["n_ctx"] = n_ctx
+    for key in ("total_slots", "model_alias", "model_ftype", "model_path"):
+        if props.get(key) is not None:
+            fields[key] = props[key]
+    return fields
 
 
 def http_error_text(exc):
@@ -276,8 +305,10 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--model", required=True, help="model name sent in requests (llama-swap alias)")
     ap.add_argument("--base-url", default="http://fedora-tuf:8080")
-    ap.add_argument("--ctx", type=int, default=262144,
-                    help="max context of the alias; derives isl (85%%) and osl (10%%), no cap")
+    ap.add_argument("--ctx", type=int, default=None,
+                    help="max context of the alias; derives isl (85%%) and osl (10%%); "
+                         "default: auto-detect from /props (per-slot n_ctx, the cap for a "
+                         "single request); explicit value wins, warning on mismatch")
     ap.add_argument("--isl", type=int, default=None,
                     help="target input tokens; overrides --ctx derivation, needs --osl")
     ap.add_argument("--osl", type=int, default=None,
@@ -294,6 +325,40 @@ def main():
     if (args.isl is None) != (args.osl is None):
         print("error: --isl and --osl must be given together (or rely on --ctx)", file=sys.stderr)
         return 2
+
+    root = split_base_url(args.base_url)
+    chat_url = root + "/v1/chat/completions"
+    upstream_prefix = root + "/upstream/" + quote(args.model, safe="/")
+    tokenize_urls = [upstream_prefix + "/tokenize", root + "/tokenize"]
+
+    props_info = None
+    props_error = None
+    print(f"probe:   /props for {args.model} (loads the model if unloaded) ...", flush=True)
+    try:
+        props_info = props_fields(get_json(upstream_prefix + "/props", WARMUP_TIMEOUT))
+    except Exception as exc:
+        props_error = exc
+    ctx_detected = (props_info or {}).get("n_ctx")
+    ctx_source = "flag" if args.ctx is not None else None
+    if args.ctx is None:
+        if ctx_detected is None:
+            if props_error is None:
+                detail = "/props response had no usable n_ctx"
+            elif isinstance(props_error, urllib.error.HTTPError):
+                detail = f"HTTP {props_error.code}: {http_error_text(props_error)}"
+            else:
+                detail = str(props_error)
+            print(f"error: cannot determine the context size ({detail}); pass --ctx "
+                  "explicitly (non-llama.cpp backends do not serve /props)", file=sys.stderr)
+            return 2
+        args.ctx = ctx_detected
+        ctx_source = "props"
+    elif ctx_detected is not None and ctx_detected != args.ctx:
+        slots = (f", total_slots {props_info['total_slots']}"
+                 if props_info.get("total_slots") is not None else "")
+        print(f"warning: /props reports n_ctx {ctx_detected} (per slot{slots}) for "
+              f"{args.model!r}, but --ctx {args.ctx} was given; using --ctx", file=sys.stderr)
+
     if args.isl is None:
         args.isl = int(args.ctx * 0.85)
         args.osl = int(args.ctx * 0.10)
@@ -301,17 +366,17 @@ def main():
         print("error: --isl/--osl must be positive and --reps >= 1", file=sys.stderr)
         return 2
 
-    root = split_base_url(args.base_url)
-    chat_url = root + "/v1/chat/completions"
-    tokenize_urls = [
-        root + "/upstream/" + quote(args.model, safe="/") + "/tokenize",
-        root + "/tokenize",
-    ]
     out = Path(args.out) if args.out else (
         RESULTS_DIR / f"{args.model.replace('/', '_')}-{time.strftime('%Y%m%d-%H%M%S')}.json"
     )
 
     print(f"model:   {args.model}")
+    if props_info:
+        print(f"props:   n_ctx {props_info['n_ctx']}  total_slots {props_info.get('total_slots')}"
+              f"  ftype {props_info.get('model_ftype')}")
+        print(f"         {props_info.get('model_path')}")
+    if args.ctx:
+        print(f"ctx:     {args.ctx} ({'via /props' if ctx_source == 'props' else 'from --ctx'})")
     print(f"isl/osl: {args.isl}/{args.osl} target tokens ({args.reps} reps)")
     print(f"api:     {chat_url}")
     print(f"out:     {out} (saved after every rep)")
@@ -374,6 +439,9 @@ def main():
                 "config": {
                     "base_url": root,
                     "model": args.model,
+                    "ctx": args.ctx,
+                    "ctx_source": ctx_source,
+                    "props": props_info,
                     "isl_target": args.isl,
                     "osl_target": args.osl,
                     "reps": args.reps,
