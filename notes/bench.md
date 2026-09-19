@@ -144,3 +144,18 @@ So it's the model's limitation, not llamacpp's.
 + `ornith-1.5-35b-a3b-abliterated-q80-vision`: plain 1773 s, streaming 1825 s
 
 Script duration: 462m49s
+
+## Speed
+
+```
+time ./bench/run_longctx.sh
+```
+
++ `google-gemma-4-31b-q5km-text`:              pp  355.33 t/s  tg 14.77 t/s
++ `google-gemma-4-26b-a4b-q80-vision`:         pp 1338.54 t/s  tg 36.80 t/s
++ `google-gemma-4-31b-qat-q40-vision`:         pp  300.87 t/s  tg 15.65 t/s
++ `meta-muse-glimmer-30b-kquant-vision`:       pp  954.41 t/s  tg 27.74 t/s  accept_rate 0.4957
++ `ornith-1.5-35b-a3b-q80-vision`:             pp 1996.68 t/s  tg 31.08 t/s
++ `ornith-1.5-35b-a3b-abliterated-q80-vision`: pp 1992.81 t/s  tg 30.86 t/s
+
+Total time: 122m14s
