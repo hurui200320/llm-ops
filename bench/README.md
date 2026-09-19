@@ -54,28 +54,18 @@ if a failure looks borderline or flaky.
 
 ### 1. Speed (bench/speed/)
 
-Two tools, both through llama-swap so they measure the deployed config itself
+One tool, through llama-swap so it measures the deployed config itself
 (chat template, ctx-checkpoints, cache, speculative decoding):
 
-- [`run_speed_bench.sh`](speed/run_speed_bench.sh) — NVIDIA SPEED-Bench client
-  (fetched from llama.cpp on the fly): realistic short/medium prompts
-  (coding/roleplay/…), per-category pp/tg t/s + draft acceptance, and
-  baseline-vs-spec comparison. Requests keep the server's normal prompt
-  caching (the client pins temperature 0), so multi-turn samples reuse the
-  conversation prefix like real chat traffic. Because a model kept loaded
-  holds its prompt cache and ctx checkpoints, **unload all models on
-  llama-swap before every run** (`curl http://fedora-tuf:8080/unload`, or
-  the UI) — an accidental cache hit would fake a fast result. Throughput
-  splits (fixed 1k–32k ISL) are available through its arg passthrough, e.g.
-  `./run_speed_bench.sh run <alias> <tag> --bench throughput_32k --category mixed`.
-- [`run_longctx.py`](speed/run_longctx.py) — the near-full-context worst case:
-  85% of the max context of meaningful text in, 10% out — the shape of a
-  harness compaction request. Cold prefill per rep (distinct corpus segments,
-  `cache_prompt: false`), reports pp/tg t/s and spec accept rate at depth.
+- [`run_longctx.py`](speed/run_longctx.py) — generation speed vs. context
+  size. Defaults to the near-full-context worst case: 85% of the max context
+  of meaningful text in, 10% out — the shape of a harness compaction request.
+  Other sizes: rerun with `--isl N --osl M` overrides. Cold prefill per rep
+  (distinct corpus segments, `cache_prompt: false`), so no unload-before-run
+  dance is needed; reports pp/tg t/s and spec accept rate at depth.
 
 ```bash
 cd speed
-./run_speed_bench.sh run ornith-1.5-35b-a3b-q80-vision ornith
 python3 run_longctx.py --model ornith-1.5-35b-a3b-q80-vision                      # 256K ctx
 python3 run_longctx.py --model meta-muse-glimmer-30b-kquant-vision --ctx 131072   # 128K per slot
 ```
