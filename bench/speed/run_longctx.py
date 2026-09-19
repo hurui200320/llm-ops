@@ -5,7 +5,7 @@ Defaults target llama-swap on the LAN. Standard library only.
 
 Usage:
     python3 run_longctx.py --model <llama-swap-alias> [--ctx 262144]
-                           [--isl N --osl N] [--reps 2] [--temperature 0.0]
+                           [--isl N --osl N] [--reps 2]
                            [--base-url http://fedora-tuf:8080]
                            [--corpus <path-or-url>] [--out results.json]
 
@@ -205,7 +205,6 @@ def calibrate_chunks(chunks, isl, tokenize_urls, chat_url, model, args):
         "model": model,
         "messages": [{"role": "user", "content": build_content(chunks[:n])}],
         "max_tokens": 1,
-        "temperature": args.temperature,
         "stream": False,
         "cache_prompt": False,
     }
@@ -233,7 +232,6 @@ def run_rep(chat_url, model, content, osl, args):
         "model": model,
         "messages": [{"role": "user", "content": content}],
         "max_tokens": osl,
-        "temperature": args.temperature,
         "stream": False,
         "cache_prompt": False,
     }
@@ -285,7 +283,6 @@ def main():
     ap.add_argument("--osl", type=int, default=None,
                     help="target output tokens; overrides --ctx derivation, needs --isl")
     ap.add_argument("--reps", type=int, default=2)
-    ap.add_argument("--temperature", type=float, default=0.0)
     ap.add_argument("--timeout", type=float, default=14400,
                     help="per-request timeout in seconds; must cover one rep's full "
                          "prefill+decode — the server sends nothing until completion")
@@ -315,7 +312,7 @@ def main():
     )
 
     print(f"model:   {args.model}")
-    print(f"isl/osl: {args.isl}/{args.osl} target tokens ({args.reps} reps, temperature {args.temperature})")
+    print(f"isl/osl: {args.isl}/{args.osl} target tokens ({args.reps} reps)")
     print(f"api:     {chat_url}")
     print(f"out:     {out} (saved after every rep)")
     print("note: each rep is a cold near-full-context prefill plus a long decode; "
@@ -380,7 +377,6 @@ def main():
                     "isl_target": args.isl,
                     "osl_target": args.osl,
                     "reps": args.reps,
-                    "temperature": args.temperature,
                     "corpus": args.corpus or "gutenberg:war_and_peace",
                     "chunks_per_rep": n,
                 },
