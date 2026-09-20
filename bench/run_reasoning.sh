@@ -18,7 +18,7 @@
 # Env:
 #   LLAMA_SWAP_URL  llama-swap root URL (default http://10.233.1.16:8080; the
 #                   /v1 suffix the Python expects is appended here)
-#   MAX_TOKENS      passed as --max-tokens (default 65536)
+#   MAX_TOKENS      passed as --max-tokens (default 131072)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,7 +29,7 @@ LIGHT="$SCRIPT_DIR/reasoning/problems.jsonl"
 FRONTIER="$SCRIPT_DIR/.cache/reasoning/frontier.jsonl"
 
 LLAMA_SWAP_URL="${LLAMA_SWAP_URL:-http://10.233.1.16:8080}"
-MAX_TOKENS="${MAX_TOKENS:-65536}"
+MAX_TOKENS="${MAX_TOKENS:-131072}"
 BASE_URL="$LLAMA_SWAP_URL/v1"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 
