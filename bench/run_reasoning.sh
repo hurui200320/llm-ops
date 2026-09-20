@@ -19,6 +19,14 @@
 #   LLAMA_SWAP_URL  llama-swap root URL (default http://10.233.1.16:8080; the
 #                   /v1 suffix the Python expects is appended here)
 #   MAX_TOKENS      passed as --max-tokens (default 131072)
+#   SKIP_IDS        comma-separated problem ids excluded from runs. Default
+#                   trims the comparison set to 35 of the 42 on disk (4
+#                   redundant/saturated light problems + the 3 fastest clean
+#                   AIME passes of the 31B calibration run — least information
+#                   per second). The frozen manifest and the problem files
+#                   still hold all 42, and the calibration run covers all of
+#                   them, so comparisons stay paired on the shared subset. Set
+#                   SKIP_IDS= (empty) to run everything.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,6 +38,7 @@ FRONTIER="$SCRIPT_DIR/.cache/reasoning/frontier.jsonl"
 
 LLAMA_SWAP_URL="${LLAMA_SWAP_URL:-http://10.233.1.16:8080}"
 MAX_TOKENS="${MAX_TOKENS:-131072}"
+SKIP_IDS="${SKIP_IDS:-l01,l08,l09,l10,aime26-01,aime26-03,aime26-05}"
 BASE_URL="$LLAMA_SWAP_URL/v1"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 
@@ -92,6 +101,8 @@ else
     echo "         build it first: python3 reasoning/fetch_frontier.py" >&2
 fi
 declare -a FAILED=()
+SKIP_ARGS=()
+[[ -n "$SKIP_IDS" ]] && SKIP_ARGS=(--skip "$SKIP_IDS")
 START_ALL=$SECONDS
 
 for model in "${MODELS[@]}"; do
@@ -105,7 +116,7 @@ for model in "${MODELS[@]}"; do
     # summary JSON is still written when some requests fail, only the exit
     # status is non-zero
     if python3 "$PY" --base-url "$BASE_URL" --model "$model" \
-        --problems "${PROBLEM_ARGS[@]}" \
+        --problems "${PROBLEM_ARGS[@]}" "${SKIP_ARGS[@]}" \
         --max-tokens "$MAX_TOKENS" --out "$JSON" 2>&1 | tee "$LOG"; then
         echo "${CYAN}  done in $((SECONDS - RUN_START))s${RESET}"
     else

@@ -127,7 +127,7 @@ variants' scores with that in mind.
 
 ### 3. Reasoning (bench/reasoning/)
 
-Three families, ~42 problems: 12 light sanity-math (problems.jsonl), 15 AIME
+Three families, 42 problems on disk: 12 light sanity-math (problems.jsonl), 15 AIME
 2026 problems and 15 zebra logic-grid puzzles (both built by
 `fetch_frontier.py` into `../.cache/reasoning/frontier.jsonl`). Numeric
 problems are exact-match scored; zebra puzzles are scored puzzle-level (full
@@ -135,6 +135,16 @@ grid match) plus cell-level partial credit, and per-request completion-token
 counts are recorded (verbosity drift is a secondary quant signal). Sampling is
 left at the server default on purpose: this measures the models under the
 deployed setup, not a leaderboard number.
+
+Comparison runs default to 35 of the 42: `SKIP_IDS` in `run_reasoning.sh`
+drops 4 redundant light problems and the 3 fastest clean AIME passes (least
+information per second); set `SKIP_IDS=` to run everything. The frozen
+manifest and the problem files always hold all 42, and the 31B Q5_K_M
+calibration run covers all of them, so results stay paired on the shared
+subset. Transient gateway 5xx — what a restarting llama-swap answers
+instantly — are retried with a 30/60/120s backoff (a cold 31B load takes
+minutes); 4xx stays fatal and the run aborts after 5 consecutive errors, so
+mid-run restarts no longer silently lose problems.
 
 Why the tier mix: the old light+hard split saturated (Gemma 4 26B scored
 36/36, all `finish: stop`, nowhere to differentiate quants or abliterated
@@ -204,9 +214,10 @@ models spreading below it. Any argument change re-freezes the manifest, and
 results across different manifests are not comparable — calibrate on the
 strongest model first, freeze once, then run the whole lineup paired.
 
-Resolution honesty: ~30 frontier problems means one problem swings a family
-score by 3-7pp. Call a difference real only when it shows up in per-problem
-flips, zebra cell credit or completion tokens too, not the aggregate alone.
+Resolution honesty: ~27 frontier problems per comparison run means one problem
+swings a family score by ~7pp. Call a difference real only when it shows up in
+per-problem flips, zebra cell credit or completion tokens too, not the
+aggregate alone.
 
 ### 4. Agentic coding (aider polyglot)
 

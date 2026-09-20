@@ -22,9 +22,11 @@ insensitive), reports puzzle-level pass/fail plus a cell-level partial score.
 
 If the reply content is empty, scoring falls back to reasoning_content; that is
 deliberate tolerance for the llama.cpp response-in-reasoning bug synbad gates
-on (layer 0), not a replacement for it. Transient transport errors are retried
-once (HTTP errors are not retried); the summary reports how many requests still
-failed. Raw replies and a summary are written to bench/results/reasoning/.
+on (layer 0), not a replacement for it. Transient transport errors and gateway
+5xx (a restarting llama-swap answers 500/502 instantly) are retried with a
+30/60/120s backoff — a cold 31B load takes minutes; 4xx stays fatal, and the
+run aborts after 5 consecutive errors. The summary reports how many requests
+still failed. Raw replies and a summary are written to bench/results/reasoning/.
 """
 
 import argparse
@@ -62,6 +64,13 @@ NUMBER_RE = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
 SOLUTION_RE = re.compile(r"^\s*\**\s*SOLUTION\s*\**\s*:?\s*(.*)$", re.IGNORECASE)
 SEPARATOR_CELL_RE = re.compile(r"^[-: ]*$")
 HOUSE_LABEL_RE = re.compile(r"^house\s*#?\s*\d+$")
+
+# A restarting llama-swap/llamacpp answers instantly with 500/502, and a cold
+# 31B load takes minutes — so transient errors back off hard. 4xx is a real
+# error and stays fatal.
+RETRY_WAITS_S = (30, 60, 120)
+TRANSIENT_HTTP_CODES = (500, 502, 503, 504)
+CONSECUTIVE_ERROR_ABORT = 5
 
 
 def normalize(text):
@@ -193,16 +202,25 @@ def chat_completion(base_url, model, prob, args):
 
 
 def chat_completion_retry(base_url, model, prob, args):
-    """chat_completion with one retry on transport errors. HTTPError is a real
-    server response, not a transport glitch, so it is not retried."""
-    try:
-        return chat_completion(base_url, model, prob, args)
-    except urllib.error.HTTPError:
-        raise
-    except OSError as exc:  # URLError, connection reset, timeout, ...
-        print(f"    transport error ({exc}); retrying once", flush=True)
-        time.sleep(2)
-        return chat_completion(base_url, model, prob, args)
+    """chat_completion with backoff retries on transport errors and transient
+    HTTP 5xx (500/502/503/504 — what a restarting gateway answers instantly).
+    Other HTTP errors (4xx) are real server responses and stay fatal."""
+    last_exc = None
+    describe = ""
+    for attempt, wait in enumerate((0,) + RETRY_WAITS_S):
+        if wait:
+            print(f"    transient error ({describe}); waiting {wait}s "
+                  f"before retry {attempt}/{len(RETRY_WAITS_S)}", flush=True)
+            time.sleep(wait)
+        try:
+            return chat_completion(base_url, model, prob, args)
+        except urllib.error.HTTPError as exc:
+            if exc.code not in TRANSIENT_HTTP_CODES:
+                raise
+            last_exc, describe = exc, f"HTTP {exc.code}"
+        except OSError as exc:  # URLError, connection reset, timeout, ...
+            last_exc, describe = exc, str(exc)
+    raise last_exc
 
 
 def main():
@@ -213,6 +231,9 @@ def main():
                     help="problem jsonl files (e.g. problems.jsonl ../.cache/reasoning/frontier.jsonl)")
     ap.add_argument("--difficulty", choices=["light", "frontier"], default=None)
     ap.add_argument("--family", choices=["light", "aime", "zebra"], default=None)
+    ap.add_argument("--skip", default=None,
+                    help="comma-separated problem ids to exclude from this run "
+                         "(typo guard: warns when an id matches no problem)")
     ap.add_argument("--max-tokens", type=int, default=16384)
     ap.add_argument("--timeout", type=float, default=1800, help="per-request timeout in seconds")
     ap.add_argument("--out", default=None, help="output JSON path (default: results dir, timestamped)")
@@ -229,11 +250,21 @@ def main():
         problems = [p for p in problems if p["difficulty"] == args.difficulty]
     if args.family:
         problems = [p for p in problems if (p.get("family") or p.get("difficulty")) == args.family]
+    if args.skip:
+        skip_ids = {s.strip() for s in args.skip.split(",") if s.strip()}
+        all_ids = {p["id"] for p in problems}
+        problems = [p for p in problems if p["id"] not in skip_ids]
+        unknown = skip_ids - all_ids
+        if unknown:
+            print(f"warning: --skip ids matching no loaded problem: {', '.join(sorted(unknown))}",
+                  file=sys.stderr)
     if not problems:
         print("no problems selected", file=sys.stderr)
         return 2
 
     results = []
+    consecutive_errors = 0
+    aborted = False
     for i, prob in enumerate(problems, 1):
         family = prob.get("family") or prob.get("difficulty")
         print(f"[{i}/{len(problems)}] {prob['id']} ({family}) ...", flush=True)
@@ -282,6 +313,7 @@ def main():
             else:
                 extra = ""
             results.append(row)
+            consecutive_errors = 0
         except Exception as exc:
             results.append({
                 "id": prob["id"],
@@ -293,9 +325,15 @@ def main():
                 "error": str(exc),
             })
             extra = ""
+            consecutive_errors += 1
         print(f"    expected {prob['answer'] if not isinstance(prob['answer'], dict) else '<grid>'} | "
               f"{'ok' if results[-1]['correct'] else 'MISS'}{extra}"
               + (f" | {results[-1]['error']}" if "error" in results[-1] else ""), flush=True)
+        if consecutive_errors >= CONSECUTIVE_ERROR_ABORT:
+            print(f"aborting: {CONSECUTIVE_ERROR_ABORT} consecutive errors — the serving stack is "
+                  "likely down, not transient; results so far are still written", file=sys.stderr)
+            aborted = True
+            break
 
     def stats(rows):
         total = len(rows)
@@ -342,6 +380,9 @@ def main():
     with open(out, "w", encoding="utf-8") as f:
         json.dump({"summary": summary, "results": results}, f, indent=2, ensure_ascii=False)
     print(f"\nwrote {out}")
+    if aborted:
+        print("run aborted early (see above); results are incomplete", file=sys.stderr)
+        return 1
     if all("error" in r for r in results):
         print("all requests failed", file=sys.stderr)
         return 1
