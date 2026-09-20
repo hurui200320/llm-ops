@@ -1,6 +1,6 @@
 # Benchmark
 
-Date: 2026 Sep 18
+Date: 2026 Sep 20
 llama.cpp (docker): `version: 0.4.1-dev (build 11028, commit 972d2313b)`
 
 ## Synbad
@@ -9,9 +9,22 @@ llama.cpp (docker): `version: 0.4.1-dev (build 11028, commit 972d2313b)`
 time ./bench/run_synbad.sh
 ```
 
-No sign of llamacpp's fault. Parsing perfectly fine for both reasoning and tool call.
+No sign of llamacpp's bug. Parsing perfectly fine for both reasoning and tool call.
 
-----
+`google-gemma-4-26b-a4b-q80-vision` and `google-gemma-4-31b-qat-q40-vision` failed at
+`tools/octo-list-no-optional-args` (both plain and streaming) because the test case
+expects no optional parameter, but this model adds a harmless default value for it.
+Worth noticing that the `google-gemma-4-31b-q5km-text` passed all test cases.
+
+`meta-muse-glimmer-30b-kquant-vision` failed at `tools/parallel-tool`. After digging
+into some documents ( https://dev.meta.ai/docs/muse-glimmer/prompting#tool-calling ):
+> Muse Glimmer supports one tool call per turn. It does not support parallel tool calls;
+> return each tool result before asking the model to select the next tool.
+
+`qwen3.8-27b-q80-vision` and `` failed at `reasoning/reasoning-claude-tool-call` because
+these models does not support reasoning effort `high`, they support `xhigh`, `medium` and `low`.
+
+Duration: 392m1.184s
 
 ## Speed
 
@@ -19,14 +32,16 @@ No sign of llamacpp's fault. Parsing perfectly fine for both reasoning and tool 
 time ./bench/run_longctx.sh
 ```
 
-+ `google-gemma-4-31b-q5km-text`:              pp  355.33 t/s  tg 14.77 t/s
-+ `google-gemma-4-26b-a4b-q80-vision`:         pp 1338.54 t/s  tg 36.80 t/s
-+ `google-gemma-4-31b-qat-q40-vision`:         pp  300.87 t/s  tg 15.65 t/s
-+ `meta-muse-glimmer-30b-kquant-vision`:       pp  954.41 t/s  tg 27.74 t/s  accept_rate 0.4957
-+ `ornith-1.5-35b-a3b-q80-vision`:             pp 1996.68 t/s  tg 31.08 t/s
-+ `ornith-1.5-35b-a3b-abliterated-q80-vision`: pp 1992.81 t/s  tg 30.86 t/s
++ `google-gemma-4-31b-q5km-text`:              pp  355.04 t/s  tg 14.66 t/s
++ `google-gemma-4-26b-a4b-q80-vision`:         pp 1337.76 t/s  tg 36.64 t/s
++ `google-gemma-4-31b-qat-q40-vision`:         pp  300.75 t/s  tg 15.65 t/s
++ `meta-muse-glimmer-30b-kquant-vision`:       pp  955.40 t/s  tg 28.38 t/s  accept_rate 0.5249
++ `ornith-1.5-35b-a3b-q80-vision`:             pp 1989.09 t/s  tg 31.29 t/s
++ `ornith-1.5-35b-a3b-abliterated-q80-vision`: pp 1977.90 t/s  tg 31.03 t/s
++ `qwen3.8-27b-q80-vision`:                    pp  683.16 t/s  tg 19.91 t/s  accept_rate 0.5958
++ `qwen3.8-27b-uncensored-q80-vision`:         pp  681.53 t/s  tg 23.05 t/s  accept_rate 0.6222
 
-Total time: 122m14s
+Duration: 185m17.374s
 
 ## Tool calling
 
