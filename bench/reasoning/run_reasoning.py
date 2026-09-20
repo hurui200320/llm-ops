@@ -5,8 +5,7 @@ Defaults target llama-swap on the LAN. Standard library only.
 
 Usage:
     python3 run_reasoning.py --model <llama-swap-alias> [--difficulty light|hard]
-                             [--limit N] [--temperature 0.0] [--max-tokens 16384]
-                             [--base-url http://fedora-tuf:8080/v1]
+                             [--max-tokens 16384] [--base-url http://fedora-tuf:8080/v1]
 
 Each problem asks the model to end with "ANSWER: <answer>". Scoring extracts the
 last ANSWER: line (fallback: last number in the reply) and compares numerically.
@@ -80,7 +79,6 @@ def chat_completion(base_url, model, problem, args):
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": problem},
         ],
-        "temperature": args.temperature,
         "max_tokens": args.max_tokens,
         "stream": False,
     }
@@ -113,8 +111,6 @@ def main():
     ap.add_argument("--base-url", default="http://fedora-tuf:8080/v1")
     ap.add_argument("--problems", default=str(SCRIPT_DIR / "problems.jsonl"))
     ap.add_argument("--difficulty", choices=["light", "hard"], default=None)
-    ap.add_argument("--limit", type=int, default=None, help="max problems (after difficulty filter)")
-    ap.add_argument("--temperature", type=float, default=0.0)
     ap.add_argument("--max-tokens", type=int, default=16384)
     ap.add_argument("--timeout", type=float, default=1800, help="per-request timeout in seconds")
     ap.add_argument("--out", default=None, help="output JSON path (default: results dir, timestamped)")
@@ -128,8 +124,6 @@ def main():
                 problems.append(json.loads(line))
     if args.difficulty:
         problems = [p for p in problems if p["difficulty"] == args.difficulty]
-    if args.limit:
-        problems = problems[: args.limit]
     if not problems:
         print("no problems selected", file=sys.stderr)
         return 2
@@ -188,7 +182,6 @@ def main():
 
     summary = {
         "model": args.model,
-        "temperature": args.temperature,
         "max_tokens": args.max_tokens,
         "overall": stats(results),
         "light": stats([r for r in results if r["difficulty"] == "light"]),
