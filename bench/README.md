@@ -192,13 +192,13 @@ Two difficulty dials:
   of its own. `--seed` only swaps in fresh puzzles (new manifest); it is
   not a difficulty knob.
 
-**Everything passes** (ceiling, like the old 36/36 run): move the zebra mix
-up the ladder — e.g. `--zebra-spec "4x5:4,5x5:5,6x4:4,6x6:2"` — and take
-`--aime-count 30`. If the strongest model still sweeps 6x6, this generator
-is exhausted: put more counts on 6x6 for statistical power and read the
-cell-credit and completion-token columns instead. If AIME passes with
-suspiciously short thinking, suspect training contamination (the exam dates
-to Feb 2026) and weight zebra (generated, never seen) more heavily.
+**Everything passes** (ceiling): move the zebra mix up the ladder — e.g.
+`--zebra-spec "4x5:4,5x5:5,6x4:4,6x6:2"` — and take `--aime-count 30`.
+If the strongest model still sweeps 6x6, this generator is exhausted:
+put more counts on 6x6 for statistical power and read the cell-credit
+and completion-token columns instead. If AIME passes with suspiciously
+short thinking, suspect training contamination (the exam dates to Feb 2026)
+and weight zebra (generated, never seen) more heavily.
 
 **Everything fails** (floor): before blaming difficulty, triage the harness —
 `finish_reason: "length"` means raise `MAX_TOKENS`/`--max-tokens` (zebra
