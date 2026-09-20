@@ -287,5 +287,5 @@ Failures:
 ## Reasoning
 
 ```
-time python3 ./bench/reasoning/run_reasoning.py --base-url http://10.233.1.16:8080/v1 --model google-gemma-4-26b-a4b-q80-vision --max-tokens 65536
+time ./bench/run_reasoning.sh
 ```
