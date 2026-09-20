@@ -287,5 +287,8 @@ Failures:
 ## Reasoning
 
 ```
+# build frontier.jsonl + freeze the manifest, only need to run once
+# python3 ./bench/reasoning/fetch_frontier.py
+python3 ./bench/reasoning/fetch_frontier.py --check
 time ./bench/run_reasoning.sh
 ```

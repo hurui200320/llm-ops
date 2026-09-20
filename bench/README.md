@@ -127,19 +127,86 @@ variants' scores with that in mind.
 
 ### 3. Reasoning (bench/reasoning/)
 
-Small deterministic suite: 24 light (GSM8K-style) + 12 hard (AMC/AIME-style)
-problems, exact-match scoring, pinned temperature. Also reports per-request tg
-speed as a realistic reasoning-workload number.
+Three families, ~42 problems: 12 light sanity-math (problems.jsonl), 15 AIME
+2026 problems and 15 zebra logic-grid puzzles (both built by
+`fetch_frontier.py` into `../.cache/reasoning/frontier.jsonl`). Numeric
+problems are exact-match scored; zebra puzzles are scored puzzle-level (full
+grid match) plus cell-level partial credit, and per-request completion-token
+counts are recorded (verbosity drift is a secondary quant signal). Sampling is
+left at the server default on purpose: this measures the models under the
+deployed setup, not a leaderboard number.
+
+Why the tier mix: the old light+hard split saturated (Gemma 4 26B scored
+36/36, all `finish: stop`, nowhere to differentiate quants or abliterated
+variants). AIME 2026 is fresh competition math; zebra puzzles are long pure
+deduction where one bad step cascades — both sit at the frontier where
+strong models land in the 50-90% band. Zebra generation follows the
+ZebraLogicBench recipe (random solution grid, all true clues, minimize under
+a uniqueness-checking CSP solver) because its public release hides the
+answers; being generated also makes them contamination-free.
 
 ```bash
 cd reasoning
-python3 run_reasoning.py --model <alias>
-python3 run_reasoning.py --model <alias> --difficulty hard   # subset
+python3 fetch_frontier.py                       # build frontier.jsonl + freeze the manifest (once)
+python3 fetch_frontier.py --check               # verify cache still matches the frozen manifest
+python3 run_reasoning.py --model <alias> \
+    --problems problems.jsonl ../.cache/reasoning/frontier.jsonl --max-tokens 65536
+python3 run_reasoning.py --model <alias> --family zebra    # subset by family
 ```
 
-Add problems to `problems.jsonl`; answers must be independently verified. Note
-the suite is a smoke check: with 24+12 problems one answer swings accuracy by
-~4/8pp, so don't use it alone to break ties between close models.
+#### Building the frontier tier (`fetch_frontier.py`)
+
+One invocation builds the whole tier and freezes it: AIME 2026 rows are
+fetched from `MathArena/aime_2026` (revision-pinned; MAA-copyrighted text
+stays in the gitignored cache), zebra puzzles are generated from the seed.
+`frontier_manifest.json` (committed) pins ids + answer hashes — no problem
+text is committed. `--check` verifies the cache still matches the frozen
+manifest, and `run_reasoning.sh` refuses to run on drift.
+
+Two difficulty dials:
+
+- `--aime-count` (default 15, max 30): problems are taken in fixed order;
+  15 is one exam's worth, 30 both. Difficulty is fixed by the source — the
+  only dial is coverage.
+- `--zebra-spec` (default `3x4:2,4x4:5,4x5:3,5x5:3,6x4:2`): `NxM:count`
+  entries. N = houses, M = characteristics; difficulty tracks the search
+  space (N!)^M, which is *not* the same order as the N*M product:
+
+  | size | search space |  | size | search space |
+  |------|--------------|--|------|--------------|
+  | 3x4  | ~1.3e3       |  | 5x5  | ~2.5e10      |
+  | 4x4  | ~3.3e5       |  | 6x4  | ~2.7e11      |
+  | 4x5  | ~8e6         |  | 6x6  | ~1.4e17      |
+
+  6x4 out-searches 5x5 despite the smaller product, and 6x6 is a category
+  of its own. `--seed` only swaps in fresh puzzles (new manifest); it is
+  not a difficulty knob.
+
+**Everything passes** (ceiling, like the old 36/36 run): move the zebra mix
+up the ladder — e.g. `--zebra-spec "4x5:4,5x5:5,6x4:4,6x6:2"` — and take
+`--aime-count 30`. If the strongest model still sweeps 6x6, this generator
+is exhausted: put more counts on 6x6 for statistical power and read the
+cell-credit and completion-token columns instead. If AIME passes with
+suspiciously short thinking, suspect training contamination (the exam dates
+to Feb 2026) and weight zebra (generated, never seen) more heavily.
+
+**Everything fails** (floor): before blaming difficulty, triage the harness —
+`finish_reason: "length"` means raise `MAX_TOKENS`/`--max-tokens` (zebra
+puzzles think long: even a 3x4 costs ~5k completion tokens), and replies
+without a `SOLUTION:` block mean format non-compliance — which is itself a
+model difference; check the raw `reply` field in the results JSON first. If
+the tier is genuinely too hard, shift the spec down (e.g.
+`3x4:4,4x4:6,4x5:4,5x5:2`) — the small bands exist so weak models have
+somewhere to land.
+
+**Target picture**: the strongest model around 50-90% per family, weaker
+models spreading below it. Any argument change re-freezes the manifest, and
+results across different manifests are not comparable — calibrate on the
+strongest model first, freeze once, then run the whole lineup paired.
+
+Resolution honesty: ~30 frontier problems means one problem swings a family
+score by 3-7pp. Call a difference real only when it shows up in per-problem
+flips, zebra cell credit or completion tokens too, not the aggregate alone.
 
 ### 4. Agentic coding (aider polyglot)
 

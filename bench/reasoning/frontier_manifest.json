@@ -1,0 +1,138 @@
+{
+  "seed": 20260920,
+  "aime_count": 15,
+  "zebra_spec": "3x4:2,4x4:5,4x5:3,5x5:3,6x4:2",
+  "sources": {
+    "aime": {
+      "dataset": "MathArena/aime_2026",
+      "revision": "d2de22f3c656b4f56cf8981212186377d1e23bc3",
+      "rows_available": 30
+    },
+    "zebra": {
+      "generator": "bench/reasoning/fetch_frontier.py",
+      "construction": "random solution grid -> all true clues -> uniqueness-verified minimization (CSP solver)"
+    }
+  },
+  "entries": [
+    {
+      "id": "aime26-01",
+      "answer_sha256": "26d4cd5355046ac40744ca89495810a5fe2e5d24ae431c889037d246568cd29f"
+    },
+    {
+      "id": "aime26-02",
+      "answer_sha256": "c8d8f2e29fb181ffb8e4d234ede6633fb9529c69b8ef280605002e44764be39c"
+    },
+    {
+      "id": "aime26-03",
+      "answer_sha256": "bb628f904b3ffb3905e77454632dfecf87f47b4fe61fe695d7613c209196e48c"
+    },
+    {
+      "id": "aime26-04",
+      "answer_sha256": "12b8c0944c94778c6c9884cafe1f8a143f12c6daf2f4e4a19a9dc1e97df882c3"
+    },
+    {
+      "id": "aime26-05",
+      "answer_sha256": "ade516f85ff9f88e2ed3ff0977e2ed8081386b6ed660552f8f4d54736babad99"
+    },
+    {
+      "id": "aime26-06",
+      "answer_sha256": "af3dc48396fe79e3aab88ba38d279532f188fef1cce023bb9425f9456f0c8d00"
+    },
+    {
+      "id": "aime26-07",
+      "answer_sha256": "7632b5e1bed8859cf678a1f4ce309306d40ba6c263e5383eec478a2cb848b829"
+    },
+    {
+      "id": "aime26-08",
+      "answer_sha256": "2daaaa4ff2bea9a1ffb4a3161f2b3a28a8c54e741f307fe37678c143ebc86205"
+    },
+    {
+      "id": "aime26-09",
+      "answer_sha256": "06998a9f7c3bd27271effa6f37d89ba0f60a00fb32f5f48b1d1309c30fade120"
+    },
+    {
+      "id": "aime26-10",
+      "answer_sha256": "2d40648be4e887ddca344c102d960ec8e82d6b017f488a95718b5e75bd7c797c"
+    },
+    {
+      "id": "aime26-11",
+      "answer_sha256": "ce0847459653644f9402fc3b28fd2dae6dc8f191d8029445f8414fcf81eec105"
+    },
+    {
+      "id": "aime26-12",
+      "answer_sha256": "6cc4a1124ea74f0799257b2e6ef54449f5a62666c8f16131fa73dff50e664c05"
+    },
+    {
+      "id": "aime26-13",
+      "answer_sha256": "1f8c1cafb24e0497eb72c9ceaba5a5c10aee315bd62acfeebbdcecce1f792292"
+    },
+    {
+      "id": "aime26-14",
+      "answer_sha256": "c60d6e8067b3af3c12c844cd11d53f2177ebc8e9d13ec939190ca25d10a1fc20"
+    },
+    {
+      "id": "aime26-15",
+      "answer_sha256": "bf6851affc08517fff77b736c1b9c4504a14e7207b73d44eaf8a5d1c1326ae0a"
+    },
+    {
+      "id": "zebra-3x4-01",
+      "answer_sha256": "7c0da9947e216514a85f26610de40d8152273735a8a5ea05d76104362184ac80"
+    },
+    {
+      "id": "zebra-3x4-02",
+      "answer_sha256": "47f5ab7d549da4f17e7b85eef02801a79baf36780b2be8a5a92f62eb5ad99018"
+    },
+    {
+      "id": "zebra-4x4-01",
+      "answer_sha256": "b84e03ef2007c50ae800d1b002d5141d02aa4848e91c42c849f9390f244a487c"
+    },
+    {
+      "id": "zebra-4x4-02",
+      "answer_sha256": "466c39e92512b72c73e3335129aad70eb582a51fb6b5b04a9f9e97a439c9bdeb"
+    },
+    {
+      "id": "zebra-4x4-03",
+      "answer_sha256": "65e64ef9078dac7d782e02a7d087808ffda5944783c592596ab1166360d400f9"
+    },
+    {
+      "id": "zebra-4x4-04",
+      "answer_sha256": "d4095cd5e484a0de0eb2b80b38a221b509027fae219c17c96931155f7c12b2dc"
+    },
+    {
+      "id": "zebra-4x4-05",
+      "answer_sha256": "a436887905653542b0f85db6bea6487269182926ad62deded9667b254292f5eb"
+    },
+    {
+      "id": "zebra-4x5-01",
+      "answer_sha256": "272a7fcb7db5b1dc2c99386b4be0a5052411cf2c1f9460fb4f3a52b83507428f"
+    },
+    {
+      "id": "zebra-4x5-02",
+      "answer_sha256": "b6a1d47418c37007d6b3ff2022c2526338578d750477a5b71dfba5352ac76069"
+    },
+    {
+      "id": "zebra-4x5-03",
+      "answer_sha256": "062e4b0e7d24f86f52c8b33fdb579d8c82b0e61a39e09b82fb09e11d879443be"
+    },
+    {
+      "id": "zebra-5x5-01",
+      "answer_sha256": "9afdbcb43105ba90dd6c135edb7758a6daa603aa01ef0859be9aae6ccf5c0a81"
+    },
+    {
+      "id": "zebra-5x5-02",
+      "answer_sha256": "c7063ac44a7d459f726d29cf306efdcf9d5b452b813fef6bd9c060ac912cb157"
+    },
+    {
+      "id": "zebra-5x5-03",
+      "answer_sha256": "da858f6e503e5df95a4ba0159c850a815356a06be3fbd18b181ff1284c86d6f7"
+    },
+    {
+      "id": "zebra-6x4-01",
+      "answer_sha256": "19fe62e51b07d8a013d2bf81228a7dbb61a863673ec77a751bedd6e3105fbc9e"
+    },
+    {
+      "id": "zebra-6x4-02",
+      "answer_sha256": "14b3b94c1edb52da8a4edd37c8a87c6723f356686da7b7f0332dda70cc827366"
+    }
+  ]
+}

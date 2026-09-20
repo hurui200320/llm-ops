@@ -1,36 +1,12 @@
-{"id": "l01", "difficulty": "light", "problem": "Tom has 3 boxes with 24 pencils in each box. He gives away 15 pencils. How many pencils does he have left?", "answer": "57"}
-{"id": "l02", "difficulty": "light", "problem": "A train travels at 60 km/h for 2.5 hours. How many kilometers does it cover?", "answer": "150"}
-{"id": "l03", "difficulty": "light", "problem": "Sarah buys 4 notebooks at $3.50 each and pays with a $20 bill. How much change does she get, in dollars?", "answer": "6"}
-{"id": "l04", "difficulty": "light", "problem": "A rectangle is 12 cm long and 7 cm wide. What is its perimeter in centimeters?", "answer": "38"}
-{"id": "l05", "difficulty": "light", "problem": "A baker makes 240 cookies and packs them into boxes of 18. How many full boxes does he pack?", "answer": "13"}
-{"id": "l06", "difficulty": "light", "problem": "A book has 320 pages. Mia reads 45 pages per day for 5 days. How many pages does she have left to read?", "answer": "95"}
-{"id": "l07", "difficulty": "light", "problem": "Three workers working together paint a wall in 12 hours. Assuming each works at the same constant rate, how many hours would it take one worker alone?", "answer": "36"}
-{"id": "l08", "difficulty": "light", "problem": "A shirt costs $25. It is discounted by 20%, and then an 8% tax is applied to the discounted price. What is the final price in dollars?", "answer": "21.60"}
-{"id": "l09", "difficulty": "light", "problem": "The sum of three consecutive integers is 51. What is the largest of the three?", "answer": "18"}
-{"id": "l10", "difficulty": "light", "problem": "A car consumes 8 liters of fuel per 100 km. How many liters does it need for a 350 km trip?", "answer": "28"}
-{"id": "l11", "difficulty": "light", "problem": "What is the average of the numbers 12, 18, 25, and 29?", "answer": "21"}
-{"id": "l12", "difficulty": "light", "problem": "If 5 machines take 5 minutes to make 5 widgets, how many minutes would it take 100 machines to make 100 widgets?", "answer": "5"}
-{"id": "l13", "difficulty": "light", "problem": "A class has 32 students, and 5/8 of them are girls. How many boys are in the class?", "answer": "12"}
-{"id": "l14", "difficulty": "light", "problem": "John is 4 times as old as his son. In 8 years, John will be twice as old as his son. How old is the son now?", "answer": "4"}
-{"id": "l15", "difficulty": "light", "problem": "A shop sells apples in bags of 6. You need at least 50 apples. How many bags must you buy?", "answer": "9"}
-{"id": "l16", "difficulty": "light", "problem": "The perimeter of a square is 52 cm. What is its area in square centimeters?", "answer": "169"}
-{"id": "l17", "difficulty": "light", "problem": "A number is doubled and then increased by 7, giving 31. What is the number?", "answer": "12"}
-{"id": "l18", "difficulty": "light", "problem": "Sarah runs 3 km every weekday and 8 km every weekend day. How many kilometers does she run in one full week?", "answer": "31"}
-{"id": "l19", "difficulty": "light", "problem": "A tank holds 500 liters of water and leaks 3 liters per hour. How many liters remain after 40 hours?", "answer": "380"}
-{"id": "l20", "difficulty": "light", "problem": "Adult tickets cost $12 and child tickets cost $7. A family buys 2 adult and 3 child tickets. What is the total cost in dollars?", "answer": "45"}
-{"id": "l21", "difficulty": "light", "problem": "A 91-meter rope is cut into equal pieces of 7 meters. How many pieces are there?", "answer": "13"}
-{"id": "l22", "difficulty": "light", "problem": "Let f(x) = 3x^2 - 2x + 1. Compute f(4).", "answer": "41"}
-{"id": "l23", "difficulty": "light", "problem": "The three angles of a triangle are in the ratio 2:3:4. What is the largest angle in degrees?", "answer": "80"}
-{"id": "l24", "difficulty": "light", "problem": "A cyclist covers 45 km in 3 hours. At the same speed, how many kilometers does she cover in 5 hours?", "answer": "75"}
-{"id": "h01", "difficulty": "hard", "problem": "How many positive integers less than or equal to 1000 are divisible by 6 or 10?", "answer": "233"}
-{"id": "h02", "difficulty": "hard", "problem": "Find the sum of all two-digit positive integers that are divisible by 7.", "answer": "728"}
-{"id": "h03", "difficulty": "hard", "problem": "In how many ways can 5 distinct books be arranged on a shelf so that two particular books are adjacent?", "answer": "48"}
-{"id": "h04", "difficulty": "hard", "problem": "Find the number of ordered pairs (a, b) of positive integers such that a + b = 100 and gcd(a, b) = 5.", "answer": "8"}
-{"id": "h05", "difficulty": "hard", "problem": "What is the remainder when 7^2025 is divided by 100?", "answer": "7"}
-{"id": "h06", "difficulty": "hard", "problem": "How many trailing zeros does 125! have?", "answer": "31"}
-{"id": "h07", "difficulty": "hard", "problem": "A fair coin is tossed 8 times. The probability of getting exactly 5 heads, written in lowest terms, is m/n. Find m + n.", "answer": "39"}
-{"id": "h08", "difficulty": "hard", "problem": "Find the sum of the first 100 terms of the arithmetic sequence 3, 7, 11, 15, ...", "answer": "20100"}
-{"id": "h09", "difficulty": "hard", "problem": "How many positive divisors does 5040 have?", "answer": "60"}
-{"id": "h10", "difficulty": "hard", "problem": "The polynomial x^2 + bx + c has roots 3 and 7. Find b + c.", "answer": "11"}
-{"id": "h11", "difficulty": "hard", "problem": "How many integers n with 1 <= n <= 200 satisfy: n^2 + 1 is divisible by 5?", "answer": "80"}
-{"id": "h12", "difficulty": "hard", "problem": "A triangle has side lengths 13, 14, and 15. Find its area.", "answer": "84"}
+{"id": "l01", "difficulty": "light", "problem": "A train travels at 60 km/h for 2.5 hours. How many kilometers does it cover?", "answer": "150"}
+{"id": "l02", "difficulty": "light", "problem": "Three workers working together paint a wall in 12 hours. Assuming each works at the same constant rate, how many hours would it take one worker alone?", "answer": "36"}
+{"id": "l03", "difficulty": "light", "problem": "A shirt costs $25. It is discounted by 20%, and then an 8% tax is applied to the discounted price. What is the final price in dollars?", "answer": "21.60"}
+{"id": "l04", "difficulty": "light", "problem": "If 5 machines take 5 minutes to make 5 widgets, how many minutes would it take 100 machines to make 100 widgets?", "answer": "5"}
+{"id": "l05", "difficulty": "light", "problem": "A class has 32 students, and 5/8 of them are girls. How many boys are in the class?", "answer": "12"}
+{"id": "l06", "difficulty": "light", "problem": "John is 4 times as old as his son. In 8 years, John will be twice as old as his son. How old is the son now?", "answer": "4"}
+{"id": "l07", "difficulty": "light", "problem": "A shop sells apples in bags of 6. You need at least 50 apples. How many bags must you buy?", "answer": "9"}
+{"id": "l08", "difficulty": "light", "problem": "Sarah runs 3 km every weekday and 8 km every weekend day. How many kilometers does she run in one full week?", "answer": "31"}
+{"id": "l09", "difficulty": "light", "problem": "A tank holds 500 liters of water and leaks 3 liters per hour. How many liters remain after 40 hours?", "answer": "380"}
+{"id": "l10", "difficulty": "light", "problem": "A 91-meter rope is cut into equal pieces of 7 meters. How many pieces are there?", "answer": "13"}
+{"id": "l11", "difficulty": "light", "problem": "Let f(x) = 3x^2 - 2x + 1. Compute f(4).", "answer": "41"}
+{"id": "l12", "difficulty": "light", "problem": "The three angles of a triangle are in the ratio 2:3:4. What is the largest angle in degrees?", "answer": "80"}

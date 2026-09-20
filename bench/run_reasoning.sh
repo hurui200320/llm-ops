@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Reasoning runner: runs the small deterministic reasoning suite
-# (reasoning/problems.jsonl) against models deployed on llama-swap, wrapping
-# reasoning/run_reasoning.py. The Python is stdlib-only — nothing to install,
-# and a bash-side warmup request loads the model so a cold start can't skew
-# the first problem's timing.
+# Reasoning runner: runs the reasoning suite (12 light sanity problems from
+# reasoning/problems.jsonl plus the frontier tier — AIME 2026 + generated
+# zebra puzzles — from the gitignored cache built by reasoning/fetch_frontier.py)
+# against models deployed on llama-swap, wrapping reasoning/run_reasoning.py.
+# The Python is stdlib-only — nothing to install, and a bash-side warmup
+# request loads the model so a cold start can't skew the first problem's
+# timing.
 #
 # Usage:
 #   ./run_reasoning.sh                      # all models from deploy/llama-swap.config.yaml
@@ -23,6 +25,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG="$SCRIPT_DIR/../deploy/llama-swap.config.yaml"
 RESULTS_DIR="$SCRIPT_DIR/results/reasoning"
 PY="$SCRIPT_DIR/reasoning/run_reasoning.py"
+LIGHT="$SCRIPT_DIR/reasoning/problems.jsonl"
+FRONTIER="$SCRIPT_DIR/.cache/reasoning/frontier.jsonl"
 
 LLAMA_SWAP_URL="${LLAMA_SWAP_URL:-http://10.233.1.16:8080}"
 MAX_TOKENS="${MAX_TOKENS:-65536}"
@@ -71,6 +75,22 @@ for model in "${MODELS[@]}"; do
 done
 
 mkdir -p "$RESULTS_DIR"
+PROBLEM_ARGS=("$LIGHT")
+if [[ -f "$FRONTIER" ]]; then
+    PROBLEM_ARGS+=("$FRONTIER")
+    # a frontier set that drifted from the frozen manifest would make results
+    # incomparable with runs pinned to it — refuse to run silently on that
+    if check_out="$(python3 "$SCRIPT_DIR/reasoning/fetch_frontier.py" --check 2>&1)"; then
+        echo "frontier set verified against frontier_manifest.json"
+    else
+        echo "error: $check_out" >&2
+        echo "       refetch (python3 reasoning/fetch_frontier.py) and re-freeze before comparing" >&2
+        exit 1
+    fi
+else
+    echo "warning: $FRONTIER missing — running the light sanity tier only." >&2
+    echo "         build it first: python3 reasoning/fetch_frontier.py" >&2
+fi
 declare -a FAILED=()
 START_ALL=$SECONDS
 
@@ -85,6 +105,7 @@ for model in "${MODELS[@]}"; do
     # summary JSON is still written when some requests fail, only the exit
     # status is non-zero
     if python3 "$PY" --base-url "$BASE_URL" --model "$model" \
+        --problems "${PROBLEM_ARGS[@]}" \
         --max-tokens "$MAX_TOKENS" --out "$JSON" 2>&1 | tee "$LOG"; then
         echo "${CYAN}  done in $((SECONDS - RUN_START))s${RESET}"
     else
