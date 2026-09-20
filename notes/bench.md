@@ -32,7 +32,7 @@ Duration: 392m1.184s
 time ./bench/run_longctx.sh
 ```
 
-+ `google-gemma-4-31b-q5km-text`:              pp  355.04 t/s  tg 14.66 t/s
++ `google-gemma-4-31b-q5km-text`:              pp  319.16 t/s  tg 12.61 t/s  accept_rate 0.5447
 + `google-gemma-4-26b-a4b-q80-vision`:         pp 1337.76 t/s  tg 36.64 t/s
 + `google-gemma-4-31b-qat-q40-vision`:         pp  300.75 t/s  tg 15.65 t/s
 + `meta-muse-glimmer-30b-kquant-vision`:       pp  955.40 t/s  tg 28.38 t/s  accept_rate 0.5249
