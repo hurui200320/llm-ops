@@ -1,22 +1,27 @@
 #!/usr/bin/env bash
-# Longctx speed runner (bench step 1): measures near-full-context generation
-# speed (the compaction workload) for models deployed on llama-swap, wrapping
-# speed/run_longctx.py. The Python is stdlib-only — nothing to install, and no
-# bash-side warmup: its /props probe plus its own warmup request load the model.
+# Longctx speed runner (bench step 1): measures generation speed at several
+# context lengths (the compaction workload) for models deployed on llama-swap,
+# wrapping speed/run_longctx.py. The Python is stdlib-only — nothing to install,
+# and no bash-side warmup: its /props probe plus its own warmup request load
+# the model.
 #
 # Usage:
 #   ./run_longctx.sh                      # all models from deploy/llama-swap.config.yaml
 #   ./run_longctx.sh <alias> [alias...]   # only the named llama-swap models
 #
-# Each run is teed to results/longctx/<model>-<stamp>.log with the per-rep
+# Each run is teed to results/longctx/<model>-<stamp>.log with the per-level
 # results JSON next to it (both gitignored); the JSON is rewritten after every
 # rep, so an interrupted run keeps its completed reps. Expect tens of minutes
-# per rep: a cold ~full-context prefill plus a long decode.
+# per rep at the largest level: a cold prefill plus a long decode, times
+# levels x reps.
 #
 # Env:
 #   LLAMA_SWAP_URL  llama-swap root URL (default http://10.233.1.16:8080)
-#   REPS            reps per model (default 2; each rep uses a different
+#   REPS            reps per level per model (default 2; each rep uses a different
 #                   corpus segment, so reps are comparable but cold)
+#   IN_PCTS         comma-separated input sizes as % of ctx, one level each
+#                   (default 20,40,60,85; levels run ascending)
+#   OUT_PCT         output budget as % of ctx, shared by all levels (default 10)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,6 +31,8 @@ PY="$SCRIPT_DIR/speed/run_longctx.py"
 
 LLAMA_SWAP_URL="${LLAMA_SWAP_URL:-http://10.233.1.16:8080}"
 REPS="${REPS:-2}"
+IN_PCTS="${IN_PCTS:-20,40,60,85}"
+OUT_PCT="${OUT_PCT:-10}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 
 CYAN=$'\033[96m'
@@ -64,10 +71,11 @@ for model in "${MODELS[@]}"; do
     JSON="$RESULTS_DIR/$model-$STAMP.json"
     LOG="$RESULTS_DIR/$model-$STAMP.log"
     RUN_START=$SECONDS
-    echo "${CYAN}  reps=$REPS, results in $JSON, logging to $LOG${RESET}"
+    echo "${CYAN}  reps=$REPS, in-pcts=$IN_PCTS, out-pct=$OUT_PCT, results in $JSON, logging to $LOG${RESET}"
     # pipefail makes the pipeline status the python script's, not tee's; the
     # JSON is still written when a rep fails, only the exit status is non-zero
     if python3 "$PY" --model "$model" --base-url "$LLAMA_SWAP_URL" --reps "$REPS" \
+        --in-pcts "$IN_PCTS" --out-pct "$OUT_PCT" \
         --out "$JSON" 2>&1 | tee "$LOG"; then
         echo "${CYAN}  done in $((SECONDS - RUN_START))s${RESET}"
     else

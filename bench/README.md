@@ -58,31 +58,37 @@ One tool, through llama-swap so it measures the deployed config itself
 (chat template, ctx-checkpoints, cache, speculative decoding):
 
 - [`run_longctx.py`](speed/run_longctx.py) — generation speed vs. context
-  size. Defaults to the near-full-context worst case: 85% of the max context
-  of meaningful text in, 10% out — the shape of a harness compaction request.
-  The max context is auto-detected from llama-server `/props` through the
+  size. Defaults to a four-level curve — 20%, 40%, 60%, 85% of the max context
+  of meaningful text in, 10% of max context out at every level — the shape of
+  a harness compaction request, worst case last. The max context is
+  auto-detected from llama-server `/props` through the
   llama-swap upstream passthrough (per-slot `n_ctx` when parallel slots are
   configured — the cap for a single request); `--ctx N` overrides it with a
   warning on mismatch and is needed for non-llama.cpp backends. Other sizes:
-  rerun with `--isl N --osl M` overrides. Cold prefill per rep
-  (distinct corpus segments, `cache_prompt: false`), so no unload-before-run
-  dance is needed; reports pp/tg t/s and spec accept rate at depth.
+  `--in-pcts 20,40,60,85 --out-pct 10`. Cold prefill per rep
+  (distinct corpus segments within a level, `cache_prompt: false` across levels
+  verified by `cache_n == 0`), so no unload-before-run dance is needed;
+  reports per-level pp/tg t/s and spec accept rate at depth.
 
 ```bash
 cd speed
 python3 run_longctx.py --model ornith-1.5-35b-a3b-q80-vision                      # ctx auto-detected from /props
 python3 run_longctx.py --model meta-muse-glimmer-30b-kquant-vision               # 128K per slot, also auto-detected
 python3 run_longctx.py --model <alias> --ctx 262144                              # override (warns if /props disagrees)
+python3 run_longctx.py --model <alias> --in-pcts 20,40,60,85 --out-pct 10        # explicit (these are the defaults)
 ```
 
 Wrapped up as [bench/run_longctx.sh](../bench/run_longctx.sh): for every model
 in `deploy/llama-swap.config.yaml` (positional args subset it) runs
 `run_longctx.py --reps 2` (no ctx override — auto-detected), teeing each run to
 `bench/results/longctx/<model>-<stamp>.log` with the results JSON next to it.
-Env overrides: `LLAMA_SWAP_URL`, `REPS`.
+The JSON holds one entry per input level (`levels[]`, each with its own
+`summary` + `results`); the top-level `summary` aggregates across levels
+(embedding a `levels[]` list that mirrors each level's summary).
+Env overrides: `LLAMA_SWAP_URL`, `REPS`, `IN_PCTS`, `OUT_PCT`.
 
-Expect tens of minutes per `run_longctx.py` rep: a cold ~full-context prefill
-plus a long decode.
+Expect tens of minutes per `run_longctx.py` rep at the largest level: a cold
+prefill plus a long decode, times levels x reps (default 4 levels x 2 reps).
 
 Deployment heuristic — speed is mostly decided by whether things fit in VRAM:
 

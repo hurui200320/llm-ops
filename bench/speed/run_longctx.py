@@ -1,39 +1,44 @@
 #!/usr/bin/env python3
-"""Measure near-full-context speed through llama-swap (the compaction workload).
+"""Measure context-length speed curve through llama-swap (the compaction workload).
 
 Defaults target llama-swap on the LAN. Standard library only.
 
 Usage:
     python3 run_longctx.py --model <llama-swap-alias> [--ctx N]
-                           [--isl N --osl N] [--reps 2]
+                           [--in-pcts 20,40,60,85] [--out-pct 10]
+                           [--reps 2]
                            [--base-url http://fedora-tuf:8080]
                            [--corpus <path-or-url>] [--out results.json]
 
-Sends one chat completion per rep: a target of 85% of the max context of
-meaningful text (a public-domain novel, fetched on the fly and cached under
-bench/.cache/) wrapped in a summarize instruction — the shape of a harness
-compaction request — with a 10% of max context output budget. Reps use
-different corpus segments and cache_prompt=false, so every prefill is cold
-(no KV reuse / checkpoint-restore skew). Draft acceptance only means
-something on meaningful input, which is why real text is used instead of
-synthetic filler; run with MTP enabled first and watch VRAM (see
-bench/README.md). Per-rep prefill/decode t/s, latency, speculative draft
-acceptance and the cached-prefix token count (cache_n — 0 proves the prefill
-was cold) come from llama-server response timings; actual token counts come
-from response usage. The max context is auto-detected from llama-server
-/props through llama-swap's /upstream/<model> passthrough
-(default_generation_settings.n_ctx — per-slot when parallel slots are
-configured, which is the right cap for a single request; llama-swap does not
-route plain /props); --ctx overrides it with a warning when the two disagree
-and is required for backends that do not serve /props. Prompt sizing uses
-llama-server /tokenize through the same passthrough (llama-swap does not
-route plain /tokenize; a bare llama-server is covered by the plain path, and
-the warmup request makes sure the right model is loaded either way), with a
-max-tokens-1 calibration request as last resort. The /props probe records
-the loaded model's n_ctx, slot count, quant and model path into the results
-config for provenance. Results land in
-bench/results/longctx/ and are rewritten after every rep, so an
-interrupted run keeps its completed reps.
+Sends one chat completion per rep per input level: each level targets
+<in-pct>% of the max context of meaningful text (a public-domain novel,
+fetched on the fly and cached under bench/.cache/) wrapped in a summarize
+instruction — the shape of a harness compaction request — with a single
+<out-pct>% of max context output budget shared by all levels. Levels run
+ascending so small/fast sizes fail fast. Reps use different corpus segments
+and cache_prompt=false, so every prefill is cold (no KV reuse /
+checkpoint-restore skew). Draft acceptance only means something on
+meaningful input, which is why real text is used instead of synthetic
+filler; run with MTP enabled first and watch VRAM (see bench/README.md).
+Per-rep prefill/decode t/s, latency, speculative draft acceptance and the
+cached-prefix token count (cache_n — 0 proves the prefill was cold) come
+from llama-server response timings; actual token counts come from response
+usage. The max context is auto-detected from llama-server /props through
+llama-swap's /upstream/<model> passthrough (default_generation_settings.n_ctx
+— per-slot when parallel slots are configured, which is the right cap for a
+single request; llama-swap does not route plain /props); --ctx overrides it
+with a warning when the two disagree and is required for backends that do
+not serve /props. Prompt sizing uses llama-server /tokenize through the same
+passthrough (llama-swap does not route plain /tokenize; a bare llama-server
+is covered by the plain path, and the warmup request makes sure the right
+model is loaded either way), with a max-tokens-1 calibration request as last
+resort. The /props probe records the loaded model's n_ctx, slot count, quant
+and model path into the results config for provenance. Results land in
+bench/results/longctx/ and are rewritten after every rep, so an interrupted
+run keeps its completed reps. Each level calibrates its own chunks-per-rep
+via /tokenize and reuses corpus segments across levels (disjoint segments
+within a level; cross-level coldness relies on cache_prompt=false, verified
+via cache_n == 0), so the corpus only needs to cover the largest level.
 """
 
 import argparse
@@ -186,6 +191,24 @@ def build_content(chunks):
     return INSTRUCTION + "\n\n".join(chunks) + INSTRUCTION_SUFFIX
 
 
+def parse_pcts(text, flag):
+    raw_parts = [p.strip() for p in text.split(",")]
+    if any(p == "" for p in raw_parts):
+        raise ValueError(f"invalid {flag}: {text!r} (contains empty elements, e.g. leading/trailing/consecutive commas)")
+    try:
+        pcts = [float(p) for p in raw_parts]
+    except ValueError:
+        raise ValueError(f"invalid {flag}: {text!r} (want comma-separated numbers like 20,40,60,85)")
+    if not pcts:
+        raise ValueError(f"invalid {flag}: {text!r} (empty list)")
+    if len(set(pcts)) != len(pcts):
+        raise ValueError(f"invalid {flag}: {text!r} (duplicate percentages)")
+    for p in pcts:
+        if not 0 < p < 100:
+            raise ValueError(f"invalid {flag}: {p} not in (0, 100)")
+    return pcts
+
+
 def count_tokens(tokenize_urls, content):
     for url in tokenize_urls:
         try:
@@ -228,6 +251,10 @@ def calibrate_chunks(chunks, isl, tokenize_urls, chat_url, model, args):
                 break
             n, count = new_n, new_count
         print(f"sized: {n} chunks ~ {count} tokens via /tokenize")
+        if abs(count - isl) > max(64, isl // 100):
+            print(f"warning: target isl was {isl}, but sized prompt is ~{count} tokens "
+                  f"(instruction wrapper overhead or coarse chunking may dominate at this size)",
+                  file=sys.stderr)
         return n
     print("warning: /tokenize unavailable on this server; sizing via calibration request", file=sys.stderr)
     payload = {
@@ -253,6 +280,10 @@ def calibrate_chunks(chunks, isl, tokenize_urls, chat_url, model, args):
     print(f"calibration prefill: {actual} tokens in {time.perf_counter() - started:.1f}s")
     if actual:
         n = max(1, round(n * isl / actual))
+        if abs(actual - isl) > max(64, isl // 100):
+            print(f"warning: target isl was {isl}, but calibration prefill was {actual} tokens "
+                  f"(instruction wrapper overhead or coarse chunking may dominate at this size)",
+                  file=sys.stderr)
     return n
 
 
@@ -306,13 +337,15 @@ def main():
     ap.add_argument("--model", required=True, help="model name sent in requests (llama-swap alias)")
     ap.add_argument("--base-url", default="http://fedora-tuf:8080")
     ap.add_argument("--ctx", type=int, default=None,
-                    help="max context of the alias; derives isl (85%%) and osl (10%%); "
-                         "default: auto-detect from /props (per-slot n_ctx, the cap for a "
-                         "single request); explicit value wins, warning on mismatch")
-    ap.add_argument("--isl", type=int, default=None,
-                    help="target input tokens; overrides --ctx derivation, needs --osl")
-    ap.add_argument("--osl", type=int, default=None,
-                    help="target output tokens; overrides --ctx derivation, needs --isl")
+                    help="max context of the alias; derives per-level isl (in-pcts) and "
+                         "the shared osl (out-pct); default: auto-detect from /props "
+                         "(per-slot n_ctx, the cap for a single request); explicit value "
+                         "wins, warning on mismatch")
+    ap.add_argument("--in-pcts", default="20,40,60,85",
+                    help="comma-separated input sizes as %% of ctx, one level each "
+                         "(default: 20,40,60,85); levels run ascending")
+    ap.add_argument("--out-pct", type=float, default=10.0,
+                    help="output budget as %% of ctx, shared by all levels (default: 10)")
     ap.add_argument("--reps", type=int, default=2)
     ap.add_argument("--timeout", type=float, default=14400,
                     help="per-request timeout in seconds; must cover one rep's full "
@@ -322,9 +355,19 @@ def main():
     ap.add_argument("--out", default=None, help="output JSON path (default: results dir, timestamped)")
     args = ap.parse_args()
 
-    if (args.isl is None) != (args.osl is None):
-        print("error: --isl and --osl must be given together (or rely on --ctx)", file=sys.stderr)
+    try:
+        in_pcts = sorted(parse_pcts(args.in_pcts, "--in-pcts"))
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return 2
+    out_pct = args.out_pct
+    if not 0 < out_pct < 100:
+        print(f"error: invalid --out-pct: {out_pct} not in (0, 100)", file=sys.stderr)
+        return 2
+    for p in in_pcts:
+        if p + out_pct > 100:
+            print(f"error: in-pct {p:g} + out-pct {out_pct:g} exceeds 100% of ctx", file=sys.stderr)
+            return 2
 
     root = split_base_url(args.base_url)
     chat_url = root + "/v1/chat/completions"
@@ -359,11 +402,18 @@ def main():
         print(f"warning: /props reports n_ctx {ctx_detected} (per slot{slots}) for "
               f"{args.model!r}, but --ctx {args.ctx} was given; using --ctx", file=sys.stderr)
 
-    if args.isl is None:
-        args.isl = int(args.ctx * 0.85)
-        args.osl = int(args.ctx * 0.10)
-    if args.isl <= 0 or args.osl <= 0 or args.reps < 1:
-        print("error: --isl/--osl must be positive and --reps >= 1", file=sys.stderr)
+    osl = int(args.ctx * out_pct / 100)
+    levels = [{"in_pct": p, "isl": int(args.ctx * p / 100)} for p in in_pcts]
+    bad_levels = [lvl for lvl in levels if lvl["isl"] <= 0]
+    if bad_levels:
+        bad_desc = ", ".join(f"{lvl['in_pct']:g}% (-> {lvl['isl']})" for lvl in bad_levels)
+        print(f"error: derived isl must be positive; ctx {args.ctx} too small for input pct(s): {bad_desc}", file=sys.stderr)
+        return 2
+    if osl <= 0:
+        print(f"error: derived osl must be positive; ctx {args.ctx} too small for out-pct {out_pct:g}% (-> {osl})", file=sys.stderr)
+        return 2
+    if args.reps < 1:
+        print(f"error: --reps must be >= 1 (got {args.reps})", file=sys.stderr)
         return 2
 
     out = Path(args.out) if args.out else (
@@ -372,16 +422,21 @@ def main():
 
     print(f"model:   {args.model}")
     if props_info:
-        print(f"props:   n_ctx {props_info['n_ctx']}  total_slots {props_info.get('total_slots')}"
-              f"  ftype {props_info.get('model_ftype')}")
-        print(f"         {props_info.get('model_path')}")
+        if props_info.get("n_ctx") is not None:
+            print(f"props:   n_ctx {props_info['n_ctx']}  total_slots {props_info.get('total_slots')}"
+                  f"  ftype {props_info.get('model_ftype')}")
+        else:
+            print(f"props:   total_slots {props_info.get('total_slots')}  ftype {props_info.get('model_ftype')}")
+        if props_info.get("model_path"):
+            print(f"         {props_info.get('model_path')}")
     if args.ctx:
         print(f"ctx:     {args.ctx} ({'via /props' if ctx_source == 'props' else 'from --ctx'})")
-    print(f"isl/osl: {args.isl}/{args.osl} target tokens ({args.reps} reps)")
+    for lvl in levels:
+        print(f"level:   in {lvl['in_pct']:g}% -> isl {lvl['isl']} / osl {osl} ({args.reps} reps)")
     print(f"api:     {chat_url}")
     print(f"out:     {out} (saved after every rep)")
-    print("note: each rep is a cold near-full-context prefill plus a long decode; "
-          "expect tens of minutes per rep", flush=True)
+    print("note: each rep is a cold prefill plus a long decode; "
+          "expect tens of minutes per rep at the largest level", flush=True)
 
     try:
         warmup(chat_url, args.model)
@@ -398,16 +453,27 @@ def main():
         print("error: corpus is empty after stripping", file=sys.stderr)
         return 2
 
-    n = calibrate_chunks(chunks, args.isl, tokenize_urls, chat_url, args.model, args)
-    if n * args.reps > len(chunks):
-        print(f"error: corpus too short: needs {args.reps} x {n} chunks for ~{args.isl}-token reps, "
+    chunks_per_rep = {}
+    for lvl in levels:
+        print(f"[in {lvl['in_pct']:g}%] sizing ~{lvl['isl']} tokens via /tokenize ...", flush=True)
+        chunks_per_rep[lvl["in_pct"]] = calibrate_chunks(
+            chunks, lvl["isl"], tokenize_urls, chat_url, args.model, args)
+    need = max(chunks_per_rep.values()) * args.reps
+    if need > len(chunks):
+        biggest = max(levels, key=lambda l: l["isl"])
+        print(f"error: corpus too short: needs {args.reps} x "
+              f"{chunks_per_rep[biggest['in_pct']]} chunks for ~{biggest['isl']}-token reps, "
               f"has {len(chunks)}; use --reps 1 or a longer --corpus", file=sys.stderr)
         return 2
 
-    results = []
+    level_states = [
+        {"in_pct": lvl["in_pct"], "isl_target": lvl["isl"], "osl_target": osl,
+         "chunks_per_rep": chunks_per_rep[lvl["in_pct"]], "results": []}
+        for lvl in levels
+    ]
 
-    def build_summary():
-        ok = [r for r in results if "error" not in r]
+    def level_summary(state):
+        ok = [r for r in state["results"] if "error" not in r]
 
         def mean(key):
             vals = [r[key] for r in ok if isinstance(r.get(key), (int, float))]
@@ -416,18 +482,28 @@ def main():
         draft_total = sum(r["draft_n"] for r in ok)
         accepted_total = sum(r["draft_n_accepted"] for r in ok)
         return {
-            "model": args.model,
+            "in_pct": state["in_pct"],
+            "isl_target": state["isl_target"],
+            "osl_target": state["osl_target"],
             "reps": args.reps,
             "completed": len(ok),
-            "failed": len(results) - len(ok),
-            "isl_target": args.isl,
-            "osl_target": args.osl,
+            "failed": len(state["results"]) - len(ok),
             "avg_prompt_t_s": mean("prompt_per_second"),
             "avg_pred_t_s": mean("predicted_per_second"),
             "avg_latency_s": mean("latency_s"),
             "draft_n": draft_total,
             "accepted": accepted_total,
             "accept_rate": round(accepted_total / draft_total, 4) if draft_total else None,
+        }
+
+    def build_overall():
+        per_level = [level_summary(st) for st in level_states]
+        return {
+            "model": args.model,
+            "reps": args.reps,
+            "completed": sum(s["completed"] for s in per_level),
+            "failed": sum(s["failed"] for s in per_level),
+            "levels": per_level,
         }
 
     def dump_results():
@@ -442,44 +518,69 @@ def main():
                     "ctx": args.ctx,
                     "ctx_source": ctx_source,
                     "props": props_info,
-                    "isl_target": args.isl,
-                    "osl_target": args.osl,
+                    "in_pcts": [st["in_pct"] for st in level_states],
+                    "out_pct": out_pct,
+                    "osl_target": osl,
                     "reps": args.reps,
                     "corpus": args.corpus or "gutenberg:war_and_peace",
-                    "chunks_per_rep": n,
+                    "chunks_per_rep": {str(st["in_pct"]): st["chunks_per_rep"]
+                                       for st in level_states},
                 },
-                "summary": build_summary(),
-                "results": results,
+                "summary": build_overall(),
+                "levels": [
+                    {
+                        "in_pct": st["in_pct"],
+                        "isl_target": st["isl_target"],
+                        "osl_target": st["osl_target"],
+                        "chunks_per_rep": st["chunks_per_rep"],
+                        "summary": level_summary(st),
+                        "results": st["results"],
+                    }
+                    for st in level_states
+                ],
             }, f, indent=2, ensure_ascii=False)
         os.replace(tmp, out)
 
-    for r in range(args.reps):
-        segment = chunks[r * n:(r + 1) * n]
-        content = build_content(segment)
-        print(f"rep {r + 1}/{args.reps}: prefilling ~{args.isl} tokens, generating up to {args.osl} ...", flush=True)
-        try:
-            row = run_rep(chat_url, args.model, content, args.osl, args)
-            results.append(row)
-            print_row(row)
-        except urllib.error.HTTPError as exc:
-            msg = f"HTTP {exc.code}: {http_error_text(exc)}"
-            results.append({"error": msg})
-            print(f"  failed: {msg}", file=sys.stderr, flush=True)
-        except Exception as exc:
-            results.append({"error": str(exc)})
-            print(f"  failed: {exc}", file=sys.stderr, flush=True)
-        dump_results()
+    for st in level_states:
+        n = st["chunks_per_rep"]
+        for r in range(args.reps):
+            # segments restart at chunk 0 for each level (overlap across
+            # levels relies strictly on cache_prompt=false to guarantee cold
+            # prefills; verify cache_n == 0 per rep), so the corpus only
+            # needs to cover the largest level
+            segment = chunks[r * n:(r + 1) * n]
+            content = build_content(segment)
+            print(f"[in {st['in_pct']:g}%] rep {r + 1}/{args.reps}: "
+                  f"prefilling ~{st['isl_target']} tokens, generating up to {osl} ...",
+                  flush=True)
+            try:
+                row = run_rep(chat_url, args.model, content, osl, args)
+                st["results"].append(row)
+                print_row(row)
+                if row.get("cache_n", 0) > 0:
+                    print(f"  warning: rep reported cache_n={row['cache_n']} > 0; "
+                          "prefill may not have been cold", file=sys.stderr, flush=True)
+            except urllib.error.HTTPError as exc:
+                msg = f"HTTP {exc.code}: {http_error_text(exc)}"
+                st["results"].append({"error": msg})
+                print(f"  failed: {msg}", file=sys.stderr, flush=True)
+            except Exception as exc:
+                st["results"].append({"error": str(exc)})
+                print(f"  failed: {exc}", file=sys.stderr, flush=True)
+            dump_results()
 
-    summary = build_summary()
-    ok = [r for r in results if "error" not in r]
+    overall = build_overall()
+    total_expected = len(level_states) * args.reps
 
     print()
-    print(f"summary: {summary['completed']}/{summary['reps']} reps ok  "
-          f"pp {fmt(summary['avg_prompt_t_s'])} t/s  tg {fmt(summary['avg_pred_t_s'])} t/s  "
-          f"accept_rate {summary['accept_rate'] if summary['accept_rate'] is not None else 'n/a'}")
+    for s in overall["levels"]:
+        print(f"[in {s['in_pct']:g}%] summary: {s['completed']}/{s['reps']} reps ok  "
+              f"pp {fmt(s['avg_prompt_t_s'])} t/s  tg {fmt(s['avg_pred_t_s'])} t/s  "
+              f"accept_rate {s['accept_rate'] if s['accept_rate'] is not None else 'n/a'}")
+    print(f"overall: {overall['completed']}/{total_expected} reps ok")
 
     print(f"wrote {out}")
-    return 0 if ok and len(ok) == len(results) else 1
+    return 0 if overall["completed"] == total_expected else 1
 
 
 if __name__ == "__main__":

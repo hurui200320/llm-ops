@@ -43,6 +43,12 @@ time ./bench/run_longctx.sh
 
 Duration: 185m17.374s
 
+> Note: numbers above are from the old single-level runner (85% in, 10% out).
+> `run_longctx.py` now runs a four-level curve per model (20/40/60/85% in,
+> 10% of max ctx out at every level, ctx auto-detected from `/props` with
+> `--ctx` override); re-run `./bench/run_longctx.sh` to replace this table
+> with per-level pp/tg.
+
 ## Tool calling
 
 ```
