@@ -230,7 +230,10 @@ aggregate alone.
 The [aider polyglot benchmark](https://github.com/Aider-AI/aider/tree/main/benchmark)
 runs in Docker against the OpenAI-compatible endpoint; LLM-written code is
 executed unsupervised, so keep it in the container. Subset to the languages I
-use (java / javascript / python — no kotlin/ts exist in polyglot).
+use (cpp / java / javascript — no kotlin/ts exist in polyglot).
+
+Upstream mix (225 total): C++ 26, Go 39, Java 47, JavaScript 49, Python 34,
+Rust 30. The subset here is 122 (26+47+49).
 
 ```bash
 git clone https://github.com/Aider-AI/aider.git && cd aider
@@ -249,12 +252,26 @@ cat > .model-settings.yml <<'EOF'
   use_temperature: false   # let llama-server sampling apply
 EOF
 ./benchmark/benchmark.py <run-name> --model openai/<alias> \
-    --edit-format whole --threads 1 --keywords java,python \
+    --edit-format whole --threads 1 --languages cpp,java,javascript \
     --read-model-settings .model-settings.yml --exercises-dir polyglot-benchmark
 ```
 
-(`--keywords java` also matches javascript.) One thread: the servers run
-`--parallel 1`. Expect hours; start with `--num-tests 2` to smoke-test.
+One thread: the servers run `--parallel 1`. Expect hours; start with
+`--num-tests 2` to smoke-test. Prefer `--languages` over `--keywords`:
+`--keywords java` substring-matches `javascript` (double-running JS entries,
+no dedup) and can't express cpp cleanly.
+
+Per-language score after (or during) a run — answers "which model is best
+at which language":
+
+```bash
+./benchmark/benchmark.py --stats <run-dir> --stats-languages cpp
+./benchmark/benchmark.py --stats <run-dir> --stats-languages java
+./benchmark/benchmark.py --stats <run-dir> --stats-languages javascript
+```
+
+(`--stats` without a dir picks the latest run; the filter maps to
+`<lang>/exercises/practice/*/.aider.results.json`.)
 
 ### 5. Chinese RP (bench/rp/)
 

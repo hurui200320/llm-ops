@@ -21,8 +21,9 @@ into some documents ( https://dev.meta.ai/docs/muse-glimmer/prompting#tool-calli
 > Muse Glimmer supports one tool call per turn. It does not support parallel tool calls;
 > return each tool result before asking the model to select the next tool.
 
-`qwen3.8-27b-q80-vision` and `` failed at `reasoning/reasoning-claude-tool-call` because
-these models does not support reasoning effort `high`, they support `xhigh`, `medium` and `low`.
+`qwen3.8-27b-q80-vision` and `qwen3.8-27b-uncensored-q80-vision` failed at 
+`reasoning/reasoning-claude-tool-call` because these models does not support reasoning
+effort `high`, they support `xhigh`, `medium` and `low`.
 
 Duration: 392m1.184s
 
@@ -43,11 +44,8 @@ time ./bench/run_longctx.sh
 
 Duration: 185m17.374s
 
-> Note: numbers above are from the old single-level runner (85% in, 10% out).
-> `run_longctx.py` now runs a four-level curve per model (20/40/60/85% in,
-> 10% of max ctx out at every level, ctx auto-detected from `/props` with
-> `--ctx` override); re-run `./bench/run_longctx.sh` to replace this table
-> with per-level pp/tg.
+TODO: rerun with new longctx with multi-length
+TODO: consider move vision to CPU? so we can have bigger ubatch for pp? Maybe first start with slow pp like under 500 t/s?
 
 ## Tool calling
 
@@ -298,3 +296,9 @@ Failures:
 python3 ./bench/reasoning/fetch_frontier.py --check
 time ./bench/run_reasoning.sh
 ```
+
+### Note
+
+`aime26-15` on `ornith-1.5-35b-a3b-q80-vision` timeout, when timeout happens, llamacpp still generates text (82k token),
+either it's reasoning, or it get itself into loops. Either way, it may suggest the model failed to figure it out in the
+reasonable budgets (timeout 1800s, aka 30 minutes).

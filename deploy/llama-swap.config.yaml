@@ -370,7 +370,7 @@ models:
   # Qwen3.8 27B with built-in mtp
   "qwen3.8-27b-q80-vision":
     name: "Qwen3.8 27B Q8_0 vision"
-    description: "256K context, vision on CPU"
+    description: "256K context, vision"
     cmd: |
       ${docker-server-rocm}
         ${muse-ornith15-ctx-ckpt}
@@ -413,7 +413,7 @@ models:
   # Qwen3.8 27B uncensored with built-in mtp
   "qwen3.8-27b-uncensored-q80-vision":
     name: "Qwen3.8 27B uncensored Q8_0 vision"
-    description: "256K context, vision on CPU, uncensored"
+    description: "256K context, vision, uncensored"
     cmd: |
       ${docker-server-rocm}
         ${muse-ornith15-ctx-ckpt}
