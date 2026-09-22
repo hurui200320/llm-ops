@@ -145,44 +145,6 @@ apiKeys: []
 # - the model's ID is available in the ${MODEL_ID} macro, also available in macros defined above
 # - below are examples of the all the settings a model can have
 models:
-  # MTP will be slow at longer ctx, dflash won't suffer from this. But dflash requires more VRAM.
-  # Serve 240K instead of 256K context, save some VRAM for dflash
-  # also cannot pin draft model to one GPU via `--spec-draft-device ROCm0` because error:
-  #   pre-allocated tensor (cache_k_l58) in a buffer (ROCm1) that cannot run the operation (NONE)
-  "google-gemma-4-31b-q5km-text":
-    name: "Google Gemma 4 31B Q5_K_M text"
-    description: "256K context, no vision"
-    cmd: |
-      ${docker-server-rocm}
-        ${gemma4-ctx-ckpt}
-        --model                 /models/gemma-4/google-31B-it/google_gemma-4-31B-it-Q5_K_M.gguf
-        --model-draft           /models/gemma-4/google-31B-it-DFlash/gemma4-31b-it-dflash-Q4_K_M.gguf
-        --chat-template-file /templates/gemma-4/31B-chat-template.jinja
-        --spec-type draft-dflash --spec-draft-n-max 2
-        --jinja
-        --reasoning on
-        -b 2048 -ub 256
-        -ngl 99
-        --main-gpu 0 --split-mode layer --tensor-split 33,28
-        --ctx-size 245760
-        --temp 1.0 --top-p 0.95 --top-k 64 --min-p 0.0 --repeat-penalty 1.0
-        --load-mode mmap
-        --no-kv-unified
-        --flash-attn on
-        --parallel 1
-    cmdStop: docker stop ${MODEL_ID}
-    proxy: http://127.0.0.1:${PORT}
-    checkEndpoint: /health
-    concurrencyLimit: 2
-    timeouts:
-      connect: 30
-      keepalive: 30
-      # pp may take a long time so we don't set a timeout here
-      responseHeader: 0
-      tlsHandshake: 10
-      idleConn: 90
-
-
   "google-gemma-4-26b-a4b-q80-vision":
     name: "Gemma 4 26B A4B Q8_0 vision"
     description: "256K context, vision, image 560 tokens"
