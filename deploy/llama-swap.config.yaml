@@ -252,8 +252,6 @@ models:
 
 
   # Ornith 1.5 35B-A3B official Q8_0 with vision.
-  # Backend note: tested rocm; qwen arch historically faster on vulkan.
-  # TODO(backend A/B): compare rocm vs vulkan pp/tg before locking backend.
   # MTP is built into the GGUF but measured slower (pp 1892 vs 2397, tg 30.6 vs 34.5):
   # VRAM was too tight, so llama-server fought the desktop stack (gnome shell)
   # for VRAM and everything slowed down. Spec stays off until there is real

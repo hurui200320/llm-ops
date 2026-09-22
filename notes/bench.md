@@ -1,7 +1,7 @@
 # Benchmark
 
 Date: 2026 Sep 20
-llama.cpp (docker): `version: 0.4.1-dev (build 11028, commit 972d2313b)`
+llama.cpp (docker): `version: 0.4.1-dev (build 11096, commit c550d2f60)`
 
 ## Synbad
 
@@ -68,7 +68,6 @@ time ./bench/run_longctx.sh
   + 60%: pp  807.67 t/s  tg 24.18 t/s  accept_rate 0.6764
   + 85%: pp  681.89 t/s  tg 21.64 t/s  accept_rate 0.7065
 
-Duration: 612m23.855s
 
 ## Tool calling
 
