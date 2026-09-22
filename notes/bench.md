@@ -33,19 +33,53 @@ Duration: 392m1.184s
 time ./bench/run_longctx.sh
 ```
 
-+ `google-gemma-4-31b-q5km-text`:              pp  319.16 t/s  tg 12.61 t/s  accept_rate 0.5447
-+ `google-gemma-4-26b-a4b-q80-vision`:         pp 1337.76 t/s  tg 36.64 t/s
-+ `google-gemma-4-31b-qat-q40-vision`:         pp  300.75 t/s  tg 15.65 t/s
-+ `meta-muse-glimmer-30b-kquant-vision`:       pp  955.40 t/s  tg 28.38 t/s  accept_rate 0.5249
-+ `ornith-1.5-35b-a3b-q80-vision`:             pp 1989.09 t/s  tg 31.29 t/s
-+ `ornith-1.5-35b-a3b-abliterated-q80-vision`: pp 1977.90 t/s  tg 31.03 t/s
-+ `qwen3.8-27b-q80-vision`:                    pp  683.16 t/s  tg 19.91 t/s  accept_rate 0.5958
-+ `qwen3.8-27b-uncensored-q80-vision`:         pp  681.53 t/s  tg 23.05 t/s  accept_rate 0.6222
++ `google-gemma-4-31b-q5km-text`, 256k
+  + 20%: pp  713.32 t/s  tg 21.75 t/s  accept_rate 0.5309
+  + 40%: pp  520.11 t/s  tg 17.94 t/s  accept_rate 0.5352
+  + 60%: pp  406.13 t/s  tg 14.79 t/s  accept_rate 0.5341
+  + 85%: pp  319.47 t/s  tg 12.48 t/s  accept_rate 0.5435
++ `google-gemma-4-26b-a4b-q80-vision`, 256k
+  + 20%: pp 3658.53 t/s  tg 47.12 t/s
+  + 40%: pp 2429.44 t/s  tg 43.32 t/s
+  + 60%: pp 1777.29 t/s  tg 39.88 t/s
+  + 85%: pp 1346.23 t/s  tg 36.54 t/s
++ `google-gemma-4-31b-qat-q40-vision`, 256k, vision on CPU
+  + 20%: pp  842.46 t/s  tg 21.14 t/s
+  + 40%: pp  606.51 t/s  tg 18.95 t/s
+  + 60%: pp  465.70 t/s  tg 17.13 t/s
+  + 85%: pp  362.76 t/s  tg 15.40 t/s
++ `meta-muse-glimmer-30b-kquant-vision`, 128k
+  + 20%: pp 1102.22 t/s  tg 30.29 t/s  accept_rate 0.5627
+  + 40%: pp 1061.42 t/s  tg 29.22 t/s  accept_rate 0.5345
+  + 60%: pp 1015.98 t/s  tg 28.29 t/s  accept_rate 0.5192
+  + 85%: pp  959.03 t/s  tg 27.52 t/s  accept_rate 0.5047
++ `ornith-1.5-35b-a3b-q80-vision`, 256k
+  + 20%: pp 4122.67 t/s  tg 44.07 t/s
+  + 40%: pp 3137.96 t/s  tg 38.83 t/s
+  + 60%: pp 2500.75 t/s  tg 34.96 t/s
+  + 85%: pp 1995.09 t/s  tg 30.92 t/s
++ `ornith-1.5-35b-a3b-abliterated-q80-vision`, 256k
+  + 20%: pp 4059.53 t/s  tg 43.62 t/s 
+  + 40%: pp 3073.43 t/s  tg 38.55 t/s
+  + 60%: pp 2457.76 t/s  tg 34.30 t/s
+  + 85%: pp 1971.75 t/s  tg 30.73 t/s
++ `qwen3.8-27b-q80-vision`, 256k
+  + 20%: pp 1134.18 t/s  tg 30.24 t/s  accept_rate 0.6381
+  + 40%: pp  945.62 t/s  tg 26.64 t/s  accept_rate 0.6597
+  + 60%: pp  807.81 t/s  tg 22.74 t/s  accept_rate 0.6171
+  + 85%: pp  681.62 t/s  tg 19.83 t/s  accept_rate 0.6159
++ `qwen3.8-27b-uncensored-q80-vision`, 256k
+  + 20%: pp 1133.22 t/s  tg 31.47 t/s  accept_rate 0.6765
+  + 40%: pp  944.81 t/s  tg 28.59 t/s  accept_rate 0.7329
+  + 60%: pp  807.67 t/s  tg 24.18 t/s  accept_rate 0.6764
+  + 85%: pp  681.89 t/s  tg 21.64 t/s  accept_rate 0.7065
 
-Duration: 185m17.374s
+Duration: 612m23.855s
 
-TODO: rerun with new longctx with multi-length
 TODO: consider move vision to CPU? so we can have bigger ubatch for pp? Maybe first start with slow pp like under 500 t/s?
+TODO: considering drop google-gemma-4-31b-q5km-text? 
+      Use notiva or deepinfra to replace, they have full bf16 or FP8 at least, better than our text only Q5KM
+      locall only keep qat version
 
 ## Tool calling
 
@@ -288,16 +322,59 @@ Failures:
 - **Subagent / Fast Delegation**:
   - Best choice: `google-gemma-4-26b-a4b-q80-vision` or `ornith-1.5-35b-a3b-q80-vision` (why: MoE architectures offering sub-3.5s median turn latencies, high token throughput, ideal for sandboxed execution of narrow subtasks).
 
-## Reasoning
+## Reasoning gate
 
 ```
 # build frontier.jsonl + freeze the manifest, only need to run once
-# python3 ./bench/reasoning/fetch_frontier.py
+# (re-run when the zebra spec changes — it re-freezes the manifest)
+python3 ./bench/reasoning/fetch_frontier.py
 python3 ./bench/reasoning/fetch_frontier.py --check
 time ./bench/run_reasoning.sh
 ```
 
-### Note
+Pass/fail gate, 10 problems: sanity `l12` (must pass — else the harness is
+broken) + scored 9 = AIME `aime26-10, aime26-11, aime26-15` + zebra
+`5x5:3, 6x4:2, 6x6:1`. PASS = sanity ok and >=6/9; REVIEW = 5/9;
+FAIL = <=4/9 or sanity fails. Zebra carries the weight (cell-level partial
+credit shows defect shape; AIME is binary right/wrong, and 3 problems means
+one lucky guess can't pass). `aime26-15` (0/8 in Sep 2026) and
+`zebra-6x6-01` are near-impossible anchors — a future model solving them
+shows headroom. Retries are a single 60s wait: a problem burning the full
+30-min timeout twice is a genuine fail, not a transient. Expect ~45-90 min
+per model on a single slot.
+
+Frontier set: 15 AIME 2026 (`MathArena/aime_2026`, rev `d2de22f3c656`) +
+16 generated zebra (`3x4:2,4x4:5,4x5:3,5x5:3,6x4:2,6x6:1`, seed 20260920),
+pinned in `bench/reasoning/frontier_manifest.json`.
+
+### Retired ranking run (2026-09-21, not comparable)
+
+The full 35-problem suite (8 light + 12 AIME + 15 zebra, `SKIP_IDS` at the
+time dropped 4 light + 3 AIME) scored 32-34/35 across all 8 models — noise
+at n=35 (SE ~4pp, every pairwise disagreement 1-2 problems), for ~25h wall
+on a single slot. Retired in favor of the gate above; old JSONs stay in
+`bench/results/reasoning/` (gitignored) but ran on a different subset +
+manifest. Back-projected onto the 8 scored gate problems (excl. new 6x6):
+
++ `ornith-1.5-35b-a3b-q80-vision`: 7/8 (only `aime26-15` timeout) → would PASS
++ `ornith-1.5-35b-a3b-abliterated-q80-vision`: 7/8 (only `aime26-15` timeout) → would PASS
++ `qwen3.8-27b-q80-vision`: 7/8 (only `aime26-15` timeout) → would PASS
++ `qwen3.8-27b-uncensored-q80-vision`: 7/8 (only `aime26-15` timeout) → would PASS
++ `meta-muse-glimmer-30b-kquant-vision`: 6/8 (`aime26-10` + `aime26-15`) → would PASS
++ `google-gemma-4-26b-a4b-q80-vision`: 6/8 (`aime26-15` + `zebra-6x4-01` at 12.5% cells, 47k-token ramble) → would PASS
++ `google-gemma-4-31b-qat-q40-vision`: 6/8 (`aime26-15` + `zebra-6x4-01` at 54.2% cells) → would PASS
++ `google-gemma-4-31b-q5km-text`: 5/8 (`aime26-10` + `aime26-15` + `zebra-6x4-01` at 20.8% cells) → would REVIEW
+
+Heretic check (the one thing the old run answered well): abliteration /
+uncensoring did not dumb reasoning down — Ornith 34→33/35 overall (only
+delta: `zebra-4x4-04` single-cell slip), Qwen identical 33/35 with misses
+just swapping (`4x5-03` ↔ `4x5-02`). Both keep 100% Code Patterns in tool
+calling, so they stay candidates for ethical-hacking work — at the cost of
+critical TC-60 sleeper-injection failures. This suite has no code problems;
+confirm with the aider polyglot bench before trusting a heretic on real
+coding.
+
+### Notes
 
 `aime26-15` on `ornith-1.5-35b-a3b-q80-vision` timeout, when timeout happens, llamacpp still generates text (82k token),
 either it's reasoning, or it get itself into loops. Either way, it may suggest the model failed to figure it out in the

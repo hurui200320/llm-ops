@@ -219,7 +219,7 @@ models:
   # The official QAT Q4 for Gemma 4 31B
   "google-gemma-4-31b-qat-q40-vision":
     name: "Google Gemma 4 31B QAT Q4_0 vision"
-    description: "256K context, with vision (image 560 tok)"
+    description: "256K context, with vision on CPU (image 560 tok)"
     cmd: |
       ${docker-server-rocm}
         ${gemma4-ctx-ckpt}
@@ -228,10 +228,10 @@ models:
         --chat-template-file /templates/gemma-4/31B-chat-template.jinja
         --jinja
         --reasoning on
-        -b 2048 -ub 1280
+        -b 2048 -ub 1664 --no-mmproj-offload
         --image-min-tokens 560 --image-max-tokens 560
         -ngl 99
-        --main-gpu 0 --split-mode layer --tensor-split 29,32
+        --main-gpu 0 --split-mode layer --tensor-split 31,30
         --ctx-size 262144
         --temp 1.0 --top-p 0.95 --top-k 64 --min-p 0.0 --repeat-penalty 1.0
         --load-mode mmap
