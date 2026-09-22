@@ -131,25 +131,35 @@ Later, compare runs side by side: `tool-eval-bench compare <runA> <runB>`.
 Note: its safety category penalizes uncensored models — interpret abliterated
 variants' scores with that in mind.
 
-### 3. Reasoning (bench/reasoning/)
+### 3. Reasoning gate (bench/reasoning/)
 
-Three families, 42 problems on disk: 12 light sanity-math (problems.jsonl), 15 AIME
-2026 problems and 15 zebra logic-grid puzzles (both built by
-`fetch_frontier.py` into `../.cache/reasoning/frontier.jsonl`). Numeric
-problems are exact-match scored; zebra puzzles are scored puzzle-level (full
-grid match) plus cell-level partial credit, and per-request completion-token
-counts are recorded (verbosity drift is a secondary quant signal). Sampling is
-left at the server default on purpose: this measures the models under the
-deployed setup, not a leaderboard number.
+Pass/fail gate: 1 sanity problem + 3 AIME 2026 + 6 zebra logic-grid puzzles
+(`run_reasoning.sh` selects these 10 via `SKIP_IDS` out of 43 on disk:
+12 light sanity-math in problems.jsonl, 15 AIME 2026 problems and
+16 zebra puzzles built by `fetch_frontier.py` into
+`../.cache/reasoning/frontier.jsonl`). Numeric problems are exact-match
+scored; zebra puzzles are scored puzzle-level (full grid match) plus
+cell-level partial credit, and per-request completion-token counts are
+recorded. Sampling is left at the server default on purpose: this measures
+the models under the deployed setup, not a leaderboard number.
 
-Comparison runs default to 35 of the 42: `SKIP_IDS` in `run_reasoning.sh`
-drops 4 redundant light problems and the 3 fastest clean AIME passes (least
-information per second); set `SKIP_IDS=` to run everything. The frozen
-manifest and the problem files always hold all 42, and the 31B Q5_K_M
-calibration run covers all of them, so results stay paired on the shared
-subset. Transient gateway 5xx — what a restarting llama-swap answers
-instantly — are retried with a 30/60/120s backoff (a cold 31B load takes
-minutes); 4xx stays fatal and the run aborts after 5 consecutive errors, so
+Gate set: sanity `l12` (must pass — a fail means the harness is broken, not
+the model); AIME `aime26-10, aime26-11, aime26-15`; zebra `5x5:3, 6x4:2,
+6x6:1`. PASS = `l12` ok and >=6/9 scored; REVIEW = 5/9; FAIL = <=4/9 or
+`l12` fails. Zebra carries the weight (cell credit shows defect shape;
+AIME is binary), and AIME is only 3 problems so one lucky guess can't pass
+the gate. `aime26-15` (0/8 in Sep 2026) and `zebra-6x6-01` are
+near-impossible anchors: if a future model solves them, its headroom shows
+up here. Retries are a single 60s wait (`RETRY_WAITS_S = (60,)` in
+`run_reasoning.py`): a problem burning the full 30-minute `--timeout`
+twice is a genuine fail, and on a single-slot setup each extra retry is
+another half hour of wall. Expect ~45-90 min per model.
+
+Comparison runs no longer try to rank: `SKIP_IDS=` runs everything (43),
+only useful for calibrating a new gate set. The frozen manifest and the
+problem files always hold the full set. Transient gateway 5xx — what a
+restarting llama-swap answers instantly — get the single retry above;
+4xx stays fatal and the run aborts after 5 consecutive errors, so
 mid-run restarts no longer silently lose problems.
 
 Why the tier mix: the old light+hard split saturated (Gemma 4 26B scored

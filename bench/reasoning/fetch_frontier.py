@@ -18,17 +18,18 @@ rerunning with the same arguments rebuilds the same set; frontier_manifest.json
 pins it. --check verifies the cached file still matches the manifest.
 
 Usage:
-    python3 fetch_frontier.py [--aime-count 15] [--zebra-spec "3x4:2,4x4:5,4x5:3,5x5:3,6x4:2"]
+    python3 fetch_frontier.py [--aime-count 15] [--zebra-spec "3x4:2,4x4:5,4x5:3,5x5:3,6x4:2,6x6:1"]
                               [--seed 20260920] [--out PATH] [--check]
 
 Zebra spec format: "NxM:count,...". N = houses (rows), M = characteristics.
 Difficulty tracks the search space (N!)^M (not the N*M product: 6x4
-out-searches 5x5). If every model passes, move the spec to bigger sizes and
---aime-count 30; if every model fails, first rule out max-tokens and
-format-compliance issues in the run logs, then move the spec to smaller
-sizes. Any argument change re-freezes the manifest — calibrate on the
-strongest model, freeze once, then compare all models paired (see
-bench/README.md §3 for the full workflow).
+out-searches 5x5, and 6x6 at ~1.4e17 is a category of its own — the gate
+spec carries one 6x6 as a near-impossible anchor). If every model passes,
+move the spec to bigger sizes and --aime-count 30; if every model fails,
+first rule out max-tokens and format-compliance issues in the run logs,
+then move the spec to smaller sizes. Any argument change re-freezes the
+manifest — calibrate on the strongest model, freeze once, then compare
+all models paired (see bench/README.md §3 for the full workflow).
 """
 
 import argparse
@@ -520,7 +521,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--aime-count", type=int, default=15,
                     help="AIME 2026 problems to take, in problem_idx order (0 disables; max 30)")
-    ap.add_argument("--zebra-spec", default="3x4:2,4x4:5,4x5:3,5x5:3,6x4:2",
+    ap.add_argument("--zebra-spec", default="3x4:2,4x4:5,4x5:3,5x5:3,6x4:2,6x6:1",
                     help='zebra puzzles as "NxM:count,..."; N houses x M characteristics')
     ap.add_argument("--seed", type=int, default=20260920)
     ap.add_argument("--out", default=str(DEFAULT_OUT))

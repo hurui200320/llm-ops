@@ -1,32 +1,41 @@
 #!/usr/bin/env bash
-# Reasoning runner: runs the reasoning suite (12 light sanity problems from
-# reasoning/problems.jsonl plus the frontier tier — AIME 2026 + generated
-# zebra puzzles — from the gitignored cache built by reasoning/fetch_frontier.py)
+# Reasoning gate: runs a hard 10-problem subset (1 sanity + 3 AIME + 6 zebra)
 # against models deployed on llama-swap, wrapping reasoning/run_reasoning.py.
 # The Python is stdlib-only — nothing to install, and a bash-side warmup
 # request loads the model so a cold start can't skew the first problem's
 # timing.
 #
+# This used to be a 35-problem ranking suite; scores landed 32-34/35 for all
+# 8 models (noise at n=35, ~25h wall on a single-slot setup), so it was cut
+# down to a pass/fail gate: hard problems only, with two near-impossible
+# anchors (aime26-15, zebra-6x6-01) so a future stronger model visibly
+# breaks the ceiling. Zebra carries the weight (cell-level partial credit
+# shows defect shape; AIME is binary right/wrong), AIME is 3 problems only
+# so one lucky guess can't pass the gate.
+#
+# Gate set (10 run by default, 33 skipped via SKIP_IDS):
+#   sanity: l12 (must pass — else the harness, not the model, is broken)
+#   aime:   aime26-10, aime26-11, aime26-15 (anchor, 0/8 in Sep 2026)
+#   zebra:  zebra-5x5-01..03, zebra-6x4-01..02, zebra-6x6-01 (anchor, new)
+# Verdict: PASS = l12 ok and >=6/9 scored; REVIEW = 5/9; FAIL = <=4/9 or
+# l12 fails. Expect ~45-90 min per model, ~6-12h for 8 on a single slot.
+#
 # Usage:
-#   ./run_reasoning.sh                      # all models from deploy/llama-swap.config.yaml
+#   ./run_reasoning.sh                      # gate subset for all models from deploy/llama-swap.config.yaml
 #   ./run_reasoning.sh <alias> [alias...]   # only the named llama-swap models
 #
 # Each run is teed to results/reasoning/<model>-<stamp>.log with the summary
-# JSON next to it (both gitignored). Expect a while per model: problems are
-# non-streaming and can run up to max-tokens each.
+# JSON next to it (both gitignored).
 #
 # Env:
 #   LLAMA_SWAP_URL  llama-swap root URL (default http://10.233.1.16:8080; the
 #                   /v1 suffix the Python expects is appended here)
 #   MAX_TOKENS      passed as --max-tokens (default 131072)
 #   SKIP_IDS        comma-separated problem ids excluded from runs. Default
-#                   trims the comparison set to 35 of the 42 on disk (4
-#                   redundant/saturated light problems + the 3 fastest clean
-#                   AIME passes of the 31B calibration run — least information
-#                   per second). The frozen manifest and the problem files
-#                   still hold all 42, and the calibration run covers all of
-#                   them, so comparisons stay paired on the shared subset. Set
-#                   SKIP_IDS= (empty) to run everything.
+#                   selects the 10-problem gate out of the 43 on disk (12
+#                   light + 15 AIME + 16 zebra). The frozen manifest and the
+#                   problem files hold all 43. Set SKIP_IDS= (empty) to run
+#                   everything (only useful for calibrating a new gate set).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -38,7 +47,7 @@ FRONTIER="$SCRIPT_DIR/.cache/reasoning/frontier.jsonl"
 
 LLAMA_SWAP_URL="${LLAMA_SWAP_URL:-http://10.233.1.16:8080}"
 MAX_TOKENS="${MAX_TOKENS:-131072}"
-SKIP_IDS="${SKIP_IDS:-l01,l08,l09,l10,aime26-01,aime26-03,aime26-05}"
+SKIP_IDS="${SKIP_IDS:-l01,l02,l03,l04,l05,l06,l07,l08,l09,l10,l11,aime26-01,aime26-02,aime26-03,aime26-04,aime26-05,aime26-06,aime26-07,aime26-08,aime26-09,aime26-12,aime26-13,aime26-14,zebra-3x4-01,zebra-3x4-02,zebra-4x4-01,zebra-4x4-02,zebra-4x4-03,zebra-4x4-04,zebra-4x4-05,zebra-4x5-01,zebra-4x5-02,zebra-4x5-03}"
 BASE_URL="$LLAMA_SWAP_URL/v1"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 

@@ -23,10 +23,13 @@ insensitive), reports puzzle-level pass/fail plus a cell-level partial score.
 If the reply content is empty, scoring falls back to reasoning_content; that is
 deliberate tolerance for the llama.cpp response-in-reasoning bug synbad gates
 on (layer 0), not a replacement for it. Transient transport errors and gateway
-5xx (a restarting llama-swap answers 500/502 instantly) are retried with a
-30/60/120s backoff — a cold 31B load takes minutes; 4xx stays fatal, and the
-run aborts after 5 consecutive errors. The summary reports how many requests
-still failed. Raw replies and a summary are written to bench/results/reasoning/.
+5xx (a restarting llama-swap answers 500/502 instantly) get a single retry
+after a 60s wait — a cold 31B load takes minutes, but a problem that burns
+the full 30-minute timeout twice is a genuine fail, not a transient; 4xx
+stays fatal, and the run aborts after 5 consecutive errors. The summary
+reports how many requests still failed, plus a GATE verdict line (PASS /
+REVIEW / FAIL on the gate subset: l12 must pass, then >=6/9 scored to pass).
+Raw replies and a summary are written to bench/results/reasoning/.
 """
 
 import argparse
@@ -66,9 +69,12 @@ SEPARATOR_CELL_RE = re.compile(r"^[-: ]*$")
 HOUSE_LABEL_RE = re.compile(r"^house\s*#?\s*\d+$")
 
 # A restarting llama-swap/llamacpp answers instantly with 500/502, and a cold
-# 31B load takes minutes — so transient errors back off hard. 4xx is a real
-# error and stays fatal.
-RETRY_WAITS_S = (30, 60, 120)
+# 31B load takes minutes — so one retry after a 60s wait. A single retry is
+# deliberate: a problem that burns the full 30-minute timeout twice is a
+# genuine fail (model rambling past budget), not a transient, and on a
+# single-slot setup each extra retry is another half hour of wall time.
+# 4xx is a real error and stays fatal.
+RETRY_WAITS_S = (60,)
 TRANSIENT_HTTP_CODES = (500, 502, 503, 504)
 CONSECUTIVE_ERROR_ABORT = 5
 
@@ -372,6 +378,28 @@ def main():
                   + (f"  cells {s['avg_cell_accuracy'] * 100:.1f}%" if s["avg_cell_accuracy"] is not None else "")
                   + (f"  avg tg {s['avg_tg_t_s']} t/s" if s["avg_tg_t_s"] else "")
                   + (f"  [errors: {s['errors']}]" if s["errors"] else ""))
+
+    gate_ids = {"l12", "aime26-10", "aime26-11", "aime26-15",
+                "zebra-5x5-01", "zebra-5x5-02", "zebra-5x5-03",
+                "zebra-6x4-01", "zebra-6x4-02", "zebra-6x6-01"}
+    gate_rows = [r for r in results if r["id"] in gate_ids]
+    if len(gate_rows) == len(gate_ids):
+        sanity = next(r for r in gate_rows if r["id"] == "l12")
+        scored = [r for r in gate_rows if r["id"] != "l12"]
+        n_ok = sum(1 for r in scored if r["correct"])
+        if not sanity["correct"]:
+            verdict = "FAIL (sanity l12 failed — harness broken, not a model verdict)"
+        elif n_ok >= 6:
+            verdict = "PASS"
+        elif n_ok == 5:
+            verdict = "REVIEW"
+        else:
+            verdict = "FAIL"
+        print(f"GATE {verdict} (sanity {'ok' if sanity['correct'] else 'MISS'}, "
+              f"scored {n_ok}/9)")
+        summary["gate"] = {"verdict": verdict.split(" ")[0],
+                           "sanity_ok": sanity["correct"],
+                           "scored_correct": n_ok, "scored_total": len(scored)}
 
     out = Path(args.out) if args.out else (
         RESULTS_DIR / f"{args.model.replace('/', '_')}-{time.strftime('%Y%m%d-%H%M')}.json"

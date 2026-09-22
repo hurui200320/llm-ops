@@ -1,7 +1,7 @@
 {
   "seed": 20260920,
   "aime_count": 15,
-  "zebra_spec": "3x4:2,4x4:5,4x5:3,5x5:3,6x4:2",
+  "zebra_spec": "3x4:2,4x4:5,4x5:3,5x5:3,6x4:2,6x6:1",
   "sources": {
     "aime": {
       "dataset": "MathArena/aime_2026",
@@ -133,6 +133,10 @@
     {
       "id": "zebra-6x4-02",
       "answer_sha256": "14b3b94c1edb52da8a4edd37c8a87c6723f356686da7b7f0332dda70cc827366"
+    },
+    {
+      "id": "zebra-6x6-01",
+      "answer_sha256": "21ee09d0f27ae51419254cbb5e99c8bb1a101509770316ee8f6ecf39c4151710"
     }
   ]
 }
