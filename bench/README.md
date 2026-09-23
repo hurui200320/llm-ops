@@ -235,53 +235,95 @@ swings a family score by ~7pp. Call a difference real only when it shows up in
 per-problem flips, zebra cell credit or completion tokens too, not the
 aggregate alone.
 
-### 4. Agentic coding (aider polyglot)
+### 4. Agentic coding (mini-SWE-agent on SWE-bench Multilingual)
 
-The [aider polyglot benchmark](https://github.com/Aider-AI/aider/tree/main/benchmark)
-runs in Docker against the OpenAI-compatible endpoint; LLM-written code is
-executed unsupervised, so keep it in the container. Subset to the languages I
-use (cpp / java / javascript — no kotlin/ts exist in polyglot).
+The model gets a GitHub issue + repo checkout in Docker and must drive the
+loop itself — read/grep/edit via bash tool calls, then submit a patch scored
+by the repo's own tests. This is the same mechanism as OpenCode, unlike the
+old aider-polyglot layer (which injected files and parsed edit blocks, no
+tool calls — deleted as uninformative for this use case).
 
-Upstream mix (225 total): C++ 26, Go 39, Java 47, JavaScript 49, Python 34,
-Rust 30. The subset here is 122 (26+47+49).
+Dataset: [SWE-bench Multilingual](https://www.swebench.com/multilingual.html)
+(300 tasks, native SWE-bench format). No Kotlin exists in any standard agent
+benchmark, so a frozen 20-instance pilot (8 java + 8 js/ts + 4 cpp) stands in,
+with Java as the JVM/Gradle/JUnit proxy for Kotlin. Repo picks avoid heavy
+builds (`logstash`, `druid`) and long eval scripts; instance_ids are frozen
+in the runner — reruns on the same filter are comparable, different filters
+are not. Expand only when several models saturate this set (all correct).
 
-```bash
-git clone https://github.com/Aider-AI/aider.git && cd aider
-git clone https://github.com/Aider-AI/polyglot-benchmark tmp.benchmarks/polyglot-benchmark
-docker build -t aider-benchmark -f benchmark/Dockerfile .
-docker run --rm -it -e AIDER_DOCKER=1 \
-    -e OPENAI_API_BASE=http://host.docker.internal:8080/v1 -e OPENAI_API_KEY=dummy \
-    --add-host=host.docker.internal:host-gateway \
-    -v "$PWD:/aider" -w /aider aider-benchmark bash
-# inside:
-pip install -e '.[dev]'
-cat > .model-settings.yml <<'EOF'
-- name: openai/<alias>
-  edit_format: whole
-  weak_model_name: openai/<alias>
-  use_temperature: false   # let llama-server sampling apply
-EOF
-./benchmark/benchmark.py <run-name> --model openai/<alias> \
-    --edit-format whole --threads 1 --languages cpp,java,javascript \
-    --read-model-settings .model-settings.yml --exercises-dir polyglot-benchmark
-```
-
-One thread: the servers run `--parallel 1`. Expect hours; start with
-`--num-tests 2` to smoke-test. Prefer `--languages` over `--keywords`:
-`--keywords java` substring-matches `javascript` (double-running JS entries,
-no dedup) and can't express cpp cleanly.
-
-Per-language score after (or during) a run — answers "which model is best
-at which language":
+Wrapped up as [bench/run_agentic.sh](run_agentic.sh): installs mini-swe-agent
+and the `swebench` eval package via uv on the fly (never vendored; the eval
+runs as `uvx --from swebench` because a uv-tool venv isn't importable by
+system python3), renders [bench/agentic-swebench.yaml](agentic-swebench.yaml)
+per model (`openai/<alias>` → `$LLAMA_SWAP_URL/v1`, server-side sampling,
+sequential tool calls, cost tracking off), then for every model in
+`deploy/llama-swap.config.yaml` (positional args subset it) runs
+`mini-extra swebench --workers 1` with the frozen `--filter`, followed by the
+local eval harness on `preds.json` inside the run dir. Per-model output lands
+in `bench/results/agentic/<model>-<stamp>/` (gitignored): `preds.json` (the
+graded copy; original kept as `preds.raw.json`), per-instance trajectory
+dirs, the rendered `agent-config.yaml`, teed `console.log` + `eval.log`, the
+harness `eval-report.json` copy, and a `verdict.txt` with resolved/total
+overall + per language. The agent's "Submitted" status only means a patch was
+produced — `verdict.txt` is the pass/fail answer. Env overrides:
+`LLAMA_SWAP_URL`, `FILTER`, `CONFIG_TPL`, `SKIP_EVAL=1` (agent only),
+`EVAL_ONLY=<run-dir>` (re-grade an existing `preds.json` without redoing the
+agent loop), `EVAL_TIMEOUT` (per-instance test seconds, default 1800).
 
 ```bash
-./benchmark/benchmark.py --stats <run-dir> --stats-languages cpp
-./benchmark/benchmark.py --stats <run-dir> --stats-languages java
-./benchmark/benchmark.py --stats <run-dir> --stats-languages javascript
+./bench/run_agentic.sh                         # all models, frozen 20-instance pilot
+./bench/run_agentic.sh <alias>                 # one model (smoke first)
+FILTER='^(axios__axios-4738)$' ./bench/run_agentic.sh <alias>   # 1-instance smoke
 ```
 
-(`--stats` without a dir picks the latest run; the filter maps to
-`<lang>/exercises/practice/*/.aider.results.json`.)
+One worker: the servers run `--parallel 1`. Expect ~3–10 min/instance on
+JS/TS and ~5–18 min on Java/C++ (Maven/Gradle + Docker exec dominate), so
+~3–4h per model on the pilot. Docker required; LLM-written code is executed
+unsupervised, so keep it in the container.
+
+Agent loop settings live in `agentic-swebench.yaml` (pinned copy of
+upstream's prompts; local deviations marked `[LOCAL]`): `step_limit: 75`
+(down from upstream 250 — bounds worst-case wall on slow local inference),
+env `timeout: 600` (Maven/Gradle exceed upstream's 60s), sequential tool
+calls (single-request serving + Glimmer one-tool-per-turn). Pin these across
+compared models, or don't compare.
+
+`verdict.txt` answers "which model is best at which language" (resolved/total
+overall + per language + id lists); record it in `notes/bench.md`.
+
+Reading the verdict:
++ `resolved` = F2P+P2P all passed, the model earns credit;
++ `unresolved` = grading ran but the answer isn't accepted, no credit.
+  These are model scores, not harness failures.
++ `errors`/`empty`/`incomplete` = harness failed to grade due to crashes/empty
+  patches land in.
+
+Caveat: `unresolved` lumps "wrong code" with "right code rejected on a technicality"
+(observed: a functionally correct axios patch scored unresolved because the instance's
+`timeout 10s ... mocha` wrapper exits 124 while mocha reports 4/4 pass, tripping the
+harness exit-code guard — plus the patch missing its trailing newline, forcing a
+`--reject` partial apply). For comparing models use `unresolved` as-is; for
+diagnosing one instance read its per-instance `report.json` + `test_output.txt`
+under `logs/run_evaluation/<run_id>/`.
+
+Reviewing failures — don't stop at x/y (`verdict.txt` is the scoreboard,
+not the diagnosis):
++ `Submitted` + non-empty patch in `preds.json` = capability signal, graded
+  by the repo tests into `resolved`/`unresolved`.
++ Empty patch + trajectory `exit_status: LimitsExceeded` = never submitted
+  (budget/process failure), not a wrong-answer verdict. The `step_limit` cap
+  measures efficiency; a context overflow would instead show as API/context
+  errors or `finish_reason: length` truncation.
++ Triage cheap first: patch size in `preds.json` plus `exit_status` /
+  `api_calls` in `<instance>/<instance>.traj.json`. Then read the tail tool
+  commands to split capped runs into progressing (diagnosed the bug, fumbling
+  submission/scaffolding) vs. thrashing (repeated unproductive edits, no
+  source fix).
++ Only capped-but-progressing instances justify an extended-budget re-run:
+  `FILTER='^(<instance>)$' ./bench/run_agentic.sh <alias>` with a raised
+  `step_limit`, reported as a separate labeled column. Never compare models
+  across different budgets. Record the per-instance why (no-submit vs.
+  wrong-fix vs. harness-reject) in `notes/bench.md` next to the counts.
 
 ### 5. Chinese RP (bench/rp/)
 

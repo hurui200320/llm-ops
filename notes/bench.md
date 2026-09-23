@@ -325,3 +325,5 @@ Also notice aime26-10 is unstable. For example, Gemma 431B QAT failed that on fi
 Same for qwen 3.8 27B, where the original model failed but the uncensored model passed. For the original model,
 a re-run gives a ok result on aime26-10.
 
+## Coding 
+
