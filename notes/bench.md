@@ -299,49 +299,29 @@ python3 ./bench/reasoning/fetch_frontier.py --check
 time ./bench/run_reasoning.sh
 ```
 
-Pass/fail gate, 10 problems: sanity `l12` (must pass — else the harness is
-broken) + scored 9 = AIME `aime26-10, aime26-11, aime26-15` + zebra
-`5x5:3, 6x4:2, 6x6:1`. PASS = sanity ok and >=6/9; REVIEW = 5/9;
-FAIL = <=4/9 or sanity fails. Zebra carries the weight (cell-level partial
-credit shows defect shape; AIME is binary right/wrong, and 3 problems means
-one lucky guess can't pass). `aime26-15` (0/8 in Sep 2026) and
-`zebra-6x6-01` are near-impossible anchors — a future model solving them
-shows headroom. Retries are a single 60s wait: a problem burning the full
-30-min timeout twice is a genuine fail, not a transient. Expect ~45-90 min
-per model on a single slot.
 
-Frontier set: 15 AIME 2026 (`MathArena/aime_2026`, rev `d2de22f3c656`) +
-16 generated zebra (`3x4:2,4x4:5,4x5:3,5x5:3,6x4:2,6x6:1`, seed 20260920),
-pinned in `bench/reasoning/frontier_manifest.json`.
++ `google-gemma-4-26b-a4b-q80-vision`: 
+  + Failed: aime26-15, zebra-6x6-01 (timeout)
++ `google-gemma-4-31b-qat-q40-vision`: 5/9
+  + Failed: aime26-10, aime26-15, zebra-6x4-01 (8%), zebra-6x6-01 (25%)
+  + Failed: aime26-15, zebra-6x4-01 (46%), zebra-6x6-01 (44%)
++ `meta-muse-glimmer-30b-kquant-vision`: 
+  + Failed: aime26-15, zebra-6x6-01 (94%)
++ `ornith-1.5-35b-a3b-q80-vision`: 
+  + Failed: aime26-15
++ `ornith-1.5-35b-a3b-abliterated-q80-vision`: 
+  + Failed: aime26-15
++ `qwen3.8-27b-q80-vision`: 
+  + Failed: aime26-10, aime26-15
+  + Failed: aime26-15, zebra-6x6-01 (94%)
++ `qwen3.8-27b-uncensored-q80-vision`: 
+  + Failed: aime26-15
 
-### Retired ranking run (2026-09-21, not comparable)
-
-The full 35-problem suite (8 light + 12 AIME + 15 zebra, `SKIP_IDS` at the
-time dropped 4 light + 3 AIME) scored 32-34/35 across all 8 models — noise
-at n=35 (SE ~4pp, every pairwise disagreement 1-2 problems), for ~25h wall
-on a single slot. Retired in favor of the gate above; old JSONs stay in
-`bench/results/reasoning/` (gitignored) but ran on a different subset +
-manifest. Back-projected onto the 8 scored gate problems (excl. new 6x6):
-
-+ `ornith-1.5-35b-a3b-q80-vision`: 7/8 (only `aime26-15` timeout) → would PASS
-+ `ornith-1.5-35b-a3b-abliterated-q80-vision`: 7/8 (only `aime26-15` timeout) → would PASS
-+ `qwen3.8-27b-q80-vision`: 7/8 (only `aime26-15` timeout) → would PASS
-+ `qwen3.8-27b-uncensored-q80-vision`: 7/8 (only `aime26-15` timeout) → would PASS
-+ `meta-muse-glimmer-30b-kquant-vision`: 6/8 (`aime26-10` + `aime26-15`) → would PASS
-+ `google-gemma-4-26b-a4b-q80-vision`: 6/8 (`aime26-15` + `zebra-6x4-01` at 12.5% cells, 47k-token ramble) → would PASS
-+ `google-gemma-4-31b-qat-q40-vision`: 6/8 (`aime26-15` + `zebra-6x4-01` at 54.2% cells) → would PASS
-
-Heretic check (the one thing the old run answered well): abliteration /
-uncensoring did not dumb reasoning down — Ornith 34→33/35 overall (only
-delta: `zebra-4x4-04` single-cell slip), Qwen identical 33/35 with misses
-just swapping (`4x5-03` ↔ `4x5-02`). Both keep 100% Code Patterns in tool
-calling, so they stay candidates for ethical-hacking work — at the cost of
-critical TC-60 sleeper-injection failures. This suite has no code problems;
-confirm with the aider polyglot bench before trusting a heretic on real
-coding.
-
-### Notes
-
-`aime26-15` on `ornith-1.5-35b-a3b-q80-vision` timeout, when timeout happens, llamacpp still generates text (82k token),
-either it's reasoning, or it get itself into loops. Either way, it may suggest the model failed to figure it out in the
+About timeout, especially for `aime26-15`: When timeout happens, llamacpp still generates text (82k token),
+either it's reasoning, or it get itself into loops. Either way, it suggests the model failed to figure it out in the
 reasonable budgets (timeout 1800s, aka 30 minutes).
+
+Also notice aime26-10 is unstable. For example, Gemma 431B QAT failed that on first round, but passed on next re-run.
+Same for qwen 3.8 27B, where the original model failed but the uncensored model passed. For the original model,
+a re-run gives a ok result on aime26-10.
+
