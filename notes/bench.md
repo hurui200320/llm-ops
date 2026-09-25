@@ -57,12 +57,12 @@ time ./bench/run_longctx.sh
   + 40%: pp 3073.43 t/s  tg 38.55 t/s
   + 60%: pp 2457.76 t/s  tg 34.30 t/s
   + 85%: pp 1971.75 t/s  tg 30.73 t/s
-+ `qwen3.8-27b-q80-vision`, 256k
++ `qwen3.8-27b-q80-vision`, 256k, vision on CPU
   + 20%: pp 1134.18 t/s  tg 30.24 t/s  accept_rate 0.6381
   + 40%: pp  945.62 t/s  tg 26.64 t/s  accept_rate 0.6597
   + 60%: pp  807.81 t/s  tg 22.74 t/s  accept_rate 0.6171
   + 85%: pp  681.62 t/s  tg 19.83 t/s  accept_rate 0.6159
-+ `qwen3.8-27b-uncensored-q80-vision`, 256k
++ `qwen3.8-27b-uncensored-q80-vision`, 256k, vision on CPU
   + 20%: pp 1133.22 t/s  tg 31.47 t/s  accept_rate 0.6765
   + 40%: pp  944.81 t/s  tg 28.59 t/s  accept_rate 0.7329
   + 60%: pp  807.67 t/s  tg 24.18 t/s  accept_rate 0.6764
