@@ -20,11 +20,13 @@
 # trajectory dirs, the rendered agent-config.yaml, teed console.log +
 # eval.log, the harness eval-report.json copy and a verdict.txt summary —
 # all gitignored. Pass/fail comes from the local SWE-bench eval harness
-# (run via `uvx --from swebench`, since a `uv tool install` venv is not
-# importable by system python3), which applies each model_patch and runs the
-# repo's own tests in Docker; the agent's "Submitted" status alone says
+# (run via `uvx --from swebench==<pin>`, since a `uv tool install` venv is
+# not importable by system python3), which applies each model_patch and runs
+# the repo's own tests in Docker; the agent's "Submitted" status alone says
 # nothing about correctness. Eval runs with CWD inside the run dir, so the
-# harness's relative logs/run_evaluation/ tree lands there too.
+# harness's relative logs/run_evaluation/ tree lands there too. mini-swe-agent
+# and swebench are version-pinned below (pins logged at run start) so a
+# silent upgrade can't change grading semantics between runs.
 #
 # Env:
 #   LLAMA_SWAP_URL  llama-swap root URL (default http://10.233.1.16:8080; /v1
@@ -44,15 +46,32 @@ CONFIG="$SCRIPT_DIR/../deploy/llama-swap.config.yaml"
 CONFIG_TPL="${CONFIG_TPL:-$SCRIPT_DIR/agentic-swebench.yaml}"
 RESULTS_DIR="$SCRIPT_DIR/results/agentic"
 
+# Pinned so the agent loop and grading behavior cannot drift between runs
+# (a silent upgrade of either tool changes grading semantics); these are
+# the versions the 2026-09 results were produced with. Bump deliberately:
+# a re-pin makes new runs incomparable with earlier ones.
+MINI_SWE_AGENT_VERSION="2.4.6"
+SWEBENCH_VERSION="5.0.2"
+
 LLAMA_SWAP_URL="${LLAMA_SWAP_URL:-http://10.233.1.16:8080}"
 BASE_URL="$LLAMA_SWAP_URL/v1"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 
 # Frozen pilot: 8 java + 8 js/ts + 4 cpp from SWE-bench Multilingual.
-# Repo picks avoid the heavy builds (logstash, druid) and the long eval
-# scripts (lombok-3042/3052); instance_ids verified against the dataset.
+# Repo picks avoid the heavy builds (logstash, druid). v2 of the freeze:
+# lombok-3312/3326/3479 were dropped — their eval scripts run
+# `ant test.instance`, a target that does not exist in the repo's
+# build.xml, so grading fails for every model — and axios__axios-4738 was
+# dropped for its own `timeout 10s mocha` wrapper exiting 124 and
+# truncating the TAP output (both verified: never resolvable by any
+# model). Replaced with gson-2024/2061/2158 (same mvnd + maven-log-parser
+# pattern as the other gson instances) and mrdoob__three.js-26589 (same
+# npx qunit + tap-parser pattern as the other three.js instances).
+# lucene stays: its eval downloads gradle-wrapper.jar from
+# raw.githubusercontent.com at test time, which failed during the Sep-24
+# DNS outage but was verified reachable from the container afterwards.
 # Expand only when several models saturate this set (see bench/README.md).
-FILTER="${FILTER:-^(google__gson-1093|google__gson-1100|google__gson-2311|projectlombok__lombok-3312|projectlombok__lombok-3326|projectlombok__lombok-3479|apache__lucene-12196|apache__lucene-13170|axios__axios-4738|axios__axios-6539|vuejs__core-11739|vuejs__core-11870|preactjs__preact-3454|preactjs__preact-4316|mrdoob__three.js-25687|mrdoob__three.js-27395|fmtlib__fmt-1683|fmtlib__fmt-2457|fmtlib__fmt-3272|nlohmann__json-4237)$}"
+FILTER="${FILTER:-^(google__gson-1093|google__gson-1100|google__gson-2311|google__gson-2024|google__gson-2061|google__gson-2158|apache__lucene-12196|apache__lucene-13170|axios__axios-6539|vuejs__core-11739|vuejs__core-11870|preactjs__preact-3454|preactjs__preact-4316|mrdoob__three.js-25687|mrdoob__three.js-26589|mrdoob__three.js-27395|fmtlib__fmt-1683|fmtlib__fmt-2457|fmtlib__fmt-3272|nlohmann__json-4237)$}"
 
 # llama-swap is LAN; a shell-wide proxy (e.g. ALL_PROXY=socks://) must never
 # apply here (same reason as run_tooleval.sh / run_reasoning.sh)
@@ -63,10 +82,14 @@ RESET=$'\033[0m'
 
 ensure_agent() {
     if command -v mini-extra >/dev/null 2>&1; then
+        local ver
+        ver="$(mini-extra --version 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)"
+        [[ -z "$ver" || "$ver" == "$MINI_SWE_AGENT_VERSION" ]] || \
+            echo "warning: mini-extra is $ver but pin is $MINI_SWE_AGENT_VERSION (results not comparable)" >&2
         return
     fi
     echo "mini-extra not on PATH, installing mini-swe-agent via uv..." >&2
-    uv tool install mini-swe-agent || {
+    uv tool install "mini-swe-agent==$MINI_SWE_AGENT_VERSION" || {
         echo "error: uv tool install mini-swe-agent failed and mini-extra is not on PATH" >&2
         exit 1
     }
@@ -77,12 +100,12 @@ ensure_eval() {
     # and running the repo tests in Docker — this is what decides pass/fail.
     # Installed as an isolated uv tool venv (like mini-swe-agent): not
     # importable by system python3, so always invoked as
-    # `uvx --from swebench python -m swebench.harness.run_evaluation`.
-    if uvx --from swebench python -c "import swebench.harness.run_evaluation" >/dev/null 2>&1; then
+    # `uvx --from swebench==$SWEBENCH_VERSION python -m swebench.harness.run_evaluation`.
+    if uvx --from "swebench==$SWEBENCH_VERSION" python -c "import swebench.harness.run_evaluation" >/dev/null 2>&1; then
         return
     fi
     echo "swebench not available via uvx, installing via uv..." >&2
-    uv tool install swebench || {
+    uv tool install "swebench==$SWEBENCH_VERSION" || {
         echo "error: uv tool install swebench failed" >&2
         exit 1
     }
@@ -103,19 +126,39 @@ warmup() {
 }
 
 sanitize_preds() {
-    # Defense-in-depth: strip any BASH_ENV/conda.sh noise line that leaks into
-    # captured command output (the frozen pilot no longer sets BASH_ENV, but an
-    # old preds.json or a future Python-image instance could still carry it).
-    # git apply would choke on it, so grade a sanitized copy and keep the
-    # original untouched as preds.raw.json. Prints the sanitized path.
+    # Defense-in-depth cleanup before grading. Two things:
+    # 1. Strip any BASH_ENV/conda.sh noise line that leaks into captured
+    #    command output (the frozen pilot no longer sets BASH_ENV, but an
+    #    old preds.json or a future Python-image instance could still
+    #    carry it; git apply would choke on it).
+    # 2. Restore the trailing newline. `"\n".join(splitlines())` drops it,
+    #    and a patch whose last line is unterminated makes `git apply`
+    #    fail the whole patch with "patch unexpectedly ends in middle of
+    #    line" (observed: 15/20 raw patches ended with a newline, 0/20
+    #    after the old sanitizer; grading only survived because the
+    #    harness's `patch --fuzz=5` fourth fallback happened to rescue
+    #    them). `git diff` output always ends with a newline, so a
+    #    missing one is an artifact of the agent's patch capture, not the
+    #    model's intent — restoring it makes the first apply attempt
+    #    succeed directly.
+    # Grade the sanitized copy and keep the original untouched as
+    # preds.raw.json. Prints the sanitized path.
     local outdir="$1"
     [[ -f "$outdir/preds.raw.json" ]] || cp "$outdir/preds.json" "$outdir/preds.raw.json"
     python3 - "$outdir/preds.raw.json" "$outdir/preds.json" <<'EOF'
 import json, sys
 raw = json.load(open(sys.argv[1]))
-clean = {k: {**v, "model_patch": "\n".join(
-    ln for ln in (v.get("model_patch") or "").splitlines()
-    if "conda.sh: No such file or directory" not in ln)} for k, v in raw.items()}
+
+def clean_patch(patch):
+    if not patch:
+        return patch
+    out = "\n".join(
+        ln for ln in patch.splitlines()
+        if "conda.sh: No such file or directory" not in ln)
+    return out + "\n"
+
+clean = {k: {**v, "model_patch": clean_patch(v.get("model_patch"))}
+         for k, v in raw.items()}
 json.dump(clean, open(sys.argv[2], "w"), indent=2)
 EOF
     echo "$outdir/preds.json"
@@ -131,7 +174,7 @@ run_eval() {
     local preds
     preds="$(sanitize_preds "$outdir")"
     local eval_ok=1
-    if (cd "$outdir" && uvx --from swebench python -m swebench.harness.run_evaluation \
+    if (cd "$outdir" && uvx --from "swebench==$SWEBENCH_VERSION" python -m swebench.harness.run_evaluation \
         --dataset_name SWE-bench/SWE-bench_Multilingual --split test \
         --predictions_path "$(basename "$preds")" \
         --max_workers 1 --timeout "${EVAL_TIMEOUT:-1800}" \
@@ -159,7 +202,6 @@ summarize_verdict() {
     local model="$1" outdir="$2" eval_id="$3"
     local report
     report="$(ls "$outdir"/*."$eval_id".json 2>/dev/null | head -1)"
-    [[ -n "$report" ]] || { echo "warning: eval report not found in $outdir (*.$eval_id.json)" >&2; return 1; }
     [[ -n "$report" ]] || { echo "warning: eval report not found in $outdir (*.$eval_id.json)" >&2; return 1; }
     cp "$report" "$outdir/eval-report.json"
     python3 - "$outdir/eval-report.json" "$outdir/verdict.txt" <<'EOF'
@@ -235,6 +277,7 @@ for model in "${MODELS[@]}"; do
     echo "    $model"
 done
 echo "Instance filter: $FILTER"
+echo "Pinned tools: mini-swe-agent $MINI_SWE_AGENT_VERSION, swebench $SWEBENCH_VERSION"
 
 mkdir -p "$RESULTS_DIR"
 declare -a FAILED=()

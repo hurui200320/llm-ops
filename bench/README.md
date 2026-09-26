@@ -247,14 +247,28 @@ Dataset: [SWE-bench Multilingual](https://www.swebench.com/multilingual.html)
 (300 tasks, native SWE-bench format). No Kotlin exists in any standard agent
 benchmark, so a frozen 20-instance pilot (8 java + 8 js/ts + 4 cpp) stands in,
 with Java as the JVM/Gradle/JUnit proxy for Kotlin. Repo picks avoid heavy
-builds (`logstash`, `druid`) and long eval scripts; instance_ids are frozen
-in the runner — reruns on the same filter are comparable, different filters
-are not. Expand only when several models saturate this set (all correct).
+builds (`logstash`, `druid`); instance_ids are frozen in the runner — reruns
+on the same filter are comparable, different filters are not. v2 of the
+freeze (Sep 2026) dropped `projectlombok__lombok-3312/3326/3479` (their eval
+scripts run `ant test.instance`, a target absent from the repo's `build.xml` —
+grading fails for every model) and `axios__axios-4738` (its own
+`timeout 10s mocha` wrapper exits 124 and truncates the TAP output), replacing
+them with `google__gson-2024/2061/2158` and `mrdoob__three.js-26589` (same
+image/parser patterns as the surviving instances — verified against the
+dataset's eval specs). Java is gson + lucene only; if repo diversity is ever
+wanted, javaparser/reactivex are the next candidates but their
+`./mvnw`/`./gradlew` wrappers download toolchains at test time, so smoke-test
+first. `apache__lucene-*` evals download `gradle-wrapper.jar` from
+`raw.githubusercontent.com` at test time — they fail whenever that host is
+unreachable (it was during the Sep-24 DNS outage; verified reachable from the
+container after the fix), so run evals with working upstream DNS. Expand the
+set only when several models saturate it (all correct).
 
 Wrapped up as [bench/run_agentic.sh](run_agentic.sh): installs mini-swe-agent
 and the `swebench` eval package via uv on the fly (never vendored; the eval
-runs as `uvx --from swebench` because a uv-tool venv isn't importable by
-system python3), renders [bench/agentic-swebench.yaml](agentic-swebench.yaml)
+runs as `uvx --from swebench==<pin>` because a uv-tool venv isn't importable by
+system python3 — both tools are version-pinned in the runner so a silent
+upgrade can't change grading behavior between runs), renders [bench/agentic-swebench.yaml](agentic-swebench.yaml)
 per model (`openai/<alias>` → `$LLAMA_SWAP_URL/v1`, server-side sampling,
 sequential tool calls, cost tracking off), then for every model in
 `deploy/llama-swap.config.yaml` (positional args subset it) runs
@@ -298,11 +312,16 @@ Reading the verdict:
 + `errors`/`empty`/`incomplete` = harness failed to grade due to crashes/empty
   patches land in.
 
-Caveat: `unresolved` lumps "wrong code" with "right code rejected on a technicality"
-(observed: a functionally correct axios patch scored unresolved because the instance's
-`timeout 10s ... mocha` wrapper exits 124 while mocha reports 4/4 pass, tripping the
-harness exit-code guard — plus the patch missing its trailing newline, forcing a
-`--reject` partial apply). For comparing models use `unresolved` as-is; for
+Caveat: `unresolved` lumps "wrong code" with "right code rejected on a
+technicality". The two technicalities that motivated v2 of the freeze are gone
+from the set (lombok's missing ant target, axios-4738's `timeout 10s mocha`
+wrapper exiting 124 while mocha itself passed 4/4). A third one turned out to
+be self-inflicted and is fixed: `sanitize_preds` used to strip the trailing
+newline from every patch, making `git apply` reject patches that the model
+had submitted correctly (grading survived only via the harness's
+`patch --fuzz=5` fallback); the sanitizer now restores the newline, and a
+model patch whose last line is unterminated for real reasons still gets
+rescued by that fallback. For comparing models use `unresolved` as-is; for
 diagnosing one instance read its per-instance `report.json` + `test_output.txt`
 under `logs/run_evaluation/<run_id>/`.
 
