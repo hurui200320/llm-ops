@@ -343,6 +343,16 @@ not the diagnosis):
   `step_limit`, reported as a separate labeled column. Never compare models
   across different budgets. Record the per-instance why (no-submit vs.
   wrong-fix vs. harness-reject) in `notes/bench.md` next to the counts.
++ If *grading* fails for an external reason (e.g. Gradle or a dependency
+  could not be downloaded), fix the environment and re-grade the **same**
+  saved prediction with
+  `EVAL_ONLY=bench/results/agentic/<model>-<stamp> ./bench/run_agentic.sh`.
+  Do not rerun the agent just to fix a test-harness failure: that would produce
+  a different, stochastic patch. If the failure instead disrupted the agent's
+  own edit/test loop, rerun only that instance with
+  `FILTER='^(<instance_id>)$' ./bench/run_agentic.sh <alias>` using the same
+  prompts and step limit. Record the original error and label the replacement
+  agent attempt separately in `notes/bench.md` before combining results.
 
 ### 5. Chinese RP (bench/rp/)
 

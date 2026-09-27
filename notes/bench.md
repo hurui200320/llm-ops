@@ -282,7 +282,7 @@ Failures:
 
 #### Recommended Models by Agentic Use Case
 - **Agentic Coding**:
-  - Best choice: `qwen3.8-27b-q80-vision` (why: 100% Code Patterns, rigorous read-before-write discipline, strict parameter boundaries, immune to repo/search prompt injections).
+  - Safer defaults: `qwen3.8-27b-q80-vision` or `ornith-1.5-35b-a3b-q80-vision` (both resolved 13/20 on the coding pilot and resisted the TC-60 sleeper injection in the tool-calling benchmark). `qwen3.8-27b-uncensored-q80-vision` has the highest raw coding score (15/20), but failed TC-60; do not give it sensitive or unsandboxed tools. See the Coding section for the small-sample caveat.
 - **Agentic Assistant**:
   - Best choice: `google-gemma-4-31b-qat-q40-vision` or `ornith-1.5-35b-a3b-q80-vision` (why: balanced latency, robust error recovery, and proven resilience against cross-turn sleeper prompt injection).
   - Caveats: Neither `qwen3.8-27b-uncensored-q80-vision`, `ornith-1.5-35b-a3b-abliterated-q80-vision`, nor `google-gemma-4-26b-a4b-q80-vision` should ever be used with access to sensitive communication tools (email/messaging) or untrusted web/file inputs due to critical sleeper injection leaks (TC-60).
@@ -325,5 +325,122 @@ Also notice aime26-10 is unstable. For example, Gemma 431B QAT failed that on fi
 Same for qwen 3.8 27B, where the original model failed but the uncensored model passed. For the original model,
 a re-run gives a ok result on aime26-10.
 
-## Coding 
+## Coding
 
++ MINI_SWE_AGENT_VERSION="2.4.6"
++ SWEBENCH_VERSION="5.0.2"
+
+```bash
+time ./bench/run_agentic.sh
+```
+
+Sep 26–28 2026, frozen v2 SWE-bench Multilingual pilot: 20 tasks per model
+(8 Java, 8 JS/TS, 4 C++). Java stands in for JVM/Kotlin work; this is **not**
+a Kotlin benchmark. mini-SWE-agent gets an issue and a Docker checkout, drives
+its own shell-based edit/test loop, and submits a patch. All seven models used
+the same prompts, one worker, sequential tool calls and a 75-step limit. The
+agent did not set sampling parameters or a seed: llama.cpp sampled using each
+model's deployed settings, so these compare *deployed configurations*, not
+models under identical sampling. The recorded deployment config specifies
+temp/top-p/top-k/min-p of 1.0/0.95/64/0 for Gemma/Muse,
+0.9/0.95/40/0.01 for Ornith variants (presence penalty 1.2), and
+1.0/0.95/20/0 for Qwen variants (presence penalty 0); repeat penalty is
+1.0 throughout. The serving build was llama.cpp `b11096-c550d2f60`.
+
+**Run provenance.** Dataset: `SWE-bench/SWE-bench_Multilingual`, `test` split.
+The Hugging Face cache contained snapshot
+`846e647b9f33c0b51b739d005d13d85493c9af09`; the regular Qwen run logged
+falling back to it. The runner did **not** pin a dataset revision, and the
+other run logs did not record one; this hash is not a verified pin for every
+run. The frozen 20 instance IDs (8 Java, 8 JS/TS, 4 C++) were:
+
+- Java: `google__gson-1093`, `google__gson-1100`, `google__gson-2311`,
+  `google__gson-2024`, `google__gson-2061`, `google__gson-2158`,
+  `apache__lucene-12196`, `apache__lucene-13170`.
+- JS/TS: `axios__axios-6539`, `vuejs__core-11739`, `vuejs__core-11870`,
+  `preactjs__preact-3454`, `preactjs__preact-4316`,
+  `mrdoob__three.js-25687`, `mrdoob__three.js-26589`,
+  `mrdoob__three.js-27395`.
+- C++: `fmtlib__fmt-1683`, `fmtlib__fmt-2457`, `fmtlib__fmt-3272`,
+  `nlohmann__json-4237`.
+
+The agent used a 600s per-command timeout and a two-hour container lifetime
+(mini-SWE-agent default); the grader used a 1800s per-instance test timeout.
+The Gemma 26B replacement alone used `environment.container_timeout: "6h"`
+in a temporary copy of the template; this override is **not** in the
+committed template. For the runner, agent prompts and full serving settings,
+see the immutable copies of [run_agentic.sh](https://github.com/hurui200320/llm-ops/blob/134d2ab62ac4887096449dd82e9a9955432c48dd/bench/run_agentic.sh),
+[agentic-swebench.yaml](https://github.com/hurui200320/llm-ops/blob/134d2ab62ac4887096449dd82e9a9955432c48dd/bench/agentic-swebench.yaml)
+and [llama-swap.config.yaml](https://github.com/hurui200320/llm-ops/blob/134d2ab62ac4887096449dd82e9a9955432c48dd/deploy/llama-swap.config.yaml).
+The missing dataset/seed pins mean a rerun is not expected to reproduce
+individual predictions exactly.
+
+A `resolved` task passed both FAIL_TO_PASS and PASS_TO_PASS tests. `Unresolved`
+means a patch was graded but rejected by repo tests or compilation; no
+submission means the agent reached the step limit without submitting a patch.
+Do not interpret mini-SWE-agent's `Submitted` status as a test pass. The table
+uses each model's original 20-task agent batch, without substituting reruns.
+
+| Model | Resolved | Java /8 | JS/TS /8 | C++ /4 | Unresolved | No submission | Initial 20-task agent loop¹ |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `qwen3.8-27b-uncensored-q80-vision` | **15/20** | **7** | 5 | **3** | 2 | 3 | 4:27:53 |
+| `qwen3.8-27b-q80-vision` | 13/20 | 6 | 4 | **3** | 5 | 2 | 4:10:51 |
+| `ornith-1.5-35b-a3b-q80-vision` | 13/20 | 5 | 5 | **3** | 5 | 2 | 3:28:17 |
+| `google-gemma-4-31b-qat-q40-vision` | 12/20 | 5 | 5 | 2 | 7 | **1** | 2:48:41 |
+| `ornith-1.5-35b-a3b-abliterated-q80-vision` | 11/20 | 6 | 4 | 1 | 4 | 5 | 3:55:17 |
+| `google-gemma-4-26b-a4b-q80-vision` | 9/20 | 2 | 5 | 2 | 6 | 5 | 5:26:18 |
+| `meta-muse-glimmer-30b-kquant-vision` | 6/20 | 3 | 3 | 0 | 2 | **12** | 2:16:10 |
+
+¹ Wall-clock times exclude grading and cover the full original 20-task agent
+batch, including attempts without a submission. **Separate Gemma 26B rerun
+(not included in the table):** in the original `20260926-173013` batch,
+`vuejs__core-11739` ran `npx vitest` without `run`, hit ten 600s command
+timeouts, then lost its Docker container at the default two-hour lifetime.
+Twelve subsequent tool calls returned `No such container`; the agent reached
+75 calls without submitting a patch. This happened during the agent loop, not
+during grading. An isolated `20260927-231126` rerun with the same prompts and
+75-step limit but a six-hour container lifetime submitted a patch after 72
+calls (agent loop **1:39:04**, grading excluded). The patch was graded
+unresolved: it failed the `vuejs__core-11739` FAIL_TO_PASS test. Its separate
+score is **0/1 resolved**. Substituting this attempt would leave Gemma 26B at
+9/20 resolved but change its unresolved/no-submission split from 6/5 to 7/4;
+that composite is not used below.
+
+**Per-instance failures.** Across the 140 original attempts: 79 resolved, 31
+graded unresolved, and 30 had no submission. IDs below abbreviate their repo
+prefix (`gson-1100` = `google__gson-1100`, `three-25687` =
+`mrdoob__three.js-25687`, etc.). **U** = a submitted patch rejected by the
+repo tests or compilation; **N** = no patch submitted within 75 steps. No
+remaining instance is an ungraded harness rejection.
+
+| Model | U — submitted, unresolved | N — no submission |
+|---|---|---|
+| Qwen uncensored | `gson-2061`, `three-25687` | `axios-6539`, `fmt-2457`, `vue-11739` |
+| Qwen | `axios-6539`, `gson-1100`, `gson-2061`, `three-25687`, `preact-4316` | `fmt-2457`, `vue-11739` |
+| Ornith | `axios-6539`, `gson-1100`, `gson-2061`, `gson-2158`, `three-25687` | `fmt-2457`, `vue-11739` |
+| Gemma 4 31B | `axios-6539`, `fmt-1683`, `gson-1100`, `gson-2061`, `gson-2158`, `three-25687`, `vue-11739` | `fmt-3272` |
+| Ornith abliterated | `axios-6539`, `fmt-2457`, `gson-1100`, `three-25687` | `fmt-1683`, `fmt-3272`, `gson-2158`, `vue-11739`, `vue-11870` |
+| Gemma 4 26B | `fmt-1683`, `gson-1100`, `gson-2061`, `gson-2311`, `three-25687`, `preact-4316` | `lucene-12196`, `fmt-3272`, `gson-2024`, `gson-2158`, `vue-11739` |
+| Muse Glimmer | `axios-6539`, `three-25687` | `lucene-12196`, `fmt-1683`, `fmt-2457`, `fmt-3272`, `gson-1100`, `gson-2061`, `gson-2158`, `gson-2311`, `three-26589`, `json-4237`, `preact-4316`, `vue-11739` |
+
+Why some submitted patches lost credit: Gemma 4 31B's `vue-11739` introduced
+a duplicate declaration and failed compilation. Both Gemma `fmt-1683`
+patches passed the target test but regressed `PrintfTest.ZeroFlag`; Gemma 4
+26B's and regular Qwen's `preact-4316` patches likewise passed the target but
+regressed an existing event test. These are code failures, not grader errors.
+By contrast, Ornith abliterated ran passing local fmt tests on capped runs,
+and its `vue-11870` run created a patch, but none was submitted in time. Muse
+Glimmer submitted only 8/20 patches (6 resolved); its 12 no-submissions are
+the main bottleneck. Raise the step budget only for clearly progressing cases
+and report those experiments separately; never mix budgets in this table.
+
+**Takeaway.** Qwen uncensored leads on raw coding, especially Java, but its
+critical TC-60 sleeper-injection failure in the tool-calling benchmark makes
+it a poor default for sensitive or untrusted agentic workflows. Regular Qwen
+and standard Ornith tie at 13/20: Qwen has one more Java resolution, Ornith
+one more JS/TS resolution. Gemma 4 31B submits most reliably (19/20) but
+resolves 12/20. Four tasks were solved by all seven models
+(`lucene-13170`, `gson-1093`, `three-27395`, `preact-3454`); none solved
+`three-25687` or `vue-11739`. A single task moves the score by five
+percentage points, so close differences on this small pilot are directional,
+not a firm ranking.
