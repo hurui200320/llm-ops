@@ -5,3 +5,4 @@
   + Or maybe considering remove it?
 + Test unsloth/Laguna-S-2.1-GGUF, reddit said it's pretty good for coding
   + Ask LLM to optimize, maybe off load some layer to CPU without downgrade performance? Like --cpu-moe or --n-cpu-moe?
+  + Maybe also test nkvo? Since tg is already very slow, maybe nkvo can give a still slow but slightly better speed?

@@ -415,9 +415,11 @@ models:
 
   # Laguna S 2.1
   # dflash not working with llamacpp
+  # since we need to offload to CPU, thus disable mmap loading
+  #   Slower to load, but have better performance? TODO: test this
   "laguna-s-2.1-q4nl":
     name: "LAguna S 2.1 UD-IQ4_NL"
-    description: "256K context, UD IQ4 NL, 30 layers on GPU, 19 layers on CPU"
+    description: "256K context, UD IQ4 NL"
     cmd: |
       ${docker-server-rocm}
         ${muse-ornith15-ctx-ckpt}
@@ -427,11 +429,11 @@ models:
         --jinja
         --reasoning on
         -b 2048 -ub 256
-        -ngl 30
-        --main-gpu 0 --split-mode layer --tensor-split 14,16
+        -ngl 99 --n-cpu-moe 24
+        --main-gpu 0 --split-mode layer --tensor-split 32,17
         --ctx-size 262144
         --temp 0.7 --top-p 0.9 --top-k 64 --min-p 0.0 --repeat-penalty 1.0 --presence-penalty 0.0
-        --load-mode mmap
+        --load-mode none
         --no-kv-unified
         --flash-attn on
         --parallel 1
