@@ -154,8 +154,7 @@ models:
         --model                 /models/gemma-4/google-26B-A4B-it/google_gemma-4-26B-A4B-it-Q8_0.gguf
         --mmproj                /models/gemma-4/google-26B-A4B-it/mmproj-google_gemma-4-26B-A4B-it-bf16.gguf
         --chat-template-file /templates/gemma-4/26B-chat-template.jinja
-        --jinja
-        --reasoning on
+        --jinja --reasoning on --reasoning-preserve
         -b 2048 -ub 1024
         --image-min-tokens 560 --image-max-tokens 560
         -ngl 99
@@ -170,6 +169,14 @@ models:
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
     concurrencyLimit: 2
+    filters:
+      # :npt alias strips historical <think> blocks via per-request
+      # chat_template_kwargs. Base ID keeps the preserve default.
+      setParamsByID:
+        "${MODEL_ID}:npt":
+          chat_template_kwargs:
+            preserve_thinking: false
+
     timeouts:
       connect: 30
       keepalive: 30
@@ -188,8 +195,7 @@ models:
         --model                 /models/gemma-4/google-31B-it-qat-q40-unsloth/gemma-4-31B-it-qat-UD-Q4_K_XL.gguf
         --mmproj                /models/gemma-4/google-31B-it-qat-q40-unsloth/mmproj-BF16.gguf
         --chat-template-file /templates/gemma-4/31B-chat-template.jinja
-        --jinja
-        --reasoning on
+        --jinja --reasoning on --reasoning-preserve
         -b 2048 -ub 1664 --no-mmproj-offload
         --image-min-tokens 560 --image-max-tokens 560
         -ngl 99
@@ -204,6 +210,14 @@ models:
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
     concurrencyLimit: 2
+    filters:
+      # :npt alias strips historical <think> blocks via per-request
+      # chat_template_kwargs. Base ID keeps the preserve default.
+      setParamsByID:
+        "${MODEL_ID}:npt":
+          chat_template_kwargs:
+            preserve_thinking: false
+
     timeouts:
       connect: 30
       keepalive: 30
@@ -226,8 +240,7 @@ models:
         --model-draft           /models/muse-glimmer/meta-30b/dflash-Muse-Glimmer-30B-Q4_K_M.gguf
         --chat-template-file /templates/muse-glimmer/30B-chat-template.jinja
         --spec-type draft-dflash --spec-draft-n-max 2
-        --jinja
-        --reasoning on
+        --jinja --reasoning on --reasoning-preserve
         -b 4096 -ub 2048
         --image-min-tokens 512 --image-max-tokens 4096
         -ngl 53
@@ -265,9 +278,8 @@ models:
         --model                 /models/ornith-1.5/ornith-35B-A3B/Ornith-1.5-35B-A3B-Q8_0.gguf
         --mmproj                /models/ornith-1.5/ornith-35B-A3B/mmproj-Ornith-1.5-35B-A3B-bf16.gguf
         --chat-template-file /templates/ornith-1.5/35B-chat-template.jinja
-        --jinja
         --spec-type none
-        --reasoning on
+        --jinja --reasoning on --reasoning-preserve
         -b 2048 -ub 512
         --image-min-tokens 512 --image-max-tokens 4096
         -ngl 99
@@ -302,8 +314,7 @@ models:
         --model                 /models/ornith-1.5/pocketaihub-35B-A3B-Abliterated/Ornith-1.5-35B-A3B-Abliterated-Q8_0.gguf
         --mmproj                /models/ornith-1.5/pocketaihub-35B-A3B-Abliterated/mmproj-Ornith-1.5-35B-A3B-Abliterated-F16.gguf
         --chat-template-file /templates/ornith-1.5/35B-chat-template.jinja
-        --jinja
-        --reasoning on
+        --jinja --reasoning on --reasoning-preserve
         -b 2048 -ub 512
         --image-min-tokens 512 --image-max-tokens 4096
         -ngl 99
@@ -338,8 +349,7 @@ models:
         --mmproj                /models/qwen3.8/unsloth-27B/mmproj-BF16.gguf
         --chat-template-file /templates/qwen3.8/27B-chat-template.jinja
         --spec-type draft-mtp --spec-draft-n-max 2
-        --jinja
-        --reasoning on
+        --jinja --reasoning on --reasoning-preserve
         -b 2048 -ub 256 --no-mmproj-offload
         --image-min-tokens 1024 --image-max-tokens 8192
         -ngl 99
@@ -381,8 +391,7 @@ models:
         --mmproj                /models/qwen3.8/orcarouter-27B-uncensored/mmproj-Qwen3.8-27B-Uncensored-f16.gguf
         --chat-template-file /templates/qwen3.8/27B-chat-template.jinja
         --spec-type draft-mtp --spec-draft-n-max 2
-        --jinja
-        --reasoning on
+        --jinja --reasoning on --reasoning-preserve
         -b 2048 -ub 256 --no-mmproj-offload
         --image-min-tokens 1024 --image-max-tokens 8192
         -ngl 99
