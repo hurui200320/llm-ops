@@ -81,9 +81,12 @@ globalTTL: 0
 #   - env macros are substituted first, before regular macros
 #   - if the env var is not set, config loading will fail with an error
 macros:
+  # Host RAM only: 32 GiB hard cap, no container swap; VRAM is unaffected.
+  # Target and draft KV caches deliberately retain their original F16 defaults.
   # common start of docker run llama server
   "docker-server-rocm": >
     docker run --name ${MODEL_ID} --init --rm
+      --memory 32g --memory-swap 32g
       --device /dev/dri
       --device /dev/kfd
       --group-add=video
@@ -97,39 +100,46 @@ macros:
       --server
       --port 8080 --host 0.0.0.0
       --alias ${MODEL_ID}
-      -lv 4
+      -lv 3
 
-  # vulkan backend for qwen-arch models (qwen3.5/3.6, ornith 1.5).
-  # Historically faster than rocm for qwen arch on AMD GPUs; keep for A/B testing.
-  "docker-server-vulkan": >
-    docker run --name ${MODEL_ID} --init --rm
-      --device /dev/dri
-      --group-add=video
-      --security-opt label=disable
-      --security-opt seccomp=unconfined
-      -p 127.0.0.1:${PORT}:8080
-      -v /mnt/unenc-xfs/models:/models:z
-      -v /mnt/unenc-xfs/llm-ops/templates:/templates:z
-      ghcr.io/ggml-org/llama.cpp:full-vulkan
-      --server
-      --port 8080 --host 0.0.0.0
-      --alias ${MODEL_ID}
-      -lv 4
 
-  # cache and ctx-checkpoint settings for gemma 4
-  # ctx-checkpoint will be huge since gemma 4 has a lot of standard attn layer
-  # so we have to shrink the number of ckpts (default to 32) to reduce RAM usage, otherwise get OOM kill
-  # on gemma 4 31b, each checkpoint takes 1GB of RAM
-  "gemma4-ctx-ckpt": >
+  # Host-RAM checkpoints are separate from the saved-prompt --cache-ram budget.
+  # Gemma's partial checkpoints save SWA state, not the global-attention cache.
+  # The count is per slot; keep a bounded number to leave RAM for model loading.
+  "gemma4-26b-ctx-ckpt": >
     --cache-ram 0
     --ctx-checkpoints 20
     --checkpoint-min-step 13107
 
-  # cache and ctx-checkpoint settings for muse glimmer 30B and ornith 1.5 35B-A3B
-  # 32 checkpoints x 8192 t/ckpt = 256K context coverage.
-  "muse-ornith15-ctx-ckpt": >
+  # 31B partial checkpoints are 800 MiB each, vs 200 MiB for 26B.
+  # Sixteen checkpoints saved ~3 GiB of anonymous RAM with recent-edit reuse intact.
+  "gemma4-31b-ctx-ckpt": >
+    --cache-ram 0
+    --ctx-checkpoints 16
+    --checkpoint-min-step 13107
+
+  # Ornith's recurrent checkpoints are small (~63 MiB), with no active draft.
+  # Minimum spacing does not guarantee periodic checkpoints or context coverage;
+  # message boundaries and prompt-end checkpoints can bypass it.
+  "ornith15-ctx-ckpt": >
     --cache-ram 8192
     --ctx-checkpoints 32
+    --checkpoint-min-step 8192
+
+  # Four private KV slots already retain their prefixes in VRAM. Eagerly copying
+  # idle slots to RAM added seconds to each short turn; save only on replacement.
+  # Measured with all four 128K slots populated; see notes/muse-glimmer/30B.md.
+  "muse-ctx-ckpt": >
+    --cache-ram 8192
+    --ctx-checkpoints 32
+    --checkpoint-min-step 8192
+    --no-cache-idle-slots
+
+  # Each MTP checkpoint includes growing draft-attention state (~1 GiB at 225K).
+  # A 16-checkpoint cap preserved recent-edit reuse without exceeding 32 GiB.
+  "qwen38-ctx-ckpt": >
+    --cache-ram 4096
+    --ctx-checkpoints 16
     --checkpoint-min-step 8192
 
 # apiKeys: require an API key when making requests to inference endpoints
@@ -150,7 +160,7 @@ models:
     description: "256K context, vision, image 560 tokens"
     cmd: |
       ${docker-server-rocm}
-        ${gemma4-ctx-ckpt}
+        ${gemma4-26b-ctx-ckpt}
         --model                 /models/gemma-4/google-26B-A4B-it/google_gemma-4-26B-A4B-it-Q8_0.gguf
         --mmproj                /models/gemma-4/google-26B-A4B-it/mmproj-google_gemma-4-26B-A4B-it-bf16.gguf
         --chat-template-file /templates/gemma-4/26B-chat-template.jinja
@@ -191,7 +201,7 @@ models:
     description: "256K context, with vision on CPU (image 560 tok)"
     cmd: |
       ${docker-server-rocm}
-        ${gemma4-ctx-ckpt}
+        ${gemma4-31b-ctx-ckpt}
         --model                 /models/gemma-4/google-31B-it-qat-q40-unsloth/gemma-4-31B-it-qat-UD-Q4_K_XL.gguf
         --mmproj                /models/gemma-4/google-31B-it-qat-q40-unsloth/mmproj-BF16.gguf
         --chat-template-file /templates/gemma-4/31B-chat-template.jinja
@@ -234,7 +244,7 @@ models:
     description: "128K context per slot (524288 total, parallel 4), vision, DFlash draft"
     cmd: |
       ${docker-server-rocm}
-        ${muse-ornith15-ctx-ckpt}
+        ${muse-ctx-ckpt}
         --model                 /models/muse-glimmer/meta-30b/Muse-Glimmer-30B-KQuant-Dynamic-Q4_K_XL.gguf
         --mmproj                /models/muse-glimmer/meta-30b/mmproj-Muse-Glimmer-30B-Q4_K_M.gguf
         --model-draft           /models/muse-glimmer/meta-30b/dflash-Muse-Glimmer-30B-Q4_K_M.gguf
@@ -274,7 +284,7 @@ models:
     description: "256K context, vision, MoE 35B total / 3B active"
     cmd: |
       ${docker-server-rocm}
-        ${muse-ornith15-ctx-ckpt}
+        ${ornith15-ctx-ckpt}
         --model                 /models/ornith-1.5/ornith-35B-A3B/Ornith-1.5-35B-A3B-Q8_0.gguf
         --mmproj                /models/ornith-1.5/ornith-35B-A3B/mmproj-Ornith-1.5-35B-A3B-bf16.gguf
         --chat-template-file /templates/ornith-1.5/35B-chat-template.jinja
@@ -310,7 +320,7 @@ models:
     description: "256K context, vision, uncensored, MoE 35B total / 3B active"
     cmd: |
       ${docker-server-rocm}
-        ${muse-ornith15-ctx-ckpt}
+        ${ornith15-ctx-ckpt}
         --model                 /models/ornith-1.5/pocketaihub-35B-A3B-Abliterated/Ornith-1.5-35B-A3B-Abliterated-Q8_0.gguf
         --mmproj                /models/ornith-1.5/pocketaihub-35B-A3B-Abliterated/mmproj-Ornith-1.5-35B-A3B-Abliterated-F16.gguf
         --chat-template-file /templates/ornith-1.5/35B-chat-template.jinja
@@ -344,7 +354,7 @@ models:
     description: "256K context, vision on CPU"
     cmd: |
       ${docker-server-rocm}
-        ${muse-ornith15-ctx-ckpt}
+        ${qwen38-ctx-ckpt}
         --model                 /models/qwen3.8/unsloth-27B/Qwen3.8-27B-Q8_0.gguf
         --mmproj                /models/qwen3.8/unsloth-27B/mmproj-BF16.gguf
         --chat-template-file /templates/qwen3.8/27B-chat-template.jinja
@@ -386,7 +396,7 @@ models:
     description: "256K context, vision on CPU, uncensored"
     cmd: |
       ${docker-server-rocm}
-        ${muse-ornith15-ctx-ckpt}
+        ${qwen38-ctx-ckpt}
         --model                 /models/qwen3.8/orcarouter-27B-uncensored/Qwen3.8-27B-Uncensored-Q8_0.gguf
         --mmproj                /models/qwen3.8/orcarouter-27B-uncensored/mmproj-Qwen3.8-27B-Uncensored-f16.gguf
         --chat-template-file /templates/qwen3.8/27B-chat-template.jinja

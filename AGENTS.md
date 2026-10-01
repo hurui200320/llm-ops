@@ -34,3 +34,11 @@ docker run --rm llm-ops-toolbox:local sh -c 'for cmd in check_updates verify_che
 - External tools (synbad, tool-eval-bench, mini-swe-agent) are installed/fetched on the fly — never vendored into the repo.
 - This is a public repo: no API keys (`ZENMUX_API_KEY` is env-only), no copyrighted or private text (RP scenarios must be SFW rewrites, never exported chats).
 - `bench/results/`, `bench/.cache/`, `bench/runs/` and `bench/data/` are gitignored; aggregate findings go into `notes/bench.md`.
+
+## Optimization guidelines
+
+DO NOT trade VRAM with kv cache quant. The models will be used for coding and agentic loops. And kv cache quant will
+hurt the performance of the model, and increase the tool call error rate. The final deployment should never use kv 
+cache quant, unless verification has been performed to show kv cache quant will not hurt performance.
+
+For speed, try to target pp >= 1000 t/s and tg >= 25 t/s at 85% of context (longctx bench).

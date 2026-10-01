@@ -38,3 +38,43 @@ New result (ub 1664):
   + 60%: pp  465.70 t/s  tg 17.13 t/s
   + 85%: pp  362.76 t/s  tg 15.40 t/s
 
+# 20261001 Host-memory and checkpoint measurements
+
+Keep F16 K/V caches, 256K context, one slot, CPU vision projector, ubatch 1664,
+GPU split and speculative decoding disabled. KV-cache quantization is excluded
+because coding/agentic reliability is more important than saving VRAM.
+
+On `b11096-c550d2f60`, a synthetic 224386-token Python-source fixture with 22
+appended review turns measured cold prefill at 359.42 t/s and median one-token
+appended-turn latency at 1.451 s. Editing recent history reused 224912 tokens,
+processed 64 and took 1.757 s. The separate 128-token decode was 15.32 t/s.
+This is a serving/memory test, not a model-quality benchmark.
+
+Partial context checkpoints were **800.013 MiB each** on this build. They save
+SWA state, not all global-attention K/V. The existing 20-checkpoint configuration
+peaked at 37.31 GiB of cgroup memory: maximum anonymous memory was 19.99 GiB,
+while about 17.26 GiB was reclaimable file cache. No swap or OOM events occurred
+in the unconstrained baseline. Test the 32 GiB Docker limit separately rather
+than treating charged file cache as irreducible checkpoint memory.
+
+With `b11312-0c1e57098`, 16 checkpoints, RAM prompt-cache disabled, and Docker
+`--memory 32g --memory-swap 32g`, the same 224386-token/22-turn workload completed
+without swap or OOM events. Maximum anonymous host memory was 16.97 GiB, about
+3.02 GiB below the 20-checkpoint baseline. The cgroup limit reclaimed file cache.
+Cold prefill was 360.94 t/s, median appended-turn latency 1.450 s, recent-edit
+latency 1.790 s, and 128-token decode 15.29 t/s: no material speed change.
+The edit still reused 224912 tokens and processed only 64.
+
+Use a separate 31B checkpoint macro with count 16 and the existing minimum
+spacing 13107. This leaves more anonymous-memory headroom; it does not shrink
+the 256K context, but editing older history can require more re-prefill.
+
+Plain/streamed tool-result loops, strict JSON-schema output and a synthetic
+red-image check passed. These are short compatibility checks, not evidence of
+unchanged coding quality over long agentic runs. The tested ROCm image is pinned
+and normal logging uses `-lv 3`; all inference-precision and offload settings stay
+unchanged. CPU image processing remains slow: the small image check took 16.83 s.
+
+The final deployed config was rechecked through llama-swap: all four smoke
+checks passed with the 16-checkpoint cap, F16 defaults and 32 GiB/no-swap limits.
+No container swap or OOM events occurred.
