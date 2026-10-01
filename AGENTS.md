@@ -42,3 +42,7 @@ hurt the performance of the model, and increase the tool call error rate. The fi
 cache quant, unless verification has been performed to show kv cache quant will not hurt performance.
 
 For speed, try to target pp >= 1000 t/s and tg >= 25 t/s at 85% of context (longctx bench).
+
+For context, try to target 256k (very important for coding and agentic loop), unless model doesn't support.
+If cannot fit, the bottom line is 240k.
+> By `k`, it should be `ki`. So 256k is 256 * 1024 = 262144.
