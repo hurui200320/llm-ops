@@ -290,9 +290,9 @@ agent loop), `EVAL_TIMEOUT` (per-instance test seconds, default 1800).
 FILTER='^(axios__axios-4738)$' ./bench/run_agentic.sh <alias>   # 1-instance smoke
 ```
 
-One worker: the servers run `--parallel 1`. Expect ~3–10 min/instance on
-JS/TS and ~5–18 min on Java/C++ (Maven/Gradle + Docker exec dominate), so
-~3–4h per model on the pilot. Docker required; LLM-written code is executed
+One worker: the servers run `--parallel 1`. Expect ~3-10 min/instance on
+JS/TS and ~5-18 min on Java/C++ (Maven/Gradle + Docker exec dominate), so
+~3-4h per model on the pilot. Docker required; LLM-written code is executed
 unsupervised, so keep it in the container.
 
 Agent loop settings live in `agentic-swebench.yaml` (pinned copy of

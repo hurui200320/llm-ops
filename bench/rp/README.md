@@ -42,7 +42,7 @@ Output: `bench/results/rp/<alias>/<scenario>.json` (raw) + `report.json` /
 
 ## Judging
 
-Rubric lives in `rubric.md` (5 dimensions + overall, 1–5 each, Chinese).
+Rubric lives in `rubric.md` (5 dimensions + overall, 1-5 each, Chinese).
 The judge is instructed to output strict JSON; `rp_judge.py` retries once on
 parse failure, then skips and records the error instead of aborting the run,
 and averages per-dimension scores across scored scenarios.

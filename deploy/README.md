@@ -30,7 +30,7 @@ If latest docker doesn't work, build our own image.
 
 | Model family | Context per slot | Slots | Checkpoints per slot | Saved-prompt RAM limit |
 | --- | ---: | ---: | ---: | ---: |
-| Gemma 4 26B | 262144 | 1 | 20 | Disabled |
+| Gemma 4 26B | 262144 | 2 | 20 | Disabled |
 | Gemma 4 31B QAT | 262144 | 1 | 16 | Disabled |
 | Muse Glimmer | 131072 | 4 | 32 | 8192 MiB |
 | Ornith 1.5, both variants | 262144 | 1 | 32 | 8192 MiB |
@@ -73,6 +73,33 @@ and all four Muse slots populated, in addition to the cold-prefill speed test.
 Raw synthetic tuning results belong in the gitignored `bench/results/` tree;
 dated findings belong in the corresponding model notes. Never record real
 conversation prompts or responses in this public repository.
+
+## Model startup
+
+The commands disable automatic fitting with `--fit off`: context, GPU placement,
+batch sizes and slots are already set explicitly. Inference warmup remains enabled.
+
+All models use `--load-mode dio` for faster cold loads and rotation across the
+collection. Unlike `mmap`, direct I/O bypasses the page cache for most weight
+reads, so even a previously cached model must be read again. `mmap` was faster
+with fully cached weights; it remains an alternative if usage changes to a small
+frequently revisited subset. `none` uses buffered reads and was not the best
+overall strategy in the switching tests. Context and KV precision are unchanged.
+
+The Docker named volume `llm-ops-comgr-cache` preserves ROCm compilation results
+under `/root/.cache/comgr` when serving containers are removed. Docker creates it
+automatically. This is a compiler cache, not a model-weight or conversation cache.
+Its pruning policy targets 256 MiB and checks at most once per hour; it is not a
+hard disk quota. Compiler/version inputs participate in cache keys, so a new
+image can compile fresh entries without discarding the old ones first.
+
+Set `AMD_COMGR_CACHE_DIR` explicitly, and use only a policy verified by the runtime.
+The tested COMGR build rejects `prune_expiration` despite examples in AMD's docs;
+an invalid policy silently disables caching at normal log verbosity. Check for
+`llvmcache-*` files in the mounted directory when validating a new image.
+
+Measurements and loading-mode comparisons are recorded in
+[notes/model-loading.md](../notes/model-loading.md).
 
 ## Security
 

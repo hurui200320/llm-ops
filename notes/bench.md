@@ -157,7 +157,7 @@ Overview:
   + Perfect foundational execution (100% on Tool Selection, Parameter Precision, Multi-Step Chains, Restraint & Refusal, Localization, Structured Reasoning, Instruction Following, and Code Patterns).
   + Strong resistance to indirect prompt injections across single and multi-turn scenarios (TC-34, TC-58, TC-60).
   + Single-tool-per-turn design: conforms strictly to Meta's documented sequential tool call convention without hallucinating parallel calls.
-  + Weak points: Struggles with complex autonomous multi-turn goals (50% Autonomous Planning); markdown JSON code block wrapping breaks structured output schema compliance across TC-65–TC-69; loops searches when internal DB data is unavailable.
+  + Weak points: Struggles with complex autonomous multi-turn goals (50% Autonomous Planning); markdown JSON code block wrapping breaks structured output schema compliance across TC-65-TC-69; loops searches when internal DB data is unavailable.
 
 Failures:
 
@@ -334,7 +334,7 @@ a re-run gives a ok result on aime26-10.
 time ./bench/run_agentic.sh
 ```
 
-Sep 26–28 2026, frozen v2 SWE-bench Multilingual pilot: 20 tasks per model
+Sep 26-28 2026, frozen v2 SWE-bench Multilingual pilot: 20 tasks per model
 (8 Java, 8 JS/TS, 4 C++). Java stands in for JVM/Kotlin work; this is **not**
 a Kotlin benchmark. mini-SWE-agent gets an issue and a Docker checkout, drives
 its own shell-based edit/test loop, and submits a patch. All seven models used

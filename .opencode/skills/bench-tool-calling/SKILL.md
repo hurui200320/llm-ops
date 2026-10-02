@@ -54,7 +54,7 @@ Once a test case has been clasified as common issue, DO NOT repeat it in each mo
 Find all scenarios marked `⚠️ partial` or `❌ fail` (excluding common issues):
 - Extract the scenario ID (`TC-??`), title, and point loss (e.g. `(1/2)` or `(0/2)`).
 - Inspect the prompt and assistant trace in `bench/runs/*/*.md` to understand *why* the model failed (e.g. stopped before completing turn, injected schema-violating fields, looped file searches on missing DB).
-- Summarize concisely in 1–2 sentences: what happened, whether it recovered, and the real-world operational impact.
+- Summarize concisely in 1-2 sentences: what happened, whether it recovered, and the real-world operational impact.
 
 ---
 

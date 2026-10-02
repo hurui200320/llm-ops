@@ -83,10 +83,18 @@ globalTTL: 0
 macros:
   # Host RAM only: 32 GiB hard cap, no container swap; VRAM is unaffected.
   # Target and draft KV caches deliberately retain their original F16 defaults.
+  # Reuse ROCm compilation results across disposable containers. The named
+  # volume is local to Docker; no model weights or conversation state go here.
+  # Do not add prune_expiration: this COMGR build rejects it and disables caching.
+  # Placement/context are explicit: skip auto-fit estimates, keep warmup enabled.
   # common start of docker run llama server
   "docker-server-rocm": >
     docker run --name ${MODEL_ID} --init --rm
       --memory 32g --memory-swap 32g
+      -v llm-ops-comgr-cache:/root/.cache/comgr
+      -e AMD_COMGR_CACHE=1
+      -e AMD_COMGR_CACHE_DIR=/root/.cache/comgr
+      -e AMD_COMGR_CACHE_POLICY=prune_interval=1h:cache_size=0%:cache_size_bytes=256m:cache_size_files=0
       --device /dev/dri
       --device /dev/kfd
       --group-add=video
@@ -101,6 +109,7 @@ macros:
       --port 8080 --host 0.0.0.0
       --alias ${MODEL_ID}
       -lv 3
+      --fit off
 
 
   # Host-RAM checkpoints are separate from the saved-prompt --cache-ram budget.
@@ -171,7 +180,7 @@ models:
         --main-gpu 0 --split-mode layer --tensor-split 16,15
         --ctx-size 524288
         --temp 1.0 --top-p 0.95 --top-k 64 --min-p 0.0 --repeat-penalty 1.0
-        --load-mode mmap
+        --load-mode dio
         --no-kv-unified
         --flash-attn on
         --parallel 2
@@ -212,7 +221,7 @@ models:
         --main-gpu 0 --split-mode layer --tensor-split 31,30
         --ctx-size 262144
         --temp 1.0 --top-p 0.95 --top-k 64 --min-p 0.0 --repeat-penalty 1.0
-        --load-mode mmap
+        --load-mode dio
         --no-kv-unified
         --flash-attn on
         --parallel 1
@@ -256,7 +265,7 @@ models:
         --main-gpu 0 --split-mode layer --tensor-split 26,27
         --ctx-size 524288
         --temp 1.0 --top-p 0.95 --top-k 64 --min-p 0.0 --repeat-penalty 1.0
-        --load-mode mmap
+        --load-mode dio
         --no-kv-unified
         --flash-attn on
         --parallel 4
@@ -295,7 +304,7 @@ models:
         --main-gpu 0 --split-mode layer --tensor-split 20,22
         --ctx-size 262144
         --temp 0.9 --top-p 0.95 --top-k 40 --min-p 0.01 --repeat-penalty 1.0 --presence-penalty 1.2
-        --load-mode mmap
+        --load-mode dio
         --no-kv-unified
         --flash-attn on
         --parallel 1
@@ -330,7 +339,7 @@ models:
         --main-gpu 0 --split-mode layer --tensor-split 20,22
         --ctx-size 262144
         --temp 0.9 --top-p 0.95 --top-k 40 --min-p 0.01 --repeat-penalty 1.0 --presence-penalty 1.2
-        --load-mode mmap
+        --load-mode dio
         --no-kv-unified
         --flash-attn on
         --parallel 1
@@ -365,7 +374,7 @@ models:
         --main-gpu 0 --split-mode layer --tensor-split 35,31
         --ctx-size 262144
         --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --repeat-penalty 1.0 --presence-penalty 0.0
-        --load-mode mmap
+        --load-mode dio
         --no-kv-unified
         --flash-attn on
         --parallel 1
@@ -407,7 +416,7 @@ models:
         --main-gpu 0 --split-mode layer --tensor-split 35,31
         --ctx-size 262144
         --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --repeat-penalty 1.0 --presence-penalty 0.0
-        --load-mode mmap
+        --load-mode dio
         --no-kv-unified
         --flash-attn on
         --parallel 1
