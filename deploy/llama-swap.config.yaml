@@ -157,7 +157,7 @@ apiKeys: []
 models:
   "google-gemma-4-26b-a4b-q80-vision":
     name: "Gemma 4 26B A4B Q8_0 vision"
-    description: "256K context, vision, image 560 tokens"
+    description: "256K context x 2 slots, vision on GPU (image 560 tokens)"
     cmd: |
       ${docker-server-rocm}
         ${gemma4-26b-ctx-ckpt}
@@ -165,20 +165,20 @@ models:
         --mmproj                /models/gemma-4/google-26B-A4B-it/mmproj-google_gemma-4-26B-A4B-it-bf16.gguf
         --chat-template-file /templates/gemma-4/26B-chat-template.jinja
         --jinja --reasoning on --reasoning-preserve
-        -b 2048 -ub 1024
+        -b 2048 -ub 768
         --image-min-tokens 560 --image-max-tokens 560
         -ngl 99
-        --main-gpu 0 --split-mode layer --tensor-split 13,18
-        --ctx-size 262144
+        --main-gpu 0 --split-mode layer --tensor-split 16,15
+        --ctx-size 524288
         --temp 1.0 --top-p 0.95 --top-k 64 --min-p 0.0 --repeat-penalty 1.0
         --load-mode mmap
         --no-kv-unified
         --flash-attn on
-        --parallel 1
+        --parallel 2
     cmdStop: docker stop ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
-    concurrencyLimit: 2
+    concurrencyLimit: 4
     filters:
       # :npt alias strips historical <think> blocks via per-request
       # chat_template_kwargs. Base ID keeps the preserve default.
@@ -198,7 +198,7 @@ models:
   # The official QAT Q4 for Gemma 4 31B
   "google-gemma-4-31b-qat-q40-vision":
     name: "Google Gemma 4 31B QAT Q4_0 vision"
-    description: "256K context, with vision on CPU (image 560 tok)"
+    description: "256K context, vision on GPU (image 560 tok)"
     cmd: |
       ${docker-server-rocm}
         ${gemma4-31b-ctx-ckpt}
@@ -206,7 +206,7 @@ models:
         --mmproj                /models/gemma-4/google-31B-it-qat-q40-unsloth/mmproj-BF16.gguf
         --chat-template-file /templates/gemma-4/31B-chat-template.jinja
         --jinja --reasoning on --reasoning-preserve
-        -b 2048 -ub 1664 --no-mmproj-offload
+        -b 2048 -ub 768
         --image-min-tokens 560 --image-max-tokens 560
         -ngl 99
         --main-gpu 0 --split-mode layer --tensor-split 31,30
@@ -219,7 +219,7 @@ models:
     cmdStop: docker stop ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
-    concurrencyLimit: 2
+    concurrencyLimit: 3
     filters:
       # :npt alias strips historical <think> blocks via per-request
       # chat_template_kwargs. Base ID keeps the preserve default.
@@ -227,7 +227,6 @@ models:
         "${MODEL_ID}:npt":
           chat_template_kwargs:
             preserve_thinking: false
-
     timeouts:
       connect: 30
       keepalive: 30
@@ -241,7 +240,7 @@ models:
   # Max context 131072 per slot; ctx-size 524288 / parallel 4 = 131072 per slot.
   "meta-muse-glimmer-30b-kquant-vision":
     name: "Meta Muse Glimmer 30B kquant-dynamic vision"
-    description: "128K context per slot (524288 total, parallel 4), vision, DFlash draft"
+    description: "128K context x 4 slots, vision on GPU, DFlash draft"
     cmd: |
       ${docker-server-rocm}
         ${muse-ctx-ckpt}
@@ -264,7 +263,7 @@ models:
     cmdStop: docker stop ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
-    concurrencyLimit: 5
+    concurrencyLimit: 6
     timeouts:
       connect: 30
       keepalive: 30
@@ -281,7 +280,7 @@ models:
   # headroom; re-enable with --spec-type draft-mtp and re-verify with bench/speed.
   "ornith-1.5-35b-a3b-q80-vision":
     name: "Ornith 1.5 35B-A3B Q8_0 vision"
-    description: "256K context, vision, MoE 35B total / 3B active"
+    description: "256K context, vision on GPU, MoE 35B total / 3B active"
     cmd: |
       ${docker-server-rocm}
         ${ornith15-ctx-ckpt}
@@ -303,7 +302,7 @@ models:
     cmdStop: docker stop ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
-    concurrencyLimit: 2
+    concurrencyLimit: 3
     timeouts:
       connect: 30
       keepalive: 30
@@ -317,7 +316,7 @@ models:
   # This GGUF has no MTP head, so no --spec-type flag.
   "ornith-1.5-35b-a3b-abliterated-q80-vision":
     name: "Ornith 1.5 35B-A3B Abliterated Q8_0 vision"
-    description: "256K context, vision, uncensored, MoE 35B total / 3B active"
+    description: "256K context, vision on GPU, uncensored, MoE 35B total / 3B active"
     cmd: |
       ${docker-server-rocm}
         ${ornith15-ctx-ckpt}
@@ -338,7 +337,7 @@ models:
     cmdStop: docker stop ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
-    concurrencyLimit: 2
+    concurrencyLimit: 3
     timeouts:
       connect: 30
       keepalive: 30
@@ -373,7 +372,7 @@ models:
     cmdStop: docker stop ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
-    concurrencyLimit: 2
+    concurrencyLimit: 3
     filters:
       # :npt alias strips historical <think> blocks via per-request
       # chat_template_kwargs. Base ID keeps the preserve default.
@@ -415,7 +414,7 @@ models:
     cmdStop: docker stop ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
-    concurrencyLimit: 2
+    concurrencyLimit: 3
     filters:
       # :npt alias strips historical <think> blocks via per-request
       # chat_template_kwargs. Base ID keeps the preserve default.

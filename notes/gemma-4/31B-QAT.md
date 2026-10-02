@@ -78,3 +78,34 @@ unchanged. CPU image processing remains slow: the small image check took 16.83 s
 The final deployed config was rechecked through llama-swap: all four smoke
 checks passed with the 16-checkpoint cap, F16 defaults and 32 GiB/no-swap limits.
 No container swap or OOM events occurred.
+
+# 20261002 Ubatch and vision-placement tuning
+
+Ubatch `1664 → 768` and CPU → GPU vision; retain split `31,30`,
+batch 2048, one private 256Ki slot and F16 KV.
+
+| Ubatch / projector | Cold prompt tokens | pp (t/s) | tg (t/s) | Peak VRAM (GiB) |
+| --- | ---: | ---: | ---: | ---: |
+| 1664 / CPU baseline | 227692 | 333.79 | 15.32 | 23.755 / 23.739 |
+| 768 / CPU | 227692 | 350.29 | 15.52 | 21.249 / 21.264 |
+| 768 / GPU, ~85% | 222676 | 357.80 | 15.76 | 23.022 / 21.397 |
+| 768 / GPU, near limit | 254818 | 323.35 | 14.87 | 22.896 / 21.271 |
+
+Smaller ubatch freed ~2.5 GiB/card with similar speed and ~1.5 s cached latency;
+peak anonymous RAM fell 17.238 → 15.373 GiB. GPU vision spent much of that saving:
+minimum measured headroom was **0.962 / 2.587 GiB**.
+
+Corrected near-limit validation passed at 97.21% context with cached turns,
+recent edits, decode and vision. Three console screenshots passed seven-field
+extraction with ~223000 history plus ~11000 description tokens; cached portrait/1080p
+latency fell **25.65 / 23.78 s → 11.57 / 11.21 s** on GPU, including generation.
+Ubatch must fit the 560-token image chunk, not the surrounding description.
+
+Tool/analysis checks passed, but follow-up and restoration fully re-prefilled
+long histories. The novel-summary check did not score grounded correctness.
+Post-sync plain/streamed tool loops, JSON schema and vision passed (short image:
+2.84 s).
+
+Single synthetic runs on digest-pinned `b11312-0c1e57098`, not general quality
+benchmarks. VRAM: 100-ms peaks, GPU 0 (CPU x16) / GPU 1 (chipset x4). Container
+swap/OOM stayed zero; host swap increased and heavy desktop load remains untested.
