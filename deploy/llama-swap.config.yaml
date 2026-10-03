@@ -452,7 +452,9 @@ models:
     description: "128k context, 16K per slot, vision on GPU"
     cmd: |
       ${docker-server-rocm}
-        ${qwen38-ctx-ckpt}
+        --cache-ram 0
+        --ctx-checkpoints 0
+        --no-cache-idle-slots
         --model                 /models/openjev/ggml-gguf/OpenJev-Q8_0.gguf
         --mmproj                /models/openjev/ggml-gguf/mmproj-OpenJev-BF16.gguf
         --chat-template-file /templates/openjev/chat-template.jinja
@@ -461,7 +463,6 @@ models:
         --image-min-tokens 1024 --image-max-tokens 8192
         -ngl 99
         --main-gpu 0 --split-mode layer --tensor-split 32,33
-        --no-cache-idle-slots
         --ctx-size 131072
         --parallel 8
         --load-mode dio

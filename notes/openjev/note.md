@@ -59,12 +59,9 @@ sizes, so choose using representative traffic, not a fixed workload crossover.
 - Row failed to load: `device ROCm0 does not support split buffers`. This build
   does not support it; this was not a measured OOM or slow result.
 - Disabling eager idle-slot caching cut layer/256's fresh 1K median by about
-  16.6% in screening. Prefer it over `--cache-ram 0`: it retains the saved-prompt
-  budget, while the latter's smaller 1K prompt confounded its extra gain.
-  Identical-request reuse also reported zero cached tokens, **not a prefill-cache
-  hit**. Edited histories and concurrent sessions remain untested. Checkpoints
-  are completion-only in the reviewed upstream code, so disabling them is not
-  an obvious optimization here.
+  16.6% in screening. Identical-request reuse also reported zero cached tokens,
+  **not a prefill-cache hit**. Edited histories and concurrent sessions remain
+  untested. Checkpoints are completion-only in the reviewed upstream code.
 - Neither candidate reaches the initial 50 ms goal. The
   [upstream 43 ms median](https://huggingface.co/blog/ggml-org/decision-models-in-llamacpp)
   on one RTX PRO 6000 is not like-for-like: prompt sizes, option descriptions,
