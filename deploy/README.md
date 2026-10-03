@@ -19,12 +19,22 @@ chmod +x /mnt/unenc-xfs/llama-swap
 To update docker images:
 
 ```
-docker pull ghcr.io/ggml-org/llama.cpp:full-vulkan
 docker pull ghcr.io/ggml-org/llama.cpp:full-rocm
 ```
 
 Note that llamacpp's docker image is not the latest, it will build docker image on fixed interval.
-If latest docker doesn't work, build our own image.
+If latest docker doesn't work, build our own image:
+
+```bash
+docker build \
+  -f .devops/rocm.Dockerfile \
+  --target full \
+  --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --build-arg APP_VERSION="$(git describe --tags --always)" \
+  --build-arg APP_REVISION="$(git rev-parse HEAD)" \
+  --progress=plain \
+  -t ghcr.io/ggml-org/llama.cpp:full-rocm .
+```
 
 ### Cache budgets
 

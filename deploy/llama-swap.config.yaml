@@ -438,3 +438,43 @@ models:
       responseHeader: 0
       tlsHandshake: 10
       idleConn: 90
+
+
+  # OpenJev, based on Qwen3.8 27B
+  # the base model supports 256k context, but the fine tune model
+  # is only validated for up to 16k. Longer context may not work.
+  # The unified kv pool is 128k, so we can have more VRAM for pp
+  # for slower latency.
+  # Note about sampling parameters: read from GGUF.
+  #   For example: qwen35.decision.temperature.*
+  "openjev-q80-vision":
+    name: "OpenJev Q8_0 vision"
+    description: "128k context, 16K per slot, vision on GPU"
+    cmd: |
+      ${docker-server-rocm}
+        ${qwen38-ctx-ckpt}
+        --model                 /models/openjev/ggml-gguf/OpenJev-Q8_0.gguf
+        --mmproj                /models/openjev/ggml-gguf/mmproj-OpenJev-BF16.gguf
+        --chat-template-file /templates/openjev/chat-template.jinja
+        --jinja
+        -b 2048 -ub 256
+        --image-min-tokens 1024 --image-max-tokens 8192
+        -ngl 99
+        --main-gpu 0 --split-mode layer --tensor-split 32,33
+        --no-cache-idle-slots
+        --ctx-size 131072
+        --parallel 8
+        --load-mode dio
+        --no-kv-unified
+        --flash-attn on
+    cmdStop: docker stop ${MODEL_ID}
+    proxy: http://127.0.0.1:${PORT}
+    checkEndpoint: /health
+    concurrencyLimit: 16
+    timeouts:
+      connect: 30
+      keepalive: 30
+      # pp may take a long time so we don't set a timeout here
+      responseHeader: 0
+      tlsHandshake: 10
+      idleConn: 90

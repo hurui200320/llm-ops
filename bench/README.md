@@ -15,6 +15,10 @@ speaks OpenAI-compatible API with the model alias as `model`. Each tool
 documents its own overrides: the Python scripts take flags (e.g. `--base-url`),
 the shell scripts read env vars (e.g. `LLAMA_SWAP_URL`, `LIMIT`).
 
+Decision models such as OpenJev use `/v1/systemone`, not chat completions.
+Use the [System One latency test](#system-one-decision-latency) below rather
+than the generation, reasoning, or tool-calling pipeline for those models.
+
 ## Pipeline per model
 
 Run layers in this order; each is standalone.
@@ -107,6 +111,112 @@ Deployment heuristic — speed is mostly decided by whether things fit in VRAM:
 Draft acceptance only means something on meaningful input, which is why
 `run_longctx.py` feeds a real public-domain novel (Project Gutenberg, fetched
 on the fly, cached under `bench/.cache/`) instead of synthetic filler.
+
+#### System One decision latency
+
+[`systemone-latency/run_latency.py`](systemone-latency/run_latency.py) measures
+the **currently deployed configuration** through `/v1/systemone`. It only
+sends requests and collects numbers: a human or LLM must deploy each combination
+of `-ub`, split mode, and any other server flags separately. It never edits
+configs, launches containers, switches models deliberately, or runs SSH commands.
+As with any request through llama-swap, an unloaded requested model can load on
+demand; reserve an exclusive runner window yourself.
+
+```bash
+# Baseline: 50 sequential requests for each of approximately 1K and 4K tokens.
+python3 bench/systemone-latency/run_latency.py \
+  --model openjev-q80-vision --label tensor-ub1024
+
+# Run on the runner itself to avoid LAN latency. Deploy the candidate first.
+python3 bench/systemone-latency/run_latency.py \
+  --base-url http://127.0.0.1:8080 --model openjev-q80-vision \
+  --label layer-ub2048 --reps 200 --warmup 10
+
+# Add one-image workloads alongside text-only workloads, at both text sizes.
+python3 bench/systemone-latency/run_latency.py \
+  --model openjev-q80-vision --label tensor-ub1024 \
+  --image /path/to/synthetic-screenshot.png
+
+# Direct llama-server: metadata and metrics are at the root, not /upstream/model.
+python3 bench/systemone-latency/run_latency.py \
+  --base-url http://127.0.0.1:10004 --probe-prefix '' \
+  --model openjev-q80-vision --label direct-tensor-ub1024
+```
+
+**Workloads and timing:**
+
+- Original synthetic agent records plus one `choice` question with 16 described
+  actions. The expected answer is `inspect_logs`; this is a sanity check, not an
+  intelligence benchmark. No external corpus or dependencies are needed.
+- `--input-tokens 1024,4096` controls approximate **total text prompt** sizes,
+  including decision-template and option overhead. Untimed calibration requests
+  use actual `usage.input_tokens` to adjust the background length. Six attempts
+  are allowed; actual measured token distributions are always reported.
+- Images are prepared outside the timer. Each `--image` adds separate workloads
+  containing that one image; sizes refer to text before the image is added.
+  Actual usage includes image tokens. Image resizing/token budgets remain server
+  settings, not benchmark settings.
+- Requests are sequential over a persistent HTTP connection, with prepared JSON
+  timed from request send until the full body is read. JSON parsing, validation,
+  payload generation, probes, calibration, and warmups are excluded. Model loading
+  should finish during calibration/probes; extend warmup if compilation transients
+  remain. `--timeout` is a socket timeout, not an overall wall-time deadline.
+- Default `--warmup 5` sends five excluded requests per workload. Measured workloads
+  are interleaved in seeded random order. Use the same `--seed` (default 42), sizes,
+  image bytes, repetitions, and client location when comparing configurations.
+- `--label` is descriptive metadata only; it does **not** verify or change flags.
+  Keep the Docker image, tensor proportions, slots, context, F16 KV precision,
+  cache settings, and vision budget fixed for the initial 12-way sweep:
+  `ub = 256,512,1024,2048` × `split = layer,row,tensor`.
+
+**Cache caveats:**
+
+Default `--state-mode fresh` varies the state near its start for every request,
+using a per-run identity to avoid accidental reuse across runs. This minimizes
+prefix reuse but is **not guaranteed zero-cache prefill**. The decision template
+can still contribute a shared prefix. The runner deliberately does not send
+`cache_prompt: false`: the reviewed llama.cpp System One implementation ignores
+that request parameter.
+
+`--state-mode reuse` repeats an identical state and question within each workload,
+including warmup. It measures repeated-request behavior under the deployed cache
+policy, **not** same-state/new-question latency. Actual reuse depends on slot
+selection and the model's recurrent-state behavior; do not assume a cache hit.
+
+The script attempts `/props` and snapshots `/metrics` before and after the measured
+phase via `/upstream/<model>` (override with `--probe-prefix`). Enable server
+`--metrics` yourself to obtain processed/cached-token deltas. Missing metrics
+are recorded without failing the run. Deltas cover all measured workloads together
+and are meaningful only with no other traffic; they are not per-request cache
+proof. `/props` records build info and slot/context metadata, not every launch flag.
+
+**Results:**
+
+Each run creates `bench/results/systemone/<UTC timestamp>-<unique id>/`:
+
+- `requests.jsonl`: immediately flushed per-request latency, HTTP status, usage,
+  chosen action, expected-answer check, and errors. No full prompts, images,
+  authentication keys, or raw response bodies are saved.
+- `summary.json`: run metadata, image hashes, calibration/warmup results,
+  optional props/metrics, and **separate** workload summaries: mean, population
+  standard deviation, min, p50, p95, max, token distributions, and error counts.
+  Percentiles use linear interpolation at `(n-1)*p`. Failed requests have their
+  own latency summary and never count as fast successes. Wrong-but-valid choices
+  remain timed successes and are counted separately by the sanity check.
+
+Use `--output-dir` for a new explicit artifact directory; existing directories
+are refused to avoid overwriting results. HTTP/transport/validation failures are
+not retried. Measured failures do not abort remaining requests, but produce exit
+status 1. Calibration or warmup failures stop the run and save a failure summary;
+Ctrl-C saves partial results and exits 130.
+
+Rank p50 separately for 1K/4K and text/image workloads, with p95 and errors as
+guardrails. Fifty samples are a quick screen, not precise tail estimation; confirm
+the top two and baseline with at least 200 samples per workload and a changed
+candidate order. Do not compare cached and fresh modes as equivalent, pool
+different workload percentiles, or interpret sequential latency as concurrent
+throughput. Record aggregate findings in `notes/openjev/note.md`; keep raw data
+in the gitignored results tree. Use public-safe synthetic screenshots and labels.
 
 ### 2. Tool calling (tool-eval-bench)
 
