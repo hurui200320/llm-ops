@@ -81,7 +81,7 @@ globalTTL: 0
 #   - env macros are substituted first, before regular macros
 #   - if the env var is not set, config loading will fail with an error
 macros:
-  # Host RAM only: 32 GiB hard cap, no container swap; VRAM is unaffected.
+  # Host RAM 32 GiB with 32GB swap; VRAM is unaffected.
   # Target and draft KV caches deliberately retain their original F16 defaults.
   # Reuse ROCm compilation results across disposable containers. The named
   # volume is local to Docker; no model weights or conversation state go here.
@@ -90,7 +90,7 @@ macros:
   # common start of docker run llama server
   "docker-server-rocm": >
     docker run --name ${MODEL_ID} --init --rm
-      --memory 32g --memory-swap 32g
+      --memory 32g --memory-swap 64g
       -v llm-ops-comgr-cache:/root/.cache/comgr
       -e AMD_COMGR_CACHE=1
       -e AMD_COMGR_CACHE_DIR=/root/.cache/comgr
@@ -116,14 +116,14 @@ macros:
   # Gemma's partial checkpoints save SWA state, not the global-attention cache.
   # The count is per slot; keep a bounded number to leave RAM for model loading.
   "gemma4-26b-ctx-ckpt": >
-    --cache-ram 0
+    --cache-ram 40960
     --ctx-checkpoints 20
     --checkpoint-min-step 13107
 
   # 31B partial checkpoints are 800 MiB each, vs 200 MiB for 26B.
   # Sixteen checkpoints saved ~3 GiB of anonymous RAM with recent-edit reuse intact.
   "gemma4-31b-ctx-ckpt": >
-    --cache-ram 0
+    --cache-ram 40960
     --ctx-checkpoints 16
     --checkpoint-min-step 13107
 
@@ -131,7 +131,7 @@ macros:
   # Minimum spacing does not guarantee periodic checkpoints or context coverage;
   # message boundaries and prompt-end checkpoints can bypass it.
   "ornith15-ctx-ckpt": >
-    --cache-ram 8192
+    --cache-ram 40960
     --ctx-checkpoints 32
     --checkpoint-min-step 8192
 
@@ -139,7 +139,7 @@ macros:
   # idle slots to RAM added seconds to each short turn; save only on replacement.
   # Measured with all four 128K slots populated; see notes/muse-glimmer/30B.md.
   "muse-ctx-ckpt": >
-    --cache-ram 8192
+    --cache-ram 40960
     --ctx-checkpoints 32
     --checkpoint-min-step 8192
     --no-cache-idle-slots
@@ -147,7 +147,7 @@ macros:
   # Each MTP checkpoint includes growing draft-attention state (~1 GiB at 225K).
   # A 16-checkpoint cap preserved recent-edit reuse without exceeding 32 GiB.
   "qwen38-ctx-ckpt": >
-    --cache-ram 4096
+    --cache-ram 40960
     --ctx-checkpoints 16
     --checkpoint-min-step 8192
 
