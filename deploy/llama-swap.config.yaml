@@ -187,7 +187,7 @@ models:
     cmdStop: docker stop ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
-    concurrencyLimit: 4
+    concurrencyLimit: 5
     filters:
       # :npt alias strips historical <think> blocks via per-request
       # chat_template_kwargs. Base ID keeps the preserve default.
@@ -195,7 +195,6 @@ models:
         "${MODEL_ID}:npt":
           chat_template_kwargs:
             preserve_thinking: false
-
     timeouts:
       connect: 30
       keepalive: 30
@@ -228,7 +227,7 @@ models:
     cmdStop: docker stop ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
-    concurrencyLimit: 3
+    concurrencyLimit: 5
     filters:
       # :npt alias strips historical <think> blocks via per-request
       # chat_template_kwargs. Base ID keeps the preserve default.
@@ -272,7 +271,7 @@ models:
     cmdStop: docker stop ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
-    concurrencyLimit: 6
+    concurrencyLimit: 10
     timeouts:
       connect: 30
       keepalive: 30
@@ -311,7 +310,7 @@ models:
     cmdStop: docker stop ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
-    concurrencyLimit: 3
+    concurrencyLimit: 5
     timeouts:
       connect: 30
       keepalive: 30
@@ -346,7 +345,7 @@ models:
     cmdStop: docker stop ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
-    concurrencyLimit: 3
+    concurrencyLimit: 5
     timeouts:
       connect: 30
       keepalive: 30
@@ -381,7 +380,7 @@ models:
     cmdStop: docker stop ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
-    concurrencyLimit: 3
+    concurrencyLimit: 5
     filters:
       # :npt alias strips historical <think> blocks via per-request
       # chat_template_kwargs. Base ID keeps the preserve default.
@@ -423,7 +422,7 @@ models:
     cmdStop: docker stop ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
-    concurrencyLimit: 3
+    concurrencyLimit: 5
     filters:
       # :npt alias strips historical <think> blocks via per-request
       # chat_template_kwargs. Base ID keeps the preserve default.
