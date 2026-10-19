@@ -22,6 +22,7 @@ entries=(
     "muse-glimmer/30B-chat-template.jinja|https://huggingface.co/meta-models/Muse-Glimmer-30B/resolve/main/chat_template.jinja"
     "ornith-1.5/35B-chat-template.jinja|https://huggingface.co/ornith-ai/Ornith-1.5-35B-A3B/resolve/main/chat_template.jinja"
     "qwen3.8/27B-chat-template.jinja|https://huggingface.co/Qwen/Qwen3.8-27B/resolve/main/chat_template.jinja"
+    "qwen3.8/Flash-Next-chat-template.jinja|https://huggingface.co/Qwen/Qwen3.8-Flash-Next/resolve/main/chat_template.jinja"
     "openjev/chat-template.jinja|https://huggingface.co/openjev/openjev/resolve/main/chat_template.jinja"
 )
 
