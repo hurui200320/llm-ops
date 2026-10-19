@@ -80,7 +80,7 @@ Describe the model, quantization, or local usage here.
 - The parser handles simple `key: value` lines, not full YAML. Keep the URL on one line without quotes or an inline comment.
 - Only `source` is used by the update checker. The Markdown body is unrestricted.
 - The source must use `http` or `https` and the host `huggingface.co` or its alias `hf.co`. Use the GGUF repository, which may differ from the original model's repository.
-- Update checks always use the repository's `main` revision. A branch or revision in the source URL does not change this. The update checker does not support authentication tokens.
+- Update checks always use the repository's `main` revision. A branch or revision in the source URL does not change this. Gated repositories can be checked by passing `--token` or setting the `HF_TOKEN` environment variable.
 - Missing front matter produces a warning; a missing, empty, or unsupported `source` is skipped without counting as a warning.
 
 For **local integrity checks**, only the presence of `README.md` matters; front matter and `source` are not required. `download_hf.py` does not require or create a README, so add one yourself to make downloaded models discoverable by the checkers.
@@ -115,7 +115,12 @@ python3 check_updates.py -m gemma-4/google-E4B-it
 
 # Check a library at an explicit root
 python3 check_updates.py --library-root /mnt/user/archive/LLM
+
+# Gated model: pass --token, or set the HF_TOKEN environment variable
+python3 check_updates.py --library-root /mnt/user/archive/LLM --token hf_xxxxxxxx
 ```
+
+**Tokens:** gated repositories (for example `google/gemma-*`) need a Hugging Face token. Set the `HF_TOKEN` environment variable or pass `--token`; the flag takes precedence. The token is sent as a Bearer header with each pointer request and is required for the pointer fetch, not just the download.
 
 **Exit codes:** `0` = no updates or warnings; `1` = updates available, warnings, or no matching model directories; `2` = invalid library root. Models skipped because of a missing or unsupported source do not cause a nonzero exit, so `0` does not necessarily mean every model was checked. These codes can be used in cron jobs or automation scripts.
 
@@ -177,6 +182,6 @@ python3 download_hf.py \
 python3 download_hf.py <URL> <dir> --token hf_xxxxxxxx
 ```
 
-`--token` takes precedence over `HF_TOKEN`. Authentication is supported by the downloader only. Inside the toolbox image the script is installed as `download_hf` on `PATH`; use absolute destinations under `/data` there.
+`--token` takes precedence over `HF_TOKEN`; both scripts send it as a Bearer header, and the update checker accepts the same options. Inside the toolbox image the script is installed as `download_hf` on `PATH`; use absolute destinations under `/data` there.
 
 **Exit codes:** `0` = success; `1` = failure. On a SHA-256 mismatch, the `.tmp` file is automatically deleted.

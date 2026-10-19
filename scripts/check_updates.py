@@ -19,6 +19,9 @@ subdirectories. It is resolved with the following precedence:
     2. LLM_LIBRARY_ROOT environment variable
     3. Current working directory
 
+Gated Hugging Face repositories need an API token: pass --token TOKEN or set
+the HF_TOKEN environment variable (--token wins when both are given).
+
 Exit codes: 0 = no updates or warnings; 1 = updates, warnings, or no matching
 models; 2 = invalid library root
 """
@@ -148,7 +151,7 @@ def parse_hf_repo(source_url: str) -> tuple[str, None] | tuple[None, str]:
 # ---------------------------------------------------------------------------
 
 def fetch_lfs_sha256(
-    repo_id: str, remote_path: str
+    repo_id: str, remote_path: str, token: str | None = None
 ) -> tuple[str, int | None] | tuple[None, str]:
     """
     Fetch a Hugging Face LFS pointer and extract its SHA-256 digest.
@@ -158,18 +161,28 @@ def fetch_lfs_sha256(
     e.g. "BF16/file.gguf" or "file.gguf". It is percent-encoded in the request
     URL, so file names with spaces or other special characters are supported.
 
+    token, when given, is sent as a Bearer Authorization header, which is
+    required for gated repositories.
+
     Returns:
       (sha256_str, size_int)    On success (size may be None).
       (None, error_description) On failure.
     """
     url = f"https://huggingface.co/{repo_id}/raw/main/{quote(remote_path)}"
-    req = Request(url, headers={"User-Agent": "check_updates/1.0"})
+    headers = {"User-Agent": "check_updates/1.0"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = Request(url, headers=headers)
     try:
         with urlopen(req, timeout=30) as resp:
             content = resp.read().decode("utf-8", errors="replace")
     except HTTPError as e:
         if e.code == 404:
             return None, "Remote file not found (404)"
+        if e.code in (401, 403):
+            if token:
+                return None, f"Access denied ({e.code}); check that the token is valid and that you have accepted the model license agreement"
+            return None, f"Access denied ({e.code}); provide --token or set the HF_TOKEN environment variable"
         return None, f"HTTP error {e.code}"
     except URLError as e:
         return None, f"Network error: {e.reason}"
@@ -197,9 +210,12 @@ def fmt_size(n: int) -> str:
 # Per-model update checks
 # ---------------------------------------------------------------------------
 
-def check_model(model_dir: Path) -> tuple[int, int, int]:
+def check_model(model_dir: Path, token: str | None = None) -> tuple[int, int, int]:
     """
     Check a single model directory.
+
+    token, when given, is forwarded to fetch_lfs_sha256 as a Bearer
+    Authorization header for gated repositories.
 
     Return (updates, warns, total):
       updates — Number of files with upstream changes.
@@ -258,7 +274,7 @@ def check_model(model_dir: Path) -> tuple[int, int, int]:
             warns += 1
             continue
 
-        result = fetch_lfs_sha256(repo_id, remote_path)
+        result = fetch_lfs_sha256(repo_id, remote_path, token)
 
         # Show the full relative path for nested files, or just the name for root files.
         label = remote_path
@@ -301,6 +317,7 @@ def main() -> None:
             "  python check_updates.py -m 26B\n"
             "  python check_updates.py -m gemma-4/google-E4B-it\n"
             "  python check_updates.py --library-root /mnt/user/archive/LLM -m gemma-4\n"
+            "  python check_updates.py -m gemma-4 --token hf_xxxxxxxx (gated repository)\n"
         ),
     )
     parser.add_argument(
@@ -313,9 +330,17 @@ def main() -> None:
         metavar="PATH",
         help="Model library root containing <family>/<variant>/ subdirectories (defaults to $LLM_LIBRARY_ROOT, then the current working directory)",
     )
+    parser.add_argument(
+        "--token", "-t",
+        metavar="HF_TOKEN",
+        help="Hugging Face API token (can also be set via the HF_TOKEN environment variable)",
+    )
     args = parser.parse_args()
 
     LIBRARY_ROOT = resolve_library_root(args.library_root)
+
+    # Prefer --token over the HF_TOKEN environment variable.
+    token = args.token or os.environ.get("HF_TOKEN")
 
     # Discover variants at <library root>/<family>/<variant>/README.md.
     all_dirs = sorted(p.parent for p in LIBRARY_ROOT.glob("*/*/README.md")
@@ -335,7 +360,7 @@ def main() -> None:
 
     total_updates = total_warns = total_files = 0
     for model_dir in all_dirs:
-        u, w, f = check_model(model_dir)
+        u, w, f = check_model(model_dir, token)
         total_updates += u
         total_warns   += w
         total_files   += f

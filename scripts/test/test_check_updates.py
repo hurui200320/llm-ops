@@ -185,6 +185,50 @@ class FetchLfsSha256Test(helpers.ScriptTestCase):
         self.assertEqual(result, (digest, 7))
         self.assertEqual([req.full_url for req in fake.requests], [url])
 
+    def test_token_sent_as_bearer_header(self):
+        digest = helpers.sha256_hex(b"weights")
+        fake = helpers.FakeUrlopen(
+            {self.POINTER_URL: helpers.FakeResponse(helpers.lfs_pointer(digest, 7))}
+        )
+        with mock.patch.object(check_updates, "urlopen", fake):
+            check_updates.fetch_lfs_sha256("example/test", "w.gguf", token="hf_test_token")
+        self.assertEqual(
+            [req.get_header("Authorization") for req in fake.requests],
+            ["Bearer hf_test_token"],
+        )
+
+    def test_no_token_no_authorization_header(self):
+        digest = helpers.sha256_hex(b"weights")
+        fake = helpers.FakeUrlopen(
+            {self.POINTER_URL: helpers.FakeResponse(helpers.lfs_pointer(digest, 7))}
+        )
+        with mock.patch.object(check_updates, "urlopen", fake):
+            result = check_updates.fetch_lfs_sha256("example/test", "w.gguf")
+        self.assertEqual(result, (digest, 7))
+        self.assertEqual(
+            [req.get_header("Authorization") for req in fake.requests], [None]
+        )
+
+    def test_access_denied_without_token_hints_at_hf_token(self):
+        fake = helpers.FakeUrlopen(
+            {self.POINTER_URL: helpers.http_error(self.POINTER_URL, 401)}
+        )
+        with mock.patch.object(check_updates, "urlopen", fake):
+            sha, err = check_updates.fetch_lfs_sha256("example/test", "w.gguf")
+        self.assertIsNone(sha)
+        self.assertIn("HF_TOKEN", err)
+
+    def test_access_denied_with_token_mentions_license(self):
+        fake = helpers.FakeUrlopen(
+            {self.POINTER_URL: helpers.http_error(self.POINTER_URL, 403)}
+        )
+        with mock.patch.object(check_updates, "urlopen", fake):
+            sha, err = check_updates.fetch_lfs_sha256(
+                "example/test", "w.gguf", token="hf_test_token"
+            )
+        self.assertIsNone(sha)
+        self.assertIn("license", err)
+
 
 class CheckModelTest(helpers.ScriptTestCase):
     CONTENT = b"weights"
@@ -346,16 +390,21 @@ class MainTest(helpers.ScriptTestCase):
     def pointer_url(self, repo: str, remote_path: str) -> str:
         return f"https://huggingface.co/{repo}/raw/main/{remote_path}"
 
-    def run_main(self, fake, *argv) -> tuple[object, str]:
+    def run_main(self, fake, *argv, hf_token: str | None = None) -> tuple[object, str]:
+        environ = dict(os.environ)
+        environ.pop("HF_TOKEN", None)
+        if hf_token is not None:
+            environ["HF_TOKEN"] = hf_token
         stdout = io.StringIO()
-        with mock.patch.object(sys, "argv", ["check_updates.py", *argv]):
-            with mock.patch.object(check_updates, "urlopen", fake):
-                with contextlib.redirect_stdout(stdout):
-                    try:
-                        check_updates.main()
-                        code = 0
-                    except SystemExit as e:
-                        code = e.code
+        with mock.patch.dict(os.environ, environ, clear=True):
+            with mock.patch.object(sys, "argv", ["check_updates.py", *argv]):
+                with mock.patch.object(check_updates, "urlopen", fake):
+                    with contextlib.redirect_stdout(stdout):
+                        try:
+                            check_updates.main()
+                            code = 0
+                        except SystemExit as e:
+                            code = e.code
         return code, stdout.getvalue()
 
     def test_all_up_to_date_exits_0(self):
@@ -437,6 +486,60 @@ class MainTest(helpers.ScriptTestCase):
         )
         self.assertEqual(code, 2)
         self.assertIn("is not an existing directory", output)
+
+    def up_to_date_fake(self) -> helpers.FakeUrlopen:
+        digests = self.make_fixture()
+        return helpers.FakeUrlopen(
+            {
+                self.pointer_url("example/test", "w.gguf"): helpers.FakeResponse(
+                    helpers.lfs_pointer(digests["w.gguf"], len(self.CONTENT))
+                )
+            }
+        )
+
+    def test_hf_token_env_sent_as_bearer_header(self):
+        fake = self.up_to_date_fake()
+        code, _ = self.run_main(
+            fake, "--library-root", str(self.root), hf_token="hf_env_token"
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            [req.get_header("Authorization") for req in fake.requests],
+            ["Bearer hf_env_token"],
+        )
+
+    def test_token_flag_sent_as_bearer_header(self):
+        fake = self.up_to_date_fake()
+        code, _ = self.run_main(
+            fake, "--library-root", str(self.root), "--token", "hf_flag_token"
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            [req.get_header("Authorization") for req in fake.requests],
+            ["Bearer hf_flag_token"],
+        )
+
+    def test_token_flag_overrides_hf_token_env(self):
+        fake = self.up_to_date_fake()
+        code, _ = self.run_main(
+            fake,
+            "--library-root", str(self.root),
+            "--token", "hf_flag_token",
+            hf_token="hf_env_token",
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            [req.get_header("Authorization") for req in fake.requests],
+            ["Bearer hf_flag_token"],
+        )
+
+    def test_no_token_no_authorization_header(self):
+        fake = self.up_to_date_fake()
+        code, _ = self.run_main(fake, "--library-root", str(self.root))
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            [req.get_header("Authorization") for req in fake.requests], [None]
+        )
 
 
 if __name__ == "__main__":
