@@ -1,0 +1,225 @@
+name: strata-image
+
+# Builds the AMD (HIP, RDNA 3: gfx1100 / gfx1101 / gfx1102) Strata image and pushes it to GHCR.
+# Nothing is compiled here: upstream's docker/build.sh assembles the image from a release engine
+# component package, and the Dockerfile's verify stage re-hashes every file of it. The runner needs
+# no GPU (the verify stage only reads files) and no host ROCm (the package carries the runtime).
+#
+# Manual trigger only: the Strata tag, the engine package asset and the image tag pin what is
+# built and pushed. See deploy/strata/README.md for the run recipes and the runtime verification
+# that cannot happen here (the hipBLASLt tuning table; a GPU-less runner cannot start the engine).
+
+on:
+  workflow_dispatch:
+    inputs:
+      strata_ref:
+        description: "Strata tag (terminal sources and the release the engine package is fetched from)"
+        required: true
+        default: "v0.2.0-beta"
+        type: string
+      engine_asset:
+        description: "Engine package asset name in that release (rx7900 = gfx1100/gfx1101/gfx1102)"
+        required: true
+        default: "strata-engine-0.1.45.3-linux-x86_64-hip-rx7900.tar.gz"
+        type: string
+      image_tag:
+        description: "Image tag (empty: derived from strata_ref, e.g. 0.2.0-beta-rocm-gfx110x)"
+        required: false
+        default: ""
+        type: string
+      hipblaslt_table_version:
+        description: "hipBLASLt version the gfx1100 tuning table must exist for (no version is readable from the engine package in CI; the engine validates the table itself at first start)"
+        required: true
+        default: "100500"
+        type: string
+
+env:
+  IMAGE: ghcr.io/hurui200320/llm-ops-strata
+  STRATA_REPO: Niko1221/Strata
+
+permissions:
+  contents: read
+
+concurrency:
+  group: strata-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and push the HIP image
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out this repository (the committed tuning table)
+        uses: actions/checkout@v4
+
+      - name: Check out Strata at the requested tag
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.STRATA_REPO }}
+          ref: ${{ inputs.strata_ref }}
+          path: strata
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Derive the image tag and record the commit
+        env:
+          STRATA_REF: ${{ inputs.strata_ref }}
+          IMAGE_TAG_INPUT: ${{ inputs.image_tag }}
+        run: |
+          set -euo pipefail
+          tag="${IMAGE_TAG_INPUT}"
+          if [ -z "$tag" ]; then
+            tag="${STRATA_REF#v}-rocm-gfx110x"
+          fi
+          echo "IMAGE_TAG=$tag" >> "$GITHUB_ENV"
+          echo "STRATA_COMMIT=$(git -C strata rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "Image: $IMAGE:$tag"
+
+      - name: Download the engine package and verify the release checksum
+        env:
+          STRATA_REF: ${{ inputs.strata_ref }}
+          ENGINE_ASSET: ${{ inputs.engine_asset }}
+        run: |
+          set -euo pipefail
+          case "$ENGINE_ASSET" in
+            ""|*/*) echo "engine_asset must be a plain release asset name" >&2; exit 1 ;;
+          esac
+          base="https://github.com/${STRATA_REPO}/releases/download/${STRATA_REF}"
+          mkdir -p pkg
+          curl --retry 3 --retry-delay 5 -fsSL -o SHA256SUMS.txt "$base/SHA256SUMS.txt"
+          curl --retry 3 --retry-delay 5 -fsSL -o "$ENGINE_ASSET" "$base/$ENGINE_ASSET"
+          # field-exact match: a substring match would also catch a hypothetical companion asset
+          # whose name contains this one (e.g. a .sig), and then sha256sum -c would fail on it
+          line="$(awk -v a="$ENGINE_ASSET" '$2 == a || $2 == "*" a' SHA256SUMS.txt)"
+          [ -n "$line" ] || { echo "$ENGINE_ASSET is not listed in SHA256SUMS.txt" >&2; exit 1; }
+          printf '%s\n' "$line" | sha256sum -c -
+          tar -xzf "$ENGINE_ASSET" -C pkg
+          echo "PKG_DIR=$PWD/pkg" >> "$GITHUB_ENV"
+
+      - name: Check the engine package manifest
+        run: |
+          set -euo pipefail
+          python3 - "$PKG_DIR" <<'PY'
+          import json, pathlib, sys
+
+          pkg = pathlib.Path(sys.argv[1])
+          manifest = pkg / "engine-component.json"
+          m = json.loads(manifest.read_text(encoding="utf-8"))
+          assert m.get("schema_version", 0) >= 1, f"schema_version {m.get('schema_version')}"
+          assert m.get("id") == "strata-engine", f"id {m.get('id')!r}"
+          assert m.get("platform") == "linux-x86_64", f"platform {m.get('platform')!r}"
+          assert m.get("backend") == "hip", f"backend {m.get('backend')!r}"
+          archs = m.get("archs") or []
+          assert "gfx1100" in archs, f"archs {archs}"
+          assert m.get("entrypoint") == "strata", f"entrypoint {m.get('entrypoint')!r}"
+          assert m.get("files"), "the manifest lists no files"
+          entry = pkg / m["entrypoint"]
+          assert entry.is_file(), f"entrypoint {entry} is missing"
+          print(f"manifest OK: version={m['version']} variant={m.get('variant')} archs={archs} "
+                f"files={len(m['files'])} signature={'yes' if m.get('signature') else 'no'}")
+          PY
+          # the version is kept OUTSIDE the package folder: build.sh copies that folder into the
+          # image context and the build verifies every file in it against the manifest
+          version="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["version"])' "$PKG_DIR/engine-component.json")"
+          echo "PKG_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: "Gate: the gfx1100 hipBLASLt tuning table exists for the pinned version"
+        env:
+          TABLE_VERSION: ${{ inputs.hipblaslt_table_version }}
+          STRATA_REF: ${{ inputs.strata_ref }}
+        run: |
+          set -euo pipefail
+          checkout_table="strata/tools/hip/gfx1100-hipblaslt-${TABLE_VERSION}.txt"
+          committed_table="deploy/strata/gfx1100-hipblaslt-${TABLE_VERSION}.txt"
+          if [ ! -f "$checkout_table" ]; then
+            echo "No $checkout_table in ${STRATA_REF}: with this version the engine would run plain hipBLAS" >&2
+            echo "(the gfx1100 tables measured ~40-60% higher prompt speed; docs/AMD_HIP.md, Tuning table)." >&2
+            echo "Pick another hipblaslt_table_version or accept the loss deliberately." >&2
+            exit 1
+          fi
+          header="STRATA_HIPBLASLT_TUNING_V1 gfx1100 ${TABLE_VERSION}"
+          grep -qxF "$header" "$checkout_table" || { echo "$checkout_table has no '$header' header line" >&2; exit 1; }
+          [ -f "$committed_table" ] || { echo "missing $committed_table: commit the table so the host can mount it" >&2; exit 1; }
+          cmp "$committed_table" "$checkout_table" || { echo "$committed_table differs from the pinned checkout's $checkout_table (an upstream recalibration must be a conscious re-commit)" >&2; exit 1; }
+          echo "$checkout_table OK ($header); committed copy is byte-identical"
+          echo "NOTE: the version the engine's bundled hipBLASLt actually reports is only visible at first start on a GPU host (there is no hipblaslt-version.h in the package and 0.2.0's component flow resolves none); the engine then logs 'tuning enabled (... version N)' or 'version mismatch: file=${TABLE_VERSION} runtime=N'." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: "Patch: upstream build.sh omits docs/TERMINAL_LAUNCH.md"
+        run: |
+          set -euo pipefail
+          # v0.2.0-beta (and main, 2026-10-20) stages docs/MANAGEMENT_PROTOCOL.md but not
+          # docs/TERMINAL_LAUNCH.md, which packaging/package_terminal.py's PAYLOAD requires: the image
+          # build fails with "missing payload item: docs/TERMINAL_LAUNCH.md" without this. No-op on a
+          # checkout that already stages it.
+          f=strata/docker/build.sh
+          if grep -q "docs/TERMINAL_LAUNCH.md" "$f"; then
+            echo "the checkout already stages docs/TERMINAL_LAUNCH.md; patch not needed"
+          else
+            grep -q "docs/MANAGEMENT_PROTOCOL.md" "$f"
+            sed -i "s|docs/MANAGEMENT_PROTOCOL.md|docs/MANAGEMENT_PROTOCOL.md docs/TERMINAL_LAUNCH.md|" "$f"
+            grep -q "docs/TERMINAL_LAUNCH.md" "$f"
+            echo "patched $f: the terminal payload needs docs/TERMINAL_LAUNCH.md"
+          fi
+
+      - name: Build the image from the engine package (nothing is compiled)
+        run: |
+          set -euo pipefail
+          strata/docker/build.sh --flavor hip --engine "$PKG_DIR" --repo strata --tag "$IMAGE:$IMAGE_TAG"
+          docker image inspect "$IMAGE:$IMAGE_TAG" --format 'built {{.RepoTags}} {{.Size}} bytes'
+
+      - name: In-image smoke test (component inventory)
+        run: |
+          set -euo pipefail
+          mkdir -p smoke-data
+          set +e
+          # --backend hip: the runner has no GPU to detect, so the backend is named to make the package
+          # resolve through the rest of its path (platform gate, signature policy, entrypoint SHA-256) and
+          # report "usable": true, exactly as it would on a gfx1100 host.
+          docker run --rm -v "$PWD/smoke-data:/data" "$IMAGE:$IMAGE_TAG" \
+            strata components engine --backend hip --output json > engine-list.json
+          rc=$?
+          set -e
+          echo "strata components engine exit code: $rc (0 = the package resolved for the HIP backend)"
+          python3 - "$PKG_VERSION" "$rc" engine-list.json <<'PY'
+          import json, sys
+
+          version, rc, path = sys.argv[1], sys.argv[2], sys.argv[3]
+          data = json.load(open(path, encoding="utf-8"))
+          text = json.dumps(data)
+          assert "strata-engine" in text, "the component inventory does not name strata-engine"
+          assert version in text, f"engine version {version} is not reported by the inventory"
+          problems = [str(p) for p in (data.get("problems") or [])]
+          assert not problems, f"the component folder reports problems: {problems}"
+          assert data.get("usable") is True, (
+              f"the engine package did not resolve for the HIP backend (exit code {rc}): {data.get('notice')!r}")
+          installed = [f"{i.get('version')} {i.get('platform')}-{i.get('backend')}" for i in data.get("installed") or []]
+          print("component inventory OK; installed:", installed)
+          PY
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push the image
+        env:
+          STRATA_REF_INPUT: ${{ inputs.strata_ref }}
+          ENGINE_ASSET_INPUT: ${{ inputs.engine_asset }}
+        run: |
+          set -euo pipefail
+          docker push "$IMAGE:$IMAGE_TAG"
+          digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$IMAGE_TAG")"
+          {
+            echo "### Strata image pushed"
+            echo ""
+            echo "- \`$IMAGE:$IMAGE_TAG\`"
+            echo "- Strata \`${STRATA_REF_INPUT}\` (${STRATA_COMMIT})"
+            echo "- Engine package \`${ENGINE_ASSET_INPUT}\` (${PKG_VERSION})"
+            echo "- Digest: \`$digest\`"
+          } >> "$GITHUB_STEP_SUMMARY"
