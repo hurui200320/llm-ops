@@ -70,8 +70,10 @@ One tool, through llama-swap so it measures the deployed config itself
   configured — the cap for a single request); `--ctx N` overrides it with a
   warning on mismatch and is needed for non-llama.cpp backends. Other sizes:
   `--in-pcts 20,40,60,85 --out-pct 10`. Cold prefill per rep
-  (distinct corpus segments within a level, `cache_prompt: false` across levels
-  verified by `cache_n == 0`), so no unload-before-run dance is needed;
+  (distinct corpus segments within a level, `cache_prompt: false` **plus a
+  per-request nonce** — some servers, e.g. Strata, ignore `cache_prompt` and
+  would otherwise reuse the calibration/previous level's prefix — verified by
+  `cache_n == 0`), so no unload-before-run dance is needed;
   reports per-level pp/tg t/s and spec accept rate at depth.
 
 ```bash
@@ -80,6 +82,8 @@ python3 run_longctx.py --model ornith-1.5-35b-a3b-q80-vision                    
 python3 run_longctx.py --model meta-muse-glimmer-30b-kquant-vision               # 128K per slot, also auto-detected
 python3 run_longctx.py --model <alias> --ctx 262144                              # override (warns if /props disagrees)
 python3 run_longctx.py --model <alias> --in-pcts 20,40,60,85 --out-pct 10        # explicit (these are the defaults)
+python3 run_longctx.py --model <alias> --base-url http://127.0.0.1:8080 \
+  --api-key "$KEY"                                                              # server outside llama-swap, key required
 ```
 
 Wrapped up as [bench/run_longctx.sh](../bench/run_longctx.sh): for every model
@@ -167,7 +171,7 @@ python3 bench/systemone-latency/run_latency.py \
 - `--label` is descriptive metadata only; it does **not** verify or change flags.
   Keep the Docker image, tensor proportions, slots, context, F16 KV precision,
   cache settings, and vision budget fixed for the initial 12-way sweep:
-  `ub = 256,512,1024,2048` × `split = layer,row,tensor`.
+  `ub = 256,512,1024,2048` x `split = layer,row,tensor`.
 
 **Cache caveats:**
 

@@ -8,6 +8,7 @@ Usage:
                            [--in-pcts 20,40,60,85] [--out-pct 10]
                            [--reps 2]
                            [--base-url http://fedora-tuf:8080]
+                           [--api-key KEY]
                            [--corpus <path-or-url>] [--out results.json]
 
 Sends one chat completion per rep per input level: each level targets
@@ -60,6 +61,7 @@ CORPUS_URLS = [
     "https://www.gutenberg.org/files/2600/2600-0.txt",
 ]
 USER_AGENT = "llm-ops-bench/1.0"
+API_KEY = ""  # set from --api-key / STRATA_KEY in main(); sent only to the bench server
 CHUNK_CHARS = 4000
 CHARS_PER_TOKEN = 4.0
 WARMUP_TIMEOUT = 600
@@ -74,11 +76,20 @@ INSTRUCTION = (
 INSTRUCTION_SUFFIX = "\n\n=== DOCUMENT END ==="
 
 
+def http_headers(extra=None):
+    headers = {"User-Agent": USER_AGENT}
+    if API_KEY:
+        headers["Authorization"] = "Bearer " + API_KEY
+    if extra:
+        headers.update(extra)
+    return headers
+
+
 def post_json(url, payload, timeout):
     req = urllib.request.Request(
         url,
         data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json"},
+        headers=http_headers({"Content-Type": "application/json"}),
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -86,7 +97,7 @@ def post_json(url, payload, timeout):
 
 
 def get_json(url, timeout):
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    req = urllib.request.Request(url, headers=http_headers())
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read())
 
@@ -187,8 +198,9 @@ def chunk_text(text, chunk_chars):
     return chunks
 
 
-def build_content(chunks):
-    return INSTRUCTION + "\n\n".join(chunks) + INSTRUCTION_SUFFIX
+def build_content(chunks, nonce=""):
+    tag = f"[request {nonce}]\n\n" if nonce else ""
+    return tag + INSTRUCTION + "\n\n".join(chunks) + INSTRUCTION_SUFFIX
 
 
 def parse_pcts(text, flag):
@@ -259,7 +271,7 @@ def calibrate_chunks(chunks, isl, tokenize_urls, chat_url, model, args):
     print("warning: /tokenize unavailable on this server; sizing via calibration request", file=sys.stderr)
     payload = {
         "model": model,
-        "messages": [{"role": "user", "content": build_content(chunks[:n])}],
+        "messages": [{"role": "user", "content": build_content(chunks[:n], nonce=os.urandom(6).hex())}],
         "max_tokens": 1,
         "stream": False,
         "cache_prompt": False,
@@ -352,8 +364,13 @@ def main():
                          "prefill+decode — the server sends nothing until completion")
     ap.add_argument("--corpus", default=None,
                     help="corpus file path or URL (default: cached Project Gutenberg War and Peace)")
+    ap.add_argument("--api-key", default=os.environ.get("STRATA_KEY", ""),
+                    help="bearer token when the server requires one (or STRATA_KEY); "
+                         "never sent to the corpus URL")
     ap.add_argument("--out", default=None, help="output JSON path (default: results dir, timestamped)")
     args = ap.parse_args()
+    global API_KEY
+    API_KEY = args.api_key
 
     try:
         in_pcts = sorted(parse_pcts(args.in_pcts, "--in-pcts"))
@@ -544,12 +561,13 @@ def main():
     for st in level_states:
         n = st["chunks_per_rep"]
         for r in range(args.reps):
-            # segments restart at chunk 0 for each level (overlap across
-            # levels relies strictly on cache_prompt=false to guarantee cold
-            # prefills; verify cache_n == 0 per rep), so the corpus only
-            # needs to cover the largest level
+            # segments restart at chunk 0 for each level (a compaction workload
+            # grows a prefix); coldness comes from cache_prompt=false plus a
+            # per-request nonce, because some servers (Strata) ignore
+            # cache_prompt and would otherwise reuse the calibration/previous
+            # level's prefix. Verify cache_n == 0 per rep.
             segment = chunks[r * n:(r + 1) * n]
-            content = build_content(segment)
+            content = build_content(segment, nonce=os.urandom(6).hex())
             print(f"[in {st['in_pct']:g}%] rep {r + 1}/{args.reps}: "
                   f"prefilling ~{st['isl_target']} tokens, generating up to {osl} ...",
                   flush=True)

@@ -34,20 +34,20 @@ Thread findings:
 - **Not vLLM-specific:** minimal `torch.distributed` and standalone HIP
   `ncclCommInitAll`/`ncclAllReduce` repros initialize successfully, then fault
   on the first collective.
-- **Regression:** RCCL 2.27.7 / ROCm 7.2.1 failed on 2× 7900 XTX with one
+- **Regression:** RCCL 2.27.7 / ROCm 7.2.1 failed on 2x 7900 XTX with one
   PCH-attached card; ROCm 7.2.0 worked. JartX's 7.2.0-amdclang rebuild worked;
   cadamcat traced RCCL PR #2124's removal of `NDEBUG` to device asserts pulling
   hostcall buffers into Generic kernels.
-- **Atomics are not sufficient:** miversen33 (2026-07), EPYC 7601 + 3× 7900 XTX,
+- **Atomics are not sufficient:** miversen33 (2026-07), EPYC 7601 + 3x 7900 XTX,
   all atomics enabled, RCCL 2.30.4 / ROCm 7.14: first-collective nil-address /
   gfxhub TCP fault. AMD requested a separate issue; unresolved as of this note.
   Thread operators report llama.cpp's coarse layer split as more forgiving.
 
-## Engine verdict for 27B + 256k f16 KV on 2×24 GB
+## Engine verdict for 27B + 256k f16 KV on 2x24 GB
 
 | engine | verdict / blockers |
 |---|---|
-| vLLM | **Out:** TP≥2 requires RCCL; TP=1 exceeds 24 GB. Official FP8 checkpoint is 38 GB before KV, leaving only tens of thousands of tokens on 2×24 GB. gfx1100 lacks native FP8; Qwen GDN MTP needs source builds/local patches (vllm #43559; shisa-ai/hipEngine `docs/VLLM_RDNA3.md`). |
+| vLLM | **Out:** TP≥2 requires RCCL; TP=1 exceeds 24 GB. Official FP8 checkpoint is 38 GB before KV, leaving only tens of thousands of tokens on 2x24 GB. gfx1100 lacks native FP8; Qwen GDN MTP needs source builds/local patches (vllm #43559; shisa-ai/hipEngine `docs/VLLM_RDNA3.md`). |
 | SGLang | **Out:** TP>1 uses torch-dist/RCCL. Radeon support is initial (ROCm 7.14+, `SGLANG_USE_AITER=false` workarounds); Qwen3.8-27B recipe is NVIDIA-only/single-GPU. |
 | TGI | Out: tested AMD support covers Instinct MI210/MI250/MI300, not consumer Radeon. |
 | LMDeploy / MLC-LLM / exo / Ollama / LM Studio / TabbyAPI / KTransformers | Out: CUDA-only, llama.cpp wrappers, or missing MTP / 256k / vision parity. |
@@ -75,6 +75,6 @@ hidden 5120, Q8_0 29 GB), at ~3.5 GB/s:
 | `tensor`: row-split outputs, D2H+H2D per GPU | ~38.5 MB ≈ **11 ms/token**, plus 350–400 handshakes | ~8 GB ≈ **2.3 s**, vs ~0.2 s compute |
 
 Tensor mode's reduced weight traffic is outweighed by communication; estimated
-pp/tg slowdown is 2–4×. An OpenJev (Qwen 3.8 27B derivative) prompt-only run
+pp/tg slowdown is 2–4x. An OpenJev (Qwen 3.8 27B derivative) prompt-only run
 confirmed slower **pp** than layer mode; tg was not measured. Keep layer split;
 the baseline below already includes its negligible PCH handoff cost.

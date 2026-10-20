@@ -18,7 +18,7 @@ Built and pushed by [`.github/workflows/strata-image.yml`](../../.github/workflo
 | Engine package | `strata-engine-0.1.45.3-linux-x86_64-hip-rx7900.tar.gz`, sha256 `281f660619fe590ee647650729ffcb1108c3f762df5d711123c660ea27ca84fc` |
 | Image tag | `0.2.0-beta-rocm-gfx110x` (default; derived from the ref) |
 | Pushed digest | `sha256:b6e7f1019e560cc9d6d1a294303ccd8baef37c09ef3841b760c2f32c6bb3a85d` (CI run `39292617432`) — pulled anonymously and smoke-verified on fedora-tuf 2026-10-20; 2.44 GB on disk |
-| hipBLASLt table | [`gfx1100-hipblaslt-100500.txt`](gfx1100-hipblaslt-100500.txt) — committed here, byte-identical to the v0.2.0-beta checkout file (sha256 `b314ca1a0f64d80ee1cad7bf85d3483df0e55ae8c5b4c1f78b7067dc5dab2b7a`; CI asserts the equality). Pairing is **runtime-verified at first start**, see below |
+| hipBLASLt table | [`gfx1100-hipblaslt-100200.txt`](gfx1100-hipblaslt-100200.txt) — **the runtime pair for this image** (engine 0.1.45.3 reports hipBLASLt `100200`; verified at first start 2026-10-20, sha256 `1bb8cd2e232ce1dec5dc0f303e5bd3b32abd9444330a4428a995ad4db8fb97be`). [`gfx1100-hipblaslt-100500.txt`](gfx1100-hipblaslt-100500.txt) stays committed for newer ROCm builds (sha256 `b314ca1a0f64d80ee1cad7bf85d3483df0e55ae8c5b4c1f78b7067dc5dab2b7a`). CI asserts the byte-identity of the pinned version (`100200` by default) with the checkout |
 
 Workflow inputs: `strata_ref`, `engine_asset`, `image_tag` (empty = `<ref without v>-rocm-gfx110x`),
 `hipblaslt_table_version`. Gates in CI: the release `SHA256SUMS.txt` line, the package manifest
@@ -39,9 +39,10 @@ docker run -d --name strata-init \
   --security-opt label=disable --security-opt seccomp=unconfined \
   --ulimit memlock=-1:-1 --shm-size 2g --stop-timeout 120 \
   -v /mnt/unenc-xfs/strata:/data -v /mnt/unenc-xfs/models:/models:z \
-  -e MODEL=IQ3_S -e CONTEXT=256k -e GPUS=0,1 -e KV=fp16 \
+  -e MODEL=IQ3_S -e CONTEXT=256k -e GPUS=0,1 -e PARALLEL=1 \
   -e MODEL_PATH=/models/strata/ISTA-DASLab-Flash-Next \
-  -e STRATA_HIPBLASLT_TUNING=/data/hipblaslt/gfx1100-hipblaslt-100500.txt \
+  -e STRATA_HIPBLASLT_TUNING=/data/hipblaslt/gfx1100-hipblaslt-100200.txt \
+  -e STRATA_SET="kv=fp16 vram-reserve-mib=3072 vram-reserve-later-mib=700 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=4 STRATA_SPLIT_OVERLAP=1" \
   ghcr.io/hurui200320/llm-ops-strata:0.2.0-beta-rocm-gfx110x
 docker logs -f strata-init    # watch the first pass (pack, the one-time MTP fetch)
 ```
@@ -49,6 +50,20 @@ docker logs -f strata-init    # watch the first pass (pack, the one-time MTP fet
 - `MODEL_PATH` takes a folder of GGUF files or one `.gguf` (`GGUF_DIR` still works as an alias).
   Nothing is downloaded for the model itself; the prepared pack and MTP layer are written under
   `/data` (`Strata-data/`).
+- **`KV=fp16` breaks the install on this image** (`setup.py` accepts only `int8|q4_0|k8v4`, while
+  `strata launch` passes `--kv fp16` straight through → argparse error → exit 6 with no `[X]` line).
+  Install with the default int8 and put **`kv=fp16` in `STRATA_SET`**: lowercase keys become engine
+  flags (`--kv fp16` is appended after setup's own `--kv int8` is stripped). Do not set `KV=fp16`
+  later either: the launch compares it with the installed config (`desc_matches`) and would re-run
+  the broken setup on every start; the launch's own settings never reach the engine on an
+  already-installed model — only the installed config and `--set` do.
+- **`PARALLEL` defaults to "fit to the card"** (3 on 24 GB) and `strata launch` turns that into a
+  profile override → `--batch 3` (batch slots are otherwise opt-in). Set `PARALLEL=1` for the
+  single-request lane (llama-swap `concurrencyLimit: 1`).
+- **`--slot-save-path` does not exist in engine 0.1.45.3**, although the v0.2.0-beta docs describe
+  session save/restore (`POST /slots/0?action=save|restore`). Passing it kills the start with
+  `unknown argument`. Session files need a newer engine package; parking
+  (`--conversation-cache-*`) works.
 - No `--memory` cap: 0.2.0 plans from the host's RAM and the entrypoint warns when a cgroup cap is
   seen.
 - `--stop-timeout 120`: SIGTERM drains, unloads and frees the VRAM (`strata launch --stop`). Docker's
@@ -130,22 +145,24 @@ with. Three verified facts about 0.2.0 (code-checked 2026-10-19):
 - the terminal image ships no `tools/hip/*.txt` files at all.
 
 So the table is wired at run time: it is committed in this repository as
-`deploy/strata/gfx1100-hipblaslt-100500.txt` (byte-identical to the `tools/hip/` file of the
-`v0.2.0-beta` checkout; the workflow fails if they ever differ). Put it on the host side of the
-`/data` bind and pass the env var:
+`deploy/strata/gfx1100-hipblaslt-100200.txt` (byte-identical to the `tools/hip/` file of the
+`v0.2.0-beta` checkout; the workflow fails if they ever differ). That is the pair the engine
+actually reports — `hipBLASLt tuning enabled (26 rows, gfx1100, version 100200)`, verified on
+fedora-tuf 2026-10-20. Put it on the host side of the `/data` bind and pass the env var:
 
 ```sh
 mkdir -p /mnt/unenc-xfs/strata/hipblaslt
-cp /mnt/unenc-xfs/llm-ops/deploy/strata/gfx1100-hipblaslt-100500.txt /mnt/unenc-xfs/strata/hipblaslt/
-# run with: -e STRATA_HIPBLASLT_TUNING=/data/hipblaslt/gfx1100-hipblaslt-100500.txt
+cp /mnt/unenc-xfs/llm-ops/deploy/strata/gfx1100-hipblaslt-100200.txt /mnt/unenc-xfs/strata/hipblaslt/
+# run with: -e STRATA_HIPBLASLT_TUNING=/data/hipblaslt/gfx1100-hipblaslt-100200.txt
 ```
 
 Either env form works (`-e`, or `-e STRATA_SET="STRATA_HIPBLASLT_TUNING=…"` to also save it into the
 preset). The engine then logs one of
 
-    prefill gemm: hipBLASLt tuning enabled (32 rows, gfx1100, version 100500)
-    prefill gemm: hipBLASLt version mismatch: file=100500 runtime=<N>; using hipBLASEx
+    prefill gemm: hipBLASLt tuning enabled (26 rows, gfx1100, version 100200)
+    prefill gemm: hipBLASLt version mismatch: file=100200 runtime=<N>; using hipBLASEx
 
 `<N>` is the ground truth for this package; pick the matching `gfx1100-hipblaslt-<N>.txt` (or none)
 and re-check. This first-start log line is the real pairing gate — CI can only check that a table
-for the pinned version exists in the checkout.
+for the pinned version exists in the checkout. The checkout carries gfx1100 tables for
+`100100/100200/100202/100401/100500`; a mismatch means swapping the file, not rebuilding.

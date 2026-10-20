@@ -28,9 +28,9 @@ on:
         default: ""
         type: string
       hipblaslt_table_version:
-        description: "hipBLASLt version the gfx1100 tuning table must exist for (no version is readable from the engine package in CI; the engine validates the table itself at first start)"
+        description: "hipBLASLt version the gfx1100 tuning table must exist for (no version is readable from the engine package in CI; the engine validates the table itself at first start; 100200 = the version runtime-verified on fedora-tuf 2026-10-20)"
         required: true
-        default: "100500"
+        default: "100200"
         type: string
 
 env:
