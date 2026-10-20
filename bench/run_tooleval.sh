@@ -17,6 +17,8 @@
 # Env:
 #   LLAMA_SWAP_URL  llama-swap root URL (default http://10.233.1.16:8080; no
 #                   /v1 — the bench appends its own paths)
+#   API_KEY         bearer token when the backend is not behind llama-swap
+#                   (e.g. a direct Strata server; also accepted as STRATA_KEY)
 #   SEED            passed as --seed (default 42; pin it across compared models)
 set -euo pipefail
 
@@ -25,6 +27,7 @@ CONFIG="$SCRIPT_DIR/../deploy/llama-swap.config.yaml"
 RESULTS_DIR="$SCRIPT_DIR/results/tooleval"
 
 LLAMA_SWAP_URL="${LLAMA_SWAP_URL:-http://10.233.1.16:8080}"
+API_KEY="${API_KEY:-${STRATA_KEY:-}}"
 SEED="${SEED:-42}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 
@@ -79,8 +82,10 @@ for model in "${MODELS[@]}"; do
     # pipefail makes the pipeline status the bench's, not tee's
     # Note about the arg: the probe uses 256 budget to probe `tool_required`, that's not enough for model to make too call
     # so tool-eval-bench will mislabel the endpoint as not enforcing tool_required
+    KEY_ARGS=()
+    [[ -n "$API_KEY" ]] && KEY_ARGS=(--api-key "$API_KEY")
     if TOOL_EVAL_MODEL="$model" tool-eval-bench run --base-url "$LLAMA_SWAP_URL" \
-        --seed "$SEED" 2>&1 | tee "$LOG"; then
+        "${KEY_ARGS[@]}" --seed "$SEED" 2>&1 | tee "$LOG"; then
         echo "${CYAN}  done in $((SECONDS - RUN_START))s${RESET}"
     else
         echo "warning: model $model FAILED, log: $LOG" >&2

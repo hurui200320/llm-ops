@@ -46,6 +46,7 @@ LIGHT="$SCRIPT_DIR/reasoning/problems.jsonl"
 FRONTIER="$SCRIPT_DIR/.cache/reasoning/frontier.jsonl"
 
 LLAMA_SWAP_URL="${LLAMA_SWAP_URL:-http://10.233.1.16:8080}"
+API_KEY="${API_KEY:-${STRATA_KEY:-}}"
 MAX_TOKENS="${MAX_TOKENS:-131072}"
 SKIP_IDS="${SKIP_IDS:-l01,l02,l03,l04,l05,l06,l07,l08,l09,l10,l11,aime26-01,aime26-02,aime26-03,aime26-04,aime26-05,aime26-06,aime26-07,aime26-08,aime26-09,aime26-12,aime26-13,aime26-14,zebra-3x4-01,zebra-3x4-02,zebra-4x4-01,zebra-4x4-02,zebra-4x4-03,zebra-4x4-04,zebra-4x4-05,zebra-4x5-01,zebra-4x5-02,zebra-4x5-03}"
 BASE_URL="$LLAMA_SWAP_URL/v1"
@@ -68,8 +69,10 @@ warmup() {
     # llama-swap loads a model on its first request; trigger the load here so
     # a slow cold start can't be misread as slow first-problem timing
     local model="$1"
+    local auth=()
+    [[ -n "$API_KEY" ]] && auth=(-H "Authorization: Bearer $API_KEY")
     curl -sf --max-time 600 "$BASE_URL/chat/completions" \
-        -H "Content-Type: application/json" \
+        "${auth[@]}" -H "Content-Type: application/json" \
         -d "{\"model\":\"$model\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"max_tokens\":1}" \
         >/dev/null || echo "warning: warmup request for $model failed, continuing anyway" >&2
 }
@@ -112,6 +115,8 @@ fi
 declare -a FAILED=()
 SKIP_ARGS=()
 [[ -n "$SKIP_IDS" ]] && SKIP_ARGS=(--skip "$SKIP_IDS")
+KEY_ARGS=()
+[[ -n "$API_KEY" ]] && KEY_ARGS=(--api-key "$API_KEY")
 START_ALL=$SECONDS
 
 for model in "${MODELS[@]}"; do
@@ -124,7 +129,7 @@ for model in "${MODELS[@]}"; do
     # pipefail makes the pipeline status the python script's, not tee's; the
     # summary JSON is still written when some requests fail, only the exit
     # status is non-zero
-    if python3 "$PY" --base-url "$BASE_URL" --model "$model" \
+    if python3 "$PY" --base-url "$BASE_URL" --model "$model" "${KEY_ARGS[@]}" \
         --problems "${PROBLEM_ARGS[@]}" "${SKIP_ARGS[@]}" \
         --max-tokens "$MAX_TOKENS" --out "$JSON" 2>&1 | tee "$LOG"; then
         echo "${CYAN}  done in $((SECONDS - RUN_START))s${RESET}"

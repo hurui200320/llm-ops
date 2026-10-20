@@ -1,9 +1,11 @@
 # mini-SWE-agent batch config template for bench/run_agentic.sh (bench step 4).
 # Pinned copy of upstream's swebench.yaml prompts so reruns stay comparable;
 # local deviations from upstream are marked with [LOCAL].
-# Placeholders __MODEL__ (e.g. openai/<llama-swap alias>) and __API_BASE__
-# (e.g. http://10.233.1.16:8080/v1) are substituted per model by the runner,
-# which saves the rendered file next to the results as agent-config.yaml.
+# Placeholders __MODEL__ (e.g. openai/<llama-swap alias>), __API_BASE__
+# (e.g. http://10.233.1.16:8080/v1) and __API_KEY__ (dummy for llama-swap,
+# the real bearer token for a direct backend) are substituted per model by
+# the runner, which saves the rendered file next to the results as
+# agent-config.yaml.
 agent:
   system_template: |
     You are a helpful assistant that can interact with a computer shell to solve programming tasks.
@@ -204,8 +206,9 @@ model:
   model_kwargs:
     # [LOCAL] llama-swap OpenAI-compatible endpoint, substituted per run.
     api_base: "__API_BASE__"
-    # [LOCAL] llama-swap runs with apiKeys: [], but litellm insists on a key.
-    api_key: "dummy"
+    # [LOCAL] llama-swap runs with apiKeys: [], but litellm insists on a key;
+    # substituted from API_KEY (default dummy) by run_agentic.sh.
+    api_key: "__API_KEY__"
     drop_params: true
     # [LOCAL] upstream is true; forced sequential because llama-swap serves
     # one request at a time and Muse Glimmer supports one tool call per turn

@@ -6,6 +6,7 @@ Defaults target llama-swap on the LAN. Standard library only.
 Usage:
     python3 run_reasoning.py --model <llama-swap-alias> [--difficulty light]
                              [--max-tokens 16384] [--base-url http://fedora-tuf:8080/v1]
+                             [--api-key KEY]
                              [--problems problems.jsonl ../.cache/reasoning/frontier.jsonl]
 
 The suite has three families: light sanity math (problems.jsonl), AIME 2026 and
@@ -34,6 +35,7 @@ Raw replies and a summary are written to bench/results/reasoning/.
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -43,6 +45,7 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 RESULTS_DIR = SCRIPT_DIR.parent / "results" / "reasoning"
+API_KEY = ""  # set from --api-key / STRATA_KEY in main(); sent only to the bench server
 
 SYSTEM_PROMPT = (
     "You are a careful reasoner. Solve the problem step by step. "
@@ -197,10 +200,13 @@ def chat_completion(base_url, model, prob, args):
         "max_tokens": args.max_tokens,
         "stream": False,
     }
+    headers = {"Content-Type": "application/json"}
+    if API_KEY:
+        headers["Authorization"] = "Bearer " + API_KEY
     req = urllib.request.Request(
         base_url.rstrip("/") + "/chat/completions",
         data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=args.timeout) as resp:
@@ -233,6 +239,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--model", required=True, help="model name sent in requests (llama-swap alias)")
     ap.add_argument("--base-url", default="http://fedora-tuf:8080/v1")
+    ap.add_argument("--api-key", default=os.environ.get("STRATA_KEY", ""),
+                    help="bearer token when the server requires one (or STRATA_KEY)")
     ap.add_argument("--problems", nargs="+", default=[str(SCRIPT_DIR / "problems.jsonl")],
                     help="problem jsonl files (e.g. problems.jsonl ../.cache/reasoning/frontier.jsonl)")
     ap.add_argument("--difficulty", choices=["light", "frontier"], default=None)
@@ -244,6 +252,9 @@ def main():
     ap.add_argument("--timeout", type=float, default=1800, help="per-request timeout in seconds")
     ap.add_argument("--out", default=None, help="output JSON path (default: results dir, timestamped)")
     args = ap.parse_args()
+
+    global API_KEY
+    API_KEY = args.api_key
 
     problems = []
     for path in args.problems:

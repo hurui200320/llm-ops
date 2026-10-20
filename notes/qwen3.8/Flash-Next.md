@@ -1,163 +1,123 @@
 # 20261019 First try
 
-Normally I won't run Qwen 3.8 Flash Next on my setup because either I have to go with lower quant
-and it will be slow since I have to offloading stuff to CPU. Last time running Laguna S 2.1 doesn't
-give a good baseline.
+Normally I won't run Qwen 3.8 Flash Next on my setup: it would be a low quant plus CPU offload,
+so slow. Laguna S 2.1 already showed how a bad baseline looks. But
+https://github.com/niko1221/strata does exactly one thing — run Qwen3.8 Flash Next — and instead
+of llama.cpp's per-layer split it allocates **per expert** across VRAM / locked RAM / SSD, which
+should beat llama-server on this rig. Going with IQ3_S + 256K context + GPU vision.
 
-However, I was suggested with https://github.com/niko1221/strata. This software does only one thing:
-run Qwen3.8 Flash Next. I decided to go with IQ3_S + 256K context + CPU vision.
+# 20261020 Plain llama.cpp baseline (the number Strata had to beat)
 
-Strata is different from llama cpp, where llama server just split layers to different devices, strata
-can allocate stuff on per-expert level, so it can performs better than llama server.
-
-However, strata can't just load the GGUF and run, it requires some special pre-process.
-The models are downloaded to qwen3.8 folder, and then copied to strata folder.
-This is the folder required by strata, we build once and save to NAS.
-
-Also we need to build our own docker image as Strata doesn't provide them.
-
-# 20261020 Plain llama.cpp baseline (before Strata)
-
-Quick test on fedora-tuf (desktop running, 2026-10-20): can vanilla llama.cpp run Flash-Next at
-all, and what does it cost? Measured so Strata's numbers have a comparison point. Both lanes +
-vision, single 256K slot, 1 rep per level (cold prefill, `cache_n=0`, 1% output cap = 2621
-tokens), through a bare `llama-server` (llama-swap untouched).
+Measured on fedora-tuf (desktop running) so Strata's numbers have a comparison point. Both lanes
++ vision, single 256K slot, 1 rep per level (cold prefill, `cache_n=0`, 1 % output = 2621 tokens),
+bare `llama-server`.
 
 ## Setup
 
-+ Image `ghcr.io/ggml-org/llama.cpp:full-rocm`, `version: 0.5.0-dev` (build 11374, commit
-  `b92761a51`, Oct 3) — knows the `qwen4exp` arch (48 blocks, 512 experts, hybrid SSM/attention)
-  and the `qwen3vl_merger` vision projector.
-+ 1 slot, `--ctx-size 262144`, f16 KV, `--flash-attn on`, `-b 2048 -ub 512`, `--cache-ram 0`,
-  default threads (8), sampling from the GGUF (`--temp 1.0 --top-p 0.95 --top-k 20`),
-  `--jinja --reasoning on --reasoning-preserve`; vision loaded **on GPU** (llama.cpp default
-  offload), `--image-min-tokens 1024` — verified with a real image request on both lanes
-  (~280-330 t/s image prefill, 10-14 s wall for one small image + 120-token answer).
-+ Weights (≈78-80 GiB) can't fit 2x24 GB: `-ngl 99` + expert layers pushed to CPU with one
-  **comma-separated** `-ot` (passing `-ot` twice keeps only the last value — learned the hard
-  way):
-  `blk\.([0-7]|2[4-9]|3[0-2])\.ffn_(up|down|gate)_exps\.weight=CPU,per_layer_token_embd=CPU`
-  → both lanes keep 31 of 48 expert layers on GPU (17 on CPU; IQ3_S experts 0-7 + 24-32 on CPU,
-  ORCA 0-8 + 24-31); `--tensor-split 50,50`; the 26.8 GiB `per_layer_token_embd` (PLE) sits on
-  CPU via the lazy-read/mmap path either way. CPU-resident weights: IQ3_S ≈ 16.6 GiB experts +
-  26.8 GiB PLE; ORCA ≈ 17.6 + 26.8 GiB.
-+ **VRAM margin lesson**: "leave ~100 MB free per card after startup" does not survive the first
-  request — llama-server allocates more when a request hits (per-stream hipBLAS handles, vision
-  encoder buffers). At ~70 MB free, the first image request aborted with
-  `CUBLAS_STATUS_ALLOC_FAILED` (`clip_encode`). Working margins are **0.2-1.1 GiB free per card
-  after a text+vision warmup**. Also: the llama-swap macro's `--memory 32g` is too small for this
-  model — the CPU-resident weights need host RAM (servers ran with `52g`).
++ Image `ghcr.io/ggml-org/llama.cpp:full-rocm` (build 11374) — knows the `qwen4exp` arch and the
+  `qwen3vl_merger` vision projector. 1 slot, `--ctx-size 262144`, f16 KV, `--flash-attn on`,
+  `-b 2048 -ub 512`, `--cache-ram 0`, default 8 threads, GGUF sampling, vision on GPU.
++ Weights (≈78-80 GiB) don't fit 2x24 GB: `-ngl 99` + expert layers to CPU with **one**
+  comma-separated `-ot` (passing `-ot` twice keeps only the last value — learned the hard way) →
+  31 of 48 expert layers on GPU; the 26.8 GiB PLE sits on CPU via mmap. CPU-resident weights:
+  ≈16.6-17.6 GiB experts + 26.8 GiB PLE per lane.
++ **VRAM margin lesson**: ~70-100 MB free per card after startup is not enough — the first image
+  request allocates more and aborts (`CUBLAS_STATUS_ALLOC_FAILED`, `clip_encode`). Working margin:
+  **0.2-1.1 GiB free per card after a text+vision warmup**. Also the llama-swap 32g cgroup is too
+  small for the CPU-side weights (servers ran with 52g).
 
-## Results
+## Results (IQ3_S / ORCA uncensored IQ3_XXS, same config)
 
-Both lanes: 256K ctx, vision loaded, 1 rep per level.
-Values are IQ3_S (vanilla, ISTA-DASLab) / ORCA uncensored IQ3_XXS (same config, 31 GPU expert layers):
++ 20 %: pp 424.5 / 412.7, tg 16.6 / 16.7 t/s
++ 60 %: pp 338.6 / 331.4, tg 14.3 / 14.4 t/s
++ 85 %: pp 298.6 / 294.7, tg 13.3 / 13.3 t/s
 
-+ 20%: pp 424.54 / 412.70 t/s, tg 16.55 / 16.65 t/s
-+ 60%: pp 338.62 / 331.43 t/s, tg 14.34 / 14.39 t/s
-+ 85%: pp 298.58 / 294.71 t/s, tg 13.29 / 13.34 t/s
+**MTP A/B (ORCA only — the vanilla GGUF ships no MTP head): a no on this rig.** The 4.1 GB nextn
+draft doesn't fit VRAM without evicting 4 target expert layers, and even then it is slower than
+no-MTP at every level (accept 0.44-0.50); on CPU the draft more than halves decode (tg 6.5 at
+20 %).
 
-MTP A/B (uncensored lane only — the vanilla GGUF ships no MTP head), pp / tg t/s at 20 / 60 / 85%:
+**CPU threads: keep the default 8** (the P-cores). 12 threads is ~1-2.5 % slower on prefill,
+14 ~18 % slower; decode unaffected.
 
-+ no MTP (above):
-    pp 412.7 / 331.4 / 294.7, tg 16.65 / 14.39 / 13.34
-+ MTP on GPU (needs 4 expert layers evicted: 27 GPU experts):
-    pp 295.3 / 249.6 / 225.9, tg 16.17 / 13.34 / 11.74, accept 0.44-0.50
-+ MTP on CPU (30 GPU expert layers — one more CPU layer than the GPU-draft run):
-    pp 234.2                , tg 6.46                 , accept 0.46 (20% only)
+## Takeaways
 
-Verdict: MTP is a **no** on this rig. The draft (4.1 GB nextn GGUF: 1 MoE layer + its own
-token_embd/output) doesn't fit VRAM (first attempt died allocating its 512 MiB KV); on CPU the
-draft makes decode 2.5x slower; on GPU it costs 4 target expert layers and still comes out
-slower than no-MTP on every level (accept rate only ~0.44-0.50).
++ Vanilla llama.cpp runs Flash-Next (both lanes, vision included) on the XTX pair, but
+  pp 300-425 / tg 13-17 t/s is far off our targets (pp ≥ 1000, tg ≥ 25 at 85 %) and Strata's
+  upstream XTX numbers (≈1.5K pp, 59-65 tg) — exactly the gap Strata's expert residency is
+  supposed to close.
++ Model-size effect is small with this placement: ORCA is ~2-4 % slower than IQ3_S at 20-60 %,
+  ~1 % at 85 %.
++ Not tested: other quants/splits (±1-2 expert layers is the tuning granularity), `--load-mode
+  dio` (would bypass the page cache the CPU weights rely on).
 
-CPU threads (IQ3_S lane, same placement; default is 8 — the 13700K's P-cores), pp / tg t/s at
-20 / 60 / 85%:
+# 20261020 Strata longctx (IQ3_S, 256K, F16 KV)
 
-+ 8 (default): 424.5 / 338.6 / 298.6, 16.55 / 14.34 / 13.29
-+ 12:          413.8 / 335.9 / 297.8, 16.50 / 14.21 / 13.21
-+ 14:          350.0                , 16.56                 (20% only, skipped)
+Same machine and same workload shape, through Strata instead of `llama-server`. Full config and
+raw data: `notes/strata/iq3s-262k-f16kv.md` (K=22 split, 28 GiB resident budget, lend 3609/3609,
+file tier 0.0). Gotcha now baked into `bench/speed/run_longctx.py`: Strata ignores
+`cache_prompt: false`, so the runner prepends a per-request nonce to force cold prefills.
 
-Verdict: keep the default 8 — more threads don't help this placement (12 is ~1-2.5% slower on
-prefill, 14 is ~18% slower; spilling onto E-cores / the box's power budget costs more than the
-added throughput); decode is unaffected.
+Results (pp / tg t/s, 2 cold reps, medians):
 
-VRAM / RAM usage (peaks over the full session, sysfs + meminfo + cgroup; cards as PCH / display):
++ 20 % (52K): pp 1502.2, tg 52.8
++ 60 % (157K): pp 1628.8, tg 49.3
++ 85 % (223K): pp 1574.1, tg 47.9
 
-+ IQ3_S: free 930 / 880 MiB after load, 629 / 474 MiB after text+vision; peak used 23936 /
-  24098 MiB; cgroup peak 19.9 GiB; host RAM avail min 52.3 GiB.
-+ ORCA IQ3_XXS: free 623 / 665 MiB, 338 / 207 MiB after text+vision; peak used 24229 / 24365
-  MiB; cgroup peak 27.8 GiB; host RAM avail min 52.7 GiB.
-+ ORCA + MTP (GPU draft): free 1466 / 1608 MiB, 1102 / 1139 MiB after text+vision; peak used
-  23494 / 23434 MiB; cgroup peak 19.4 GiB; host RAM avail min 52.0 GiB.
-+ KV (f16, 262144): 6144 MiB total (12 full-attn layers x 512 MiB) + ~1.5 GiB recurrent states
-  (0.75 GiB per card); compute buffers ~1.3 / 1.1 GiB per device; RAM never got tight — the
-  CPU-side weights live in page cache (host cached peaked ~54 GiB, available never below
-  51.5 GiB).
+Against the llama.cpp baseline (same points): pp **3.5x / 4.8x / 5.3x**, tg **3.2x / 3.4x / 3.6x**.
+The AGENTS target (pp ≥ 1000, tg ≥ 25 at 85 %) is met with a wide margin. Draft acceptance
+0.50-0.58; cold-prefill latency 52K ≈ 35 s, 157K ≈ 95 s, 222K ≈ 137-199 s.
 
-## Takeaways for the Strata comparison
+RAM budget 22 vs 28 GiB A/B (60/85 %): both deltas inside the ±5-7 % rep spread — zero file tier
+buys residency and less SSD churn, **not speed**. 28 GiB kept (details in the strata note).
 
-+ Vanilla llama.cpp **does run Flash-Next** (both lanes, vision included) on the XTX pair, but
-  pp 300-425 / tg 13-17 t/s is far off our own targets (pp ≥ 1000, tg ≥ 25 at 85%) and off
-  Strata's upstream XTX numbers (≈1.5K pp, 59-65 tg) — exactly the gap Strata's VRAM+RAM expert
-  residency is supposed to close. This is the number to beat.
-+ Model-size effect is small with this placement: ORCA (bigger experts per layer) is ~2-4%
-  slower than IQ3_S at 20-60% and ~1% at 85%.
-+ Raw artifacts: `bench/results/longctx/` (gitignored): `iq3s-longctx.{json,log}`,
-  `orca-longctx.{json,log}`, `orca-mtp-gpu-longctx.{json,log}`,
-  `orca-mtp-cpu-draft.{json,log}`, the CPU-thread sweep
-  (`iq3s-t12-longctx.{json,log}`, `iq3s-t14-partial.{json,log}`), plus the `*.tsv`
-  VRAM/RAM samplers.
-+ Not tested here: other quants/splits (±1-2 expert layers is the tuning granularity,
-  thread counts 8-14 are settled), `--load-mode dio` (would bypass the page cache the CPU
-  weights rely on).
+# 20261020 Strata quality gate (IQ3_S, 256K, F16 KV)
 
-# 20261020 Strata longctx (IQ3_S, 256K, F16 KV) — the number llama.cpp had to beat
+Same production lane as above, run sequentially against a loopback container, one slot, MTP on,
+thinking at server default. Purpose: decide whether the fast IQ3_S is actually usable, not just
+fast. Harness: tool-eval-bench `v2.6.1.dev72+gd84fce442` (seed 42, temp 0, 16K max tokens), frozen
+20260920 reasoning manifest (131072 max tokens, 30-min timeout), mini-SWE-agent 2.4.6 frozen v2
+20-instance pilot. The bench runners now take an API key (`--api-key` / `API_KEY=`); the server
+needed no workaround. (Watch out: `~/.cache/huggingface` must not be root-owned or the agentic
+run aborts.)
 
-Same machine (fedora-tuf, 2x RX 7900 XTX, i7-13700K, 62.6 GiB), same workload shape as the
-llama.cpp baseline above (20 / 60 / 85 % of 262144, 1 % output = 2621 tokens), through Strata
-instead of `llama-server`.
+## 1. Tool calling — 88/100 (122/138)
 
-## Setup
++ 55 pass, 12 partial, 2 fail; deployability 72, responsiveness 33; all 69 scenarios ran. 100 %
+  in 9 of 15 categories; weak spots: **Structured Output 6/12 (50 %)**, Tool Selection 4/6
+  (TC-03), Safety 22/26, Context & State 18/20.
++ Fails: TC-03 (implicit contact lookup → email chain, `wrong_args`) and TC-68 (schema-violation
+  resistance; final output not valid JSON). Partials cluster around the same markdown/JSON reflex
+  (TC-65/66/67/69) and injection scenarios that were refused but quoted the attacker text back.
++ Read: parsing/selection/chaining solid — the failures are model habits, not the serving stack.
+  Against `notes/bench.md`: sits in the 85-95 pack; excluding the four scenarios the earlier
+  models could not run (TC-65/66/67/69), 118/130 ≈ 90.8 — roughly Qwen 27B / Ornith class.
 
-+ `ghcr.io/hurui200320/llm-ops-strata:0.2.0-beta-rocm-gfx110x`, engine 0.1.45.3, IQ3_S
-  (ISTA-DASLab GSQ-RCO) read in place.
-+ 262144 ctx, **F16 KV** (`--set kv=fp16`; the launch-level override — `KV=fp16` itself breaks
-  0.2.0's setup), `--layer-split auto` → **K=22** (GPU0 layers 0-21, GPU1 22-47 + head; PCH x4
-  link measured 7.0 GB/s), 1 slot, MTP draft on, `--prompt-cache-spread`, hipBLASLt table
-  `gfx1100-hipblaslt-100200.txt` paired.
-+ **Resident budget 28 GiB** (raised from 22 on this day): GPU expert caches 26.8 GiB, RAM copy
-  **26.9 GiB silently used** (20.05 GiB ranked + **6.81 GiB lend region**), **file tier 0.0 GiB**,
-  page cache ~24 GiB. At 22 GiB the lend region was only 1088/3609 slots and the file tier 0.1 GiB.
-+ Method: repo `bench/speed/run_longctx.py` run inside the container against loopback (new
-  `--api-key`), 2 reps per level, cold prefill verified (`cache_n = 0`). **Gotcha:** Strata ignores
-  `cache_prompt: false`, so a naive run reuses the calibration prefix (a first attempt showed
-  `cache_n = 49152`); the runner now prepends a per-request nonce to force cold prefills.
+## 2. Reasoning gate — 10/10, **GATE PASS**
 
-## Results (pp / tg t/s, 2 reps, medians)
++ First model recorded here to clear **both** anchors: `aime26-15` (0/8 for everything before)
+  and `zebra-6x6-01`; all six zebras exact (100 % cells). 10/10, 0 errors, avg decode 56.8 t/s,
+  ~300k completion tokens in ~89 min wall.
++ Caveat: the two hard AIME passes are **at the wall** — ~90k tokens / ~27 min against the 30-min
+  timeout, ~2 min of margin. One run, default sampling: strong signal, not a stable rate.
 
-+ 20 %: pp 1502.2, tg 52.8 (reps 1482.8 / 1521.7; tg 53.4 / 52.2)
-+ 60 %: pp 1628.8, tg 49.3 (1658.5 / 1599.0; tg 49.2 / 49.4)
-+ 85 %: pp 1574.1, tg 47.9 (1521.2 / 1627.0; tg 49.2 / 46.5)
+## 3. Agentic coding — **19/20 resolved**
 
-Draft acceptance 0.50-0.58. Cold-prefill latency: 52K in ~35 s, 157K in ~95 s, 222K in ~137-199 s.
++ Java 8/8, JS/TS 7/8, C++ 4/4; 20/20 submitted (best recorded — previous best 19/20), agent loop
+  2:23:07, grading 13:33. Only `axios__axios-6539` unresolved: a real code failure (bare
+  `TypeError: Invalid URL` in the SSRF regression), not a grading technicality.
++ Beats the previous best (15/20, Qwen uncensored) and solved `three-25687` and `vue-11739`,
+  which none of the seven earlier models did. Same caveats as `notes/bench.md` (stochastic agent,
+  unpinned dataset, one task = 5pp) — directional, not a leaderboard.
 
-## Against the llama.cpp baseline (same points)
+## Reading / deployment decision
 
-+ pp: 424.5 / 338.6 / 298.6 → 1502 / 1629 / 1574 = 3.5x / 4.8x / 5.3x
-+ tg: 16.55 / 14.34 / 13.29 → 52.8 / 49.3 / 47.9 = 3.2x / 3.4x / 3.6x
-+ The AGENTS target (pp ≥ 1000, tg ≥ 25 at 85 %) is met with a wide margin.
-
-## RAM budget A/B: 22 vs 28 GiB (does removing the file tier speed it up?)
-
-Same config, only `--resident-budget-gib` changed; 60 % and 85 % re-measured:
-
-+ 60 %: pp 1575.6 (22 GiB) vs 1628.8 (28 GiB) → +3.4 %
-+ 85 %: pp 1604.5 (22 GiB) vs 1574.1 (28 GiB) → **-1.9 %** (i.e. the other direction)
-+ tg identical within noise (49.2 / 46.8 vs 49.3 / 47.9)
-
-Both differences are **smaller than the rep-to-rep spread (±5-7 %)**: on this NVMe the per-chunk
-lend re-reads (~816 slots ≈ 1.5 GiB per 8192-token chunk at 22 GiB) are hidden by the chunked
-prefill pipeline. So 28 GiB buys **zero file tier, full lend residency and less SSD churn** — not
-speed. It is kept because it removes the worst case and the #669 warning, at ~5 GiB less page
-cache (28.7 → 23.9 GiB), which nothing here needs.
++ **The quant is not dumb.** Coding 19/20, reasoning 10/10 (both anchors), tool calling 88/100 —
+  at or above the best models in `notes/bench.md`; the only clearly weak axis is post-tool
+  structured output (50 % category).
++ Cost/edge: hard AIME burns ~90k tokens / ~27 min; the coding pilot is 2h23m for 20 tasks.
+  Keep the current speed (MTP, 262K, F16 KV, full expert residency) — losing ~5 % decode would
+  flip the AIME passes into timeouts.
++ **Coding/agentic work: deploy the vanilla IQ3_S.** For structured-output-heavy automation add
+  a JSON/response-format constraint; injections were refused but quoted back (partial, not clean
+  pass). The uncensored lane was not run.

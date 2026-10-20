@@ -13,7 +13,10 @@ artifacts land in `bench/results/` (gitignored).
 Everything assumes llama-swap is reachable at `http://fedora-tuf:8080` and
 speaks OpenAI-compatible API with the model alias as `model`. Each tool
 documents its own overrides: the Python scripts take flags (e.g. `--base-url`),
-the shell scripts read env vars (e.g. `LLAMA_SWAP_URL`, `LIMIT`).
+the shell scripts read env vars (e.g. `LLAMA_SWAP_URL`, `LIMIT`). Pointing
+`LLAMA_SWAP_URL` at a direct server that requires a bearer token (e.g. Strata)
+also needs `API_KEY` (or `STRATA_KEY`); the tool-calling, reasoning and
+agentic runners pass it through.
 
 Decision models such as OpenJev use `/v1/systemone`, not chat completions.
 Use the [System One latency test](#system-one-decision-latency) below rather

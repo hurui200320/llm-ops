@@ -31,6 +31,8 @@
 # Env:
 #   LLAMA_SWAP_URL  llama-swap root URL (default http://10.233.1.16:8080; /v1
 #                   is appended for the agent config)
+#   API_KEY         bearer token when the backend is not behind llama-swap
+#                   (e.g. a direct Strata server; also accepted as STRATA_KEY)
 #   FILTER          --filter regex pinning the instance set (default: frozen
 #                   20-instance pilot below — 8 java + 8 js/ts + 4 cpp; reruns
 #                   on the same filter are comparable, different filters are not)
@@ -55,6 +57,7 @@ SWEBENCH_VERSION="5.0.2"
 
 LLAMA_SWAP_URL="${LLAMA_SWAP_URL:-http://10.233.1.16:8080}"
 BASE_URL="$LLAMA_SWAP_URL/v1"
+API_KEY="${API_KEY:-${STRATA_KEY:-dummy}}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 
 # Frozen pilot: 8 java + 8 js/ts + 4 cpp from SWE-bench Multilingual.
@@ -119,8 +122,10 @@ warmup() {
     # llama-swap loads a model on its first request; trigger the load here so
     # a slow cold start can't be misread as an agent failure
     local model="$1"
+    local auth=()
+    [[ -n "$API_KEY" ]] && auth=(-H "Authorization: Bearer $API_KEY")
     curl -sf --max-time 600 "$BASE_URL/chat/completions" \
-        -H "Content-Type: application/json" \
+        "${auth[@]}" -H "Content-Type: application/json" \
         -d "{\"model\":\"$model\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"max_tokens\":1}" \
         >/dev/null || echo "warning: warmup request for $model failed, continuing anyway" >&2
 }
@@ -292,7 +297,7 @@ for model in "${MODELS[@]}"; do
     # litellm sends the part after openai/ as the request model, which is how
     # llama-swap routes to the right backend
     sed -e "s#__MODEL__#openai/$model#" -e "s#__API_BASE__#$BASE_URL#" \
-        "$CONFIG_TPL" > "$OUTDIR/agent-config.yaml"
+        -e "s#__API_KEY__#$API_KEY#" "$CONFIG_TPL" > "$OUTDIR/agent-config.yaml"
     RUN_START=$SECONDS
     echo "${CYAN}  output in $OUTDIR, logging to $LOG${RESET}"
     # pipefail makes the pipeline status mini-extra's, not tee's; --workers 1
