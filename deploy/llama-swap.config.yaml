@@ -547,7 +547,7 @@ models:
     # The graceful stop llama-swap allows is bounded by this value, so the
     # 120 s `docker stop` fits inside it with room to spare.
     healthCheckTimeout: 600
-    concurrencyLimit: 1
+    concurrencyLimit: 20
     # Declared instead of probed: llama-swap picks its prober from the `owned_by`
     # field of the upstream's /v1/models, and Strata's listing omits it — so
     # discovery falls back to the listing-only prober and would advertise
