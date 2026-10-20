@@ -7,24 +7,45 @@ gfx1102 = RX 7600), the Strata Terminal (serve + the GGUF preparation tools) and
 The host needs only the `amdgpu` kernel driver: no ROCm, no compiler.
 
 Built and pushed by [`.github/workflows/strata-image.yml`](../../.github/workflows/strata-image.yml)
-(manual trigger) as `ghcr.io/hurui200320/llm-ops-strata:<tag>` — e.g. `0.2.0-beta-rocm-gfx110x`
+(manual trigger) as `ghcr.io/hurui200320/llm-ops-strata:<tag>` — e.g. `0.2.1-rocm-gfx110x`
 (public package; pulls need no login).
 
-## Pins (v0.2.0-beta; image verified 2026-10-20)
+## Pins (0.2.1 sources / 0.2.1 release; image `0.2.1-rocm-gfx110x`)
 
 | What | Value |
 | --- | --- |
-| Strata app tag | `v0.2.0-beta` (annotated tag → commit `3d1fb48090e8f2cefc22d7b5845fb7f5b71f33fa`) |
-| Engine package | `strata-engine-0.1.45.3-linux-x86_64-hip-rx7900.tar.gz`, sha256 `281f660619fe590ee647650729ffcb1108c3f762df5d711123c660ea27ca84fc` |
-| Image tag | `0.2.0-beta-rocm-gfx110x` (default; derived from the ref) |
-| Pushed digest | `sha256:b6e7f1019e560cc9d6d1a294303ccd8baef37c09ef3841b760c2f32c6bb3a85d` (CI run `39292617432`) — pulled anonymously and smoke-verified on fedora-tuf 2026-10-20; 2.44 GB on disk |
-| hipBLASLt table | [`gfx1100-hipblaslt-100200.txt`](gfx1100-hipblaslt-100200.txt) — **the runtime pair for this image** (engine 0.1.45.3 reports hipBLASLt `100200`; verified at first start 2026-10-20, sha256 `1bb8cd2e232ce1dec5dc0f303e5bd3b32abd9444330a4428a995ad4db8fb97be`). [`gfx1100-hipblaslt-100500.txt`](gfx1100-hipblaslt-100500.txt) stays committed for newer ROCm builds (sha256 `b314ca1a0f64d80ee1cad7bf85d3483df0e55ae8c5b4c1f78b7067dc5dab2b7a`). CI asserts the byte-identity of the pinned version (`100200` by default) with the checkout |
+| Strata source tag | `v0.2.1.1` (annotated tag → commit `e55d063114d3cd9220521e6f0a80b61950ab5889`) — the Terminal/Docker hotfix; the release assets are under `v0.2.1` |
+| Release / engine assets | `v0.2.1` |
+| Engine package | `strata-engine-0.1.46-linux-x86_64-hip-rx7900.tar.gz`, 241,466,491 bytes, sha256 `20e40a4b426c5da8ba0b5979334eb89538e9c4cd51610d456336153e3d45c764`; manifest schema 2, `build_id a7bdbfdabc9a+rocm`, variant `rx7900`, 580 files |
+| Image tag | `0.2.1-rocm-gfx110x` (the workflow default; sources are `v0.2.1.1`) |
+| Local validation build | `llm-ops-strata:0.2.1-rocm-gfx110x`, 1,435,653,450 bytes, image ID `sha256:51316f1c5a80ec1fe0f4b24b04118310a02e364b73d401361dd112c88458a3d1` — `strata 0.2.1 (build 0.1.46.1)`, engine inventory usable (2026-10-20, GPU-less host); not pushed |
+| Pushed digest | _pending the first CI run of this workflow revision_ — record the run ID, digest and size here |
+| Terminal build | `0.1.46.1` (from the `v0.2.1.1` CMake version; `strata --version` reports app `0.2.1`, build `0.1.46.1`) |
+| hipBLASLt table | packaged at `tuning/gfx1100-hipblaslt-100200.txt` (sha256 `1bb8cd2e232ce1dec5dc0f303e5bd3b32abd9444330a4428a995ad4db8fb97be`), byte-identical to [`gfx1100-hipblaslt-100200.txt`](gfx1100-hipblaslt-100200.txt). The start resolves it, but on gfx1100 it is **opt-in**: `STRATA_HIPBLASLT_TABLE=on`. [`gfx1100-hipblaslt-100500.txt`](gfx1100-hipblaslt-100500.txt) stays committed for newer ROCm builds (sha256 `b314ca1a0f64d80ee1cad7bf85d3483df0e55ae8c5b4c1f78b7067dc5dab2b7a`). CI checks the package table, the committed fallback and the checkout copy against each other |
 
-Workflow inputs: `strata_ref`, `engine_asset`, `image_tag` (empty = `<ref without v>-rocm-gfx110x`),
-`hipblaslt_table_version`. Gates in CI: the release `SHA256SUMS.txt` line, the package manifest
-(platform / backend / archs / entrypoint), the gfx1100 table file for the pinned version, and an
-in-image `strata components engine` smoke test; upstream's own build stage re-hashes every package
-file. The runner needs no GPU.
+Workflow inputs: `strata_ref` (source tag, default `v0.2.1.1`), `engine_release` (assets, default
+`v0.2.1`), `engine_asset`, `image_tag` (default `0.2.1-rocm-gfx110x`), `hipblaslt_table_version`.
+Gates in CI: the release `SHA256SUMS.txt` line, the package manifest and `BUILD.json`
+(platform / backend / variant / archs / entrypoint / `hipblaslt_version`), the package's gfx1100
+table for the pinned version (plus the committed and checkout copies), and an in-image
+`strata components engine` smoke test with `strata --version`; upstream's own build stage re-hashes
+every package file. The runner needs no GPU.
+
+## Upgrading from 0.2.0-beta
+
+- `/data` is unchanged; the existing pack and MTP layer remain valid. **No repack** is needed
+  (`iq_pack`, `pack_index`, `pack_layer`, `strata_pack`, `mtp_pack`, `mtp_rt` and the GGUF readers
+  did not change between the tags; only `mtp_fetch.py` got faster for new fetches).
+- The old `0.2.0-beta` image tag stays available for rollback; switching is an image-tag change.
+- Replace the old `STRATA_HIPBLASLT_TUNING=/data/hipblaslt/...` environment with
+  **`STRATA_HIPBLASLT_TABLE=on`**. A preset made by 0.2.0 keeps the old key in its `extra`; remove it
+  with a backup (`.` env vars are merged, not replaced) or the server logs "set by you" and keeps
+  using the old path (same table, but the new packaged-table flow is not tested).
+- An installed run config whose `exe` is a path into the old engine folder must be changed to
+  `component:strata-engine` (or the model re-run through `strata launch`); the new image only carries
+  the 0.1.46 component.
+- If context/kv/vision are unchanged, the first start is direct (no setup re-run). Do not set
+  `KV=fp16`; see the KV bullet below.
 
 ## Run
 
@@ -41,31 +62,31 @@ docker run -d --name strata-init \
   -v /mnt/unenc-xfs/strata:/data -v /mnt/unenc-xfs/models:/models:z \
   -e MODEL=IQ3_S -e CONTEXT=256k -e GPUS=0,1 -e PARALLEL=1 \
   -e MODEL_PATH=/models/strata/ISTA-DASLab-Flash-Next \
-  -e STRATA_HIPBLASLT_TUNING=/data/hipblaslt/gfx1100-hipblaslt-100200.txt \
-  -e STRATA_SET="kv=fp16 vram-reserve-mib=3072 vram-reserve-later-mib=700 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=4 STRATA_SPLIT_OVERLAP=1" \
-  ghcr.io/hurui200320/llm-ops-strata:0.2.0-beta-rocm-gfx110x
+  -e STRATA_SET="kv=fp16 vram-reserve-mib=3072 vram-reserve-later-mib=700 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=4 STRATA_SPLIT_OVERLAP=1 STRATA_HIPBLASLT_TABLE=on" \
+  ghcr.io/hurui200320/llm-ops-strata:0.2.1-rocm-gfx110x
 docker logs -f strata-init    # watch the first pass (pack, the one-time MTP fetch)
 ```
 
 - `MODEL_PATH` takes a folder of GGUF files or one `.gguf` (`GGUF_DIR` still works as an alias).
   Nothing is downloaded for the model itself; the prepared pack and MTP layer are written under
   `/data` (`Strata-data/`).
-- **`KV=fp16` breaks the install on this image** (`setup.py` accepts only `int8|q4_0|k8v4`, while
+- **`KV=fp16` still breaks the install** (0.2.1's `setup.py` accepts only `int8|q4_0|k8v4`, while
   `strata launch` passes `--kv fp16` straight through → argparse error → exit 6 with no `[X]` line).
   Install with the default int8 and put **`kv=fp16` in `STRATA_SET`**: lowercase keys become engine
   flags (`--kv fp16` is appended after setup's own `--kv int8` is stripped). Do not set `KV=fp16`
-  later either: the launch compares it with the installed config (`desc_matches`) and would re-run
-  the broken setup on every start; the launch's own settings never reach the engine on an
-  already-installed model — only the installed config and `--set` do.
-- **`PARALLEL` defaults to "fit to the card"** (3 on 24 GB) and `strata launch` turns that into a
-  profile override → `--batch 3` (batch slots are otherwise opt-in). Set `PARALLEL=1` for the
+  later either: `desc_matches()` compares it with the installed config and re-runs the broken setup
+  on every start.
+- **`PARALLEL` still defaults to "fit to the card"** (3 on 24 GB) and `strata launch` turns that into
+  a profile override → `--batch 3` (batch slots are otherwise opt-in). Set `PARALLEL=1` for the
   single-request lane (llama-swap `concurrencyLimit: 1`).
-- **`--slot-save-path` does not exist in engine 0.1.45.3**, although the v0.2.0-beta docs describe
-  session save/restore (`POST /slots/0?action=save|restore`). Passing it kills the start with
-  `unknown argument`. Session files need a newer engine package; parking
-  (`--conversation-cache-*`) works.
-- No `--memory` cap: 0.2.0 plans from the host's RAM and the entrypoint warns when a cgroup cap is
-  seen.
+- **Session files are unavailable on this split lane, for a different reason than in 0.2.0.**
+  `--slot-save-path` is a `strata serve` option, not an engine flag; passing it through `STRATA_SET`
+  sends it to the engine and fails with `unknown argument`. Engine 0.1.46 does implement
+  `SAVE`/`RESTORE`, but it refuses session files with a layer split
+  (`session files do not support --layer-split`; also `--batch`, `--peer-device`). Our production
+  pair is a split, so only parking (`--conversation-cache-*`) works. Do not pass the flag.
+- No `--memory` cap: 0.2.1 still plans from the host's RAM and the entrypoint warns when a cgroup cap
+  is seen.
 - `--stop-timeout 120`: SIGTERM drains, unloads and frees the VRAM (`strata launch --stop`). Docker's
   default 10 s is too short for a big model.
 - Groups are **gids, not names** here: Docker resolves `--group-add` names against the image's
@@ -87,7 +108,7 @@ docker run -it --rm \
   --group-add "$(getent group video | cut -d: -f3)" \
   --group-add "$(getent group render | cut -d: -f3)" \
   -v /mnt/unenc-xfs/strata:/data -v /mnt/unenc-xfs/models:/models:z \
-  ghcr.io/hurui200320/llm-ops-strata:0.2.0-beta-rocm-gfx110x sh
+  ghcr.io/hurui200320/llm-ops-strata:0.2.1-rocm-gfx110x sh
 ```
 
 Any command replaces the server start (`docker run … image strata launch --help`, `… image sh`).
@@ -97,9 +118,11 @@ Inside: the bundled Python 3.12, `serve/`, the preparation tools the terminal im
 `tools/gguf_writer.py`, `tools/strata_pack.py`, `tools/strata_tokenizer.py`, `tools/strata_mcp.py`,
 `tools/canonical_xcheck.py`, `tools/draft_vocab.py`, `tools/_paths.py`) — so engine-side dev tools
 such as `quant_quality.py`/`strata_inspect.py` are **not** in the image. Also: llama.cpp's gguf-py
-seed (`/opt/strata/seed/third_party/llama.cpp`) and the `strata` CLI (`strata components engine`,
-`strata models list`, `strata launch --help/--plan` — all verified on the pulled image 2026-10-20);
-`mtp_pack.py`/`mtp_rt.py` called by hand need
+seed (`/opt/strata/seed/third_party/llama.cpp`), `docs/TERMINAL_LAUNCH.md`, the frozen
+`bench/prompts/standard-v1` fixtures and the `strata` CLI (`strata components engine`,
+`strata models list`, `strata launch --help/--plan`, `strata bench run` — the first four verified
+on the pulled 0.2.0 image 2026-10-20; `strata bench run` is new in 0.2.1 and records the terminal's
+`COMMIT`). `mtp_pack.py`/`mtp_rt.py` called by hand need
 `STRATA_GGUF_PY=/opt/strata/seed/third_party/llama.cpp/gguf-py`. There is no compiler in the image:
 engine updates are new packages, or a local package built on the host with `packaging/build_hip_linux.sh`
 and passed to `docker/build.sh --engine`. `docker exec strata-init strata status` works from outside.
@@ -107,62 +130,56 @@ and passed to `docker/build.sh --engine`. `docker exec strata-init strata status
 ### Local build (fallback)
 
 ```sh
-git -C <strata-checkout> worktree add /tmp/strata-v0.2.0-beta v0.2.0-beta   # or a fresh clone
-tar -xzf strata-engine-0.1.45.3-linux-x86_64-hip-rx7900.tar.gz -C <empty-dir>
-/tmp/strata-v0.2.0-beta/docker/build.sh --flavor hip \
-  --engine <empty-dir> --repo /tmp/strata-v0.2.0-beta \
-  --tag llm-ops-strata:0.2.0-beta-rocm-gfx110x
+git -C <strata-checkout> worktree add /tmp/strata-v0.2.1.1 v0.2.1.1   # or a fresh clone
+tar -xzf strata-engine-0.1.46-linux-x86_64-hip-rx7900.tar.gz -C <empty-dir>
+/tmp/strata-v0.2.1.1/docker/build.sh --flavor hip \
+  --engine <empty-dir> --repo /tmp/strata-v0.2.1.1 \
+  --version 0.2.1 --tag llm-ops-strata:0.2.1-rocm-gfx110x
 ```
 
 Needs network (base image + the terminal's pinned CPython 3.12 and hash-locked wheels). `--ctx-only`
 keeps the assembled context; `STRATA_DOCKER_BUILD_OPTS` adds docker-build options.
 
-**Patch first** — upstream's `docker/build.sh` at v0.2.0-beta (still on main, checked 2026-10-20) stages
-`docs/MANAGEMENT_PROTOCOL.md` but not `docs/TERMINAL_LAUNCH.md`, which `packaging/package_terminal.py`'s
-PAYLOAD requires, so the build fails with `missing payload item: docs/TERMINAL_LAUNCH.md`. The workflow
-appends the missing file automatically (no-op once upstream fixes it); a local build needs the same
-one-liner before `docker/build.sh`:
+Build from **`v0.2.1.1` or later**, not `v0.2.1`: the 0.2.1 tag's `package_terminal.py` calls `git`
+inside the terminal build stage, which has no git, so the image build fails. `v0.2.1.1` passes
+`STRATA_COMMIT` into the build. The old `docs/TERMINAL_LAUNCH.md` patch is no longer needed;
+0.2.1+ stages it in `docker/build.sh`.
 
-```sh
-sed -i 's|docs/MANAGEMENT_PROTOCOL.md|docs/MANAGEMENT_PROTOCOL.md docs/TERMINAL_LAUNCH.md|' <checkout>/docker/build.sh
-```
+**Upstream image (cross-check).** `ghcr.io/niko1221/strata:0.2.1-rocm-gfx110x` is public (1.43 GB
+on disk when checked 2026-10-20; engine 0.1.46, terminal 0.2.1 build 0.1.46) and is built from a
+post-0.2.1 main commit. It is useful to compare the engine inventory and tuning table with ours;
+production uses `ghcr.io/hurui200320/llm-ops-strata:0.2.1-rocm-gfx110x`, which carries the
+`v0.2.1.1` terminal (build 0.1.46.1) and our package/table gates.
 
 Wiring the image into the host llama-swap (macro with these devices/mounts, per-model env, the
 API-key header, `healthCheckTimeout 600`, `docker stop -t 120`) is tracked in the local deployment
-plan and lands with the Phase 3 work.
+plan and lands with the Phase 3 work; this upgrade does not touch the llama-swap config.
 
-## The hipBLASLt tuning table (why the env var)
+## The hipBLASLt tuning table (packaged since 0.2.1)
 
 The gfx1100 table routes the dense prompt GEMMs through hipBLASLt (docs/AMD_HIP.md: +40-60% prompt
 speed on the 7900 XTX); its solution ids are valid only for the hipBLASLt version the engine runs
-with. Three verified facts about 0.2.0 (code-checked 2026-10-19):
+with. Since 0.2.1 the AMD engine package carries `tuning/gfx1100-hipblaslt-100200.txt` (listed and
+hashed in `engine-component.json`) and records `hipblaslt_version: 100200` in `BUILD.json`. The
+server resolves the table for the card at start (`serve/server.py` with
+`strata_control/hipblaslt_tuning.py`) and passes it to the engine; the engine still reads only
+`STRATA_HIPBLASLT_TUNING` and validates magic/arch/version itself.
 
-- the engine reads the table **only** from `STRATA_HIPBLASLT_TUNING` (`src/prefill/gemm.cu`), checks
-  magic/arch/version itself and otherwise runs plain hipBLAS;
-- the Linux engine package carries no `hipblaslt-version.h` and its `BUILD.json` no
-  `hipblaslt_version`; 0.2.0's component flow (`setup.control_engine_step`) resolves neither, so
-  `setup.py` never sets the variable on this lane;
-- the terminal image ships no `tools/hip/*.txt` files at all.
+- On gfx1100 the packaged table is **opt-in**: set `STRATA_HIPBLASLT_TABLE=on`. Without it the start
+  logs `... is in this package and not used by default (faster prompts, but answers can differ in
+  the last digits)` and the prompt GEMMs run plain hipBLAS.
+- `STRATA_HIPBLASLT_TABLE=off` never uses a table; `auto` uses it by default only on gfx1151.
+- A `STRATA_HIPBLASLT_TUNING` you set yourself always wins (the same table is fine); this remains the
+  fallback for the 0.2.0 image and for a package whose table is missing.
+- The committed copy `deploy/strata/gfx1100-hipblaslt-100200.txt` remains for CI and as the host-side
+  fallback; the `/mnt/unenc-xfs/strata/hipblaslt/` copy is no longer needed by 0.2.1. The workflow
+  fails if the package table, the committed copy and the checkout table ever differ.
+- Start log lines to check:
 
-So the table is wired at run time: it is committed in this repository as
-`deploy/strata/gfx1100-hipblaslt-100200.txt` (byte-identical to the `tools/hip/` file of the
-`v0.2.0-beta` checkout; the workflow fails if they ever differ). That is the pair the engine
-actually reports — `hipBLASLt tuning enabled (26 rows, gfx1100, version 100200)`, verified on
-fedora-tuf 2026-10-20. Put it on the host side of the `/data` bind and pass the env var:
+      hipBLASLt tuning table: gfx1100-hipblaslt-100200.txt (faster prompts; STRATA_HIPBLASLT_TABLE=off turns it off)
+      prefill gemm: hipBLASLt tuning enabled (26 rows, gfx1100, version 100200)
 
-```sh
-mkdir -p /mnt/unenc-xfs/strata/hipblaslt
-cp /mnt/unenc-xfs/llm-ops/deploy/strata/gfx1100-hipblaslt-100200.txt /mnt/unenc-xfs/strata/hipblaslt/
-# run with: -e STRATA_HIPBLASLT_TUNING=/data/hipblaslt/gfx1100-hipblaslt-100200.txt
-```
-
-Either env form works (`-e`, or `-e STRATA_SET="STRATA_HIPBLASLT_TUNING=…"` to also save it into the
-preset). The engine then logs one of
-
-    prefill gemm: hipBLASLt tuning enabled (26 rows, gfx1100, version 100200)
-    prefill gemm: hipBLASLt version mismatch: file=100200 runtime=<N>; using hipBLASEx
-
-`<N>` is the ground truth for this package; pick the matching `gfx1100-hipblaslt-<N>.txt` (or none)
-and re-check. This first-start log line is the real pairing gate — CI can only check that a table
-for the pinned version exists in the checkout. The checkout carries gfx1100 tables for
-`100100/100200/100202/100401/100500`; a mismatch means swapping the file, not rebuilding.
+  A mismatch (`version mismatch: file=100200 runtime=<N>`) means the package's `BUILD.json`/table
+  pairing is wrong; pick the matching `gfx1100-hipblaslt-<N>.txt` (or none) and re-check. The
+  checkout carries gfx1100 tables for `100100/100200/100202/100401/100500`; a mismatch means
+  swapping the file, not rebuilding.

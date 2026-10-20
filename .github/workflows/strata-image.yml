@@ -5,30 +5,37 @@ name: strata-image
 # component package, and the Dockerfile's verify stage re-hashes every file of it. The runner needs
 # no GPU (the verify stage only reads files) and no host ROCm (the package carries the runtime).
 #
-# Manual trigger only: the Strata tag, the engine package asset and the image tag pin what is
-# built and pushed. See deploy/strata/README.md for the run recipes and the runtime verification
-# that cannot happen here (the hipBLASLt tuning table; a GPU-less runner cannot start the engine).
+# Manual trigger only: the Strata source tag (Terminal/Dockerfile), the release tag that carries the
+# engine assets, the package asset and the image tag pin what is built and pushed. The two tags can
+# differ: v0.2.1.1 is the Terminal/Docker hotfix while the 0.2.1 release carries the engine package.
+# See deploy/strata/README.md for the run recipes and the runtime verification that cannot happen
+# here (the hipBLASLt tuning table and prompt speed; a GPU-less runner cannot start the engine).
 
 on:
   workflow_dispatch:
     inputs:
       strata_ref:
-        description: "Strata tag (terminal sources and the release the engine package is fetched from)"
+        description: "Strata source tag for the Terminal and Dockerfile (v0.2.1.1: the Terminal/Docker hotfix; the release assets are under engine_release)"
         required: true
-        default: "v0.2.0-beta"
+        default: "v0.2.1.1"
+        type: string
+      engine_release:
+        description: "GitHub release tag with SHA256SUMS.txt and the engine assets (v0.2.1)"
+        required: true
+        default: "v0.2.1"
         type: string
       engine_asset:
         description: "Engine package asset name in that release (rx7900 = gfx1100/gfx1101/gfx1102)"
         required: true
-        default: "strata-engine-0.1.45.3-linux-x86_64-hip-rx7900.tar.gz"
+        default: "strata-engine-0.1.46-linux-x86_64-hip-rx7900.tar.gz"
         type: string
       image_tag:
-        description: "Image tag (empty: derived from strata_ref, e.g. 0.2.0-beta-rocm-gfx110x)"
+        description: "Image tag (empty: derived from engine_release, e.g. 0.2.1-rocm-gfx110x)"
         required: false
-        default: ""
+        default: "0.2.1-rocm-gfx110x"
         type: string
       hipblaslt_table_version:
-        description: "hipBLASLt version the gfx1100 tuning table must exist for (no version is readable from the engine package in CI; the engine validates the table itself at first start; 100200 = the version runtime-verified on fedora-tuf 2026-10-20)"
+        description: "hipBLASLt version the gfx1100 tuning table must exist for (0.1.46 packages record it in BUILD.json; the engine validates the table itself at first start; 100200 = the version runtime-verified on fedora-tuf 2026-10-20)"
         required: true
         default: "100200"
         type: string
@@ -67,13 +74,13 @@ jobs:
 
       - name: Derive the image tag and record the commit
         env:
-          STRATA_REF: ${{ inputs.strata_ref }}
+          ENGINE_RELEASE: ${{ inputs.engine_release }}
           IMAGE_TAG_INPUT: ${{ inputs.image_tag }}
         run: |
           set -euo pipefail
           tag="${IMAGE_TAG_INPUT}"
           if [ -z "$tag" ]; then
-            tag="${STRATA_REF#v}-rocm-gfx110x"
+            tag="${ENGINE_RELEASE#v}-rocm-gfx110x"
           fi
           echo "IMAGE_TAG=$tag" >> "$GITHUB_ENV"
           echo "STRATA_COMMIT=$(git -C strata rev-parse HEAD)" >> "$GITHUB_ENV"
@@ -81,14 +88,14 @@ jobs:
 
       - name: Download the engine package and verify the release checksum
         env:
-          STRATA_REF: ${{ inputs.strata_ref }}
+          ENGINE_RELEASE: ${{ inputs.engine_release }}
           ENGINE_ASSET: ${{ inputs.engine_asset }}
         run: |
           set -euo pipefail
           case "$ENGINE_ASSET" in
             ""|*/*) echo "engine_asset must be a plain release asset name" >&2; exit 1 ;;
           esac
-          base="https://github.com/${STRATA_REPO}/releases/download/${STRATA_REF}"
+          base="https://github.com/${STRATA_REPO}/releases/download/${ENGINE_RELEASE}"
           mkdir -p pkg
           curl --retry 3 --retry-delay 5 -fsSL -o SHA256SUMS.txt "$base/SHA256SUMS.txt"
           curl --retry 3 --retry-delay 5 -fsSL -o "$ENGINE_ASSET" "$base/$ENGINE_ASSET"
@@ -97,14 +104,20 @@ jobs:
           line="$(awk -v a="$ENGINE_ASSET" '$2 == a || $2 == "*" a' SHA256SUMS.txt)"
           [ -n "$line" ] || { echo "$ENGINE_ASSET is not listed in SHA256SUMS.txt" >&2; exit 1; }
           printf '%s\n' "$line" | sha256sum -c -
-          tar -xzf "$ENGINE_ASSET" -C pkg
-          echo "PKG_DIR=$PWD/pkg" >> "$GITHUB_ENV"
+          # Name the folder after the package, not "pkg": build.sh uses the basename for the
+          # engine folder in the image and for the com.strata.engine label (upstream does the same).
+          pkg_dir="pkg/${ENGINE_ASSET%.tar.gz}"
+          mkdir -p "$pkg_dir"
+          tar -xzf "$ENGINE_ASSET" -C "$pkg_dir"
+          echo "PKG_DIR=$PWD/$pkg_dir" >> "$GITHUB_ENV"
 
-      - name: Check the engine package manifest
+      - name: Check the engine package manifest and BUILD.json
+        env:
+          TABLE_VERSION: ${{ inputs.hipblaslt_table_version }}
         run: |
           set -euo pipefail
           python3 - "$PKG_DIR" <<'PY'
-          import json, pathlib, sys
+          import json, os, pathlib, sys
 
           pkg = pathlib.Path(sys.argv[1])
           manifest = pkg / "engine-component.json"
@@ -113,63 +126,84 @@ jobs:
           assert m.get("id") == "strata-engine", f"id {m.get('id')!r}"
           assert m.get("platform") == "linux-x86_64", f"platform {m.get('platform')!r}"
           assert m.get("backend") == "hip", f"backend {m.get('backend')!r}"
+          assert m.get("variant") == "rx7900", f"variant {m.get('variant')!r}"
           archs = m.get("archs") or []
           assert "gfx1100" in archs, f"archs {archs}"
           assert m.get("entrypoint") == "strata", f"entrypoint {m.get('entrypoint')!r}"
           assert m.get("files"), "the manifest lists no files"
           entry = pkg / m["entrypoint"]
           assert entry.is_file(), f"entrypoint {entry} is missing"
+          build = json.loads((pkg / "BUILD.json").read_text(encoding="utf-8"))
+          assert build.get("version") == m.get("version"), (
+              f"BUILD.json version {build.get('version')!r} != manifest version {m.get('version')!r}")
+          assert build.get("variant") == "rx7900", f"BUILD.json variant {build.get('variant')!r}"
+          want = int(os.environ["TABLE_VERSION"])
+          got = build.get("hipblaslt_version")
+          assert got == want, f"BUILD.json hipblaslt_version {got!r} != pinned {want}"
           print(f"manifest OK: version={m['version']} variant={m.get('variant')} archs={archs} "
-                f"files={len(m['files'])} signature={'yes' if m.get('signature') else 'no'}")
+                f"files={len(m['files'])} signature={'yes' if m.get('signature') else 'no'} "
+                f"build_id={m.get('build_id')}")
+          print(f"BUILD.json OK: version={build['version']} variant={build['variant']} "
+                f"hipblaslt_version={got}")
           PY
           # the version is kept OUTSIDE the package folder: build.sh copies that folder into the
           # image context and the build verifies every file in it against the manifest
           version="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["version"])' "$PKG_DIR/engine-component.json")"
           echo "PKG_VERSION=$version" >> "$GITHUB_ENV"
 
-      - name: "Gate: the gfx1100 hipBLASLt tuning table exists for the pinned version"
+      - name: "Gate: the gfx1100 hipBLASLt tuning table is in the package and matches the committed fallback"
         env:
           TABLE_VERSION: ${{ inputs.hipblaslt_table_version }}
           STRATA_REF: ${{ inputs.strata_ref }}
         run: |
           set -euo pipefail
-          checkout_table="strata/tools/hip/gfx1100-hipblaslt-${TABLE_VERSION}.txt"
-          committed_table="deploy/strata/gfx1100-hipblaslt-${TABLE_VERSION}.txt"
-          if [ ! -f "$checkout_table" ]; then
-            echo "No $checkout_table in ${STRATA_REF}: with this version the engine would run plain hipBLAS" >&2
-            echo "(the gfx1100 tables measured ~40-60% higher prompt speed; docs/AMD_HIP.md, Tuning table)." >&2
-            echo "Pick another hipblaslt_table_version or accept the loss deliberately." >&2
+          table_name="gfx1100-hipblaslt-${TABLE_VERSION}.txt"
+          package_table="$PKG_DIR/tuning/$table_name"
+          committed_table="deploy/strata/$table_name"
+          checkout_table="strata/tools/hip/$table_name"
+          [ -f "$package_table" ] || {
+            echo "No $package_table: this package would start with plain hipBLAS on gfx1100." >&2
+            echo "Check BUILD.json hipblaslt_version and the package's tuning/ folder." >&2
             exit 1
-          fi
+          }
+          [ -f "$committed_table" ] || { echo "missing $committed_table: commit the table as the fallback" >&2; exit 1; }
           header="STRATA_HIPBLASLT_TUNING_V1 gfx1100 ${TABLE_VERSION}"
+          grep -qxF "$header" "$package_table" || { echo "$package_table has no '$header' header line" >&2; exit 1; }
+          python3 - "$PKG_DIR" "$table_name" <<'PY'
+          import hashlib, json, pathlib, sys
+          pkg, name = pathlib.Path(sys.argv[1]), sys.argv[2]
+          table = pkg / "tuning" / name
+          m = json.loads((pkg / "engine-component.json").read_text(encoding="utf-8"))
+          entry = next((f for f in m.get("files") or [] if f.get("path") == f"tuning/{name}"), None)
+          assert entry is not None, f"tuning/{name} is not listed in engine-component.json"
+          digest = hashlib.sha256(table.read_bytes()).hexdigest()
+          assert digest == entry.get("sha256"), f"tuning/{name} sha256 {digest} != manifest {entry.get('sha256')}"
+          print(f"package table OK: tuning/{name} sha256={digest} bytes={entry.get('bytes')}")
+          PY
+          cmp "$committed_table" "$package_table" || {
+            echo "$committed_table differs from the package's tuning/$table_name (an upstream recalibration must be a conscious re-commit)" >&2
+            exit 1
+          }
+          [ -f "$checkout_table" ] || {
+            echo "No $checkout_table in ${STRATA_REF}: the release package still has the table, but the source checkout drifted." >&2
+            exit 1
+          }
           grep -qxF "$header" "$checkout_table" || { echo "$checkout_table has no '$header' header line" >&2; exit 1; }
-          [ -f "$committed_table" ] || { echo "missing $committed_table: commit the table so the host can mount it" >&2; exit 1; }
-          cmp "$committed_table" "$checkout_table" || { echo "$committed_table differs from the pinned checkout's $checkout_table (an upstream recalibration must be a conscious re-commit)" >&2; exit 1; }
-          echo "$checkout_table OK ($header); committed copy is byte-identical"
-          echo "NOTE: the version the engine's bundled hipBLASLt actually reports is only visible at first start on a GPU host (there is no hipblaslt-version.h in the package and 0.2.0's component flow resolves none); the engine then logs 'tuning enabled (... version N)' or 'version mismatch: file=${TABLE_VERSION} runtime=N'." >> "$GITHUB_STEP_SUMMARY"
-
-      - name: "Patch: upstream build.sh omits docs/TERMINAL_LAUNCH.md"
-        run: |
-          set -euo pipefail
-          # v0.2.0-beta (and main, 2026-10-20) stages docs/MANAGEMENT_PROTOCOL.md but not
-          # docs/TERMINAL_LAUNCH.md, which packaging/package_terminal.py's PAYLOAD requires: the image
-          # build fails with "missing payload item: docs/TERMINAL_LAUNCH.md" without this. No-op on a
-          # checkout that already stages it.
-          f=strata/docker/build.sh
-          if grep -q "docs/TERMINAL_LAUNCH.md" "$f"; then
-            echo "the checkout already stages docs/TERMINAL_LAUNCH.md; patch not needed"
-          else
-            grep -q "docs/MANAGEMENT_PROTOCOL.md" "$f"
-            sed -i "s|docs/MANAGEMENT_PROTOCOL.md|docs/MANAGEMENT_PROTOCOL.md docs/TERMINAL_LAUNCH.md|" "$f"
-            grep -q "docs/TERMINAL_LAUNCH.md" "$f"
-            echo "patched $f: the terminal payload needs docs/TERMINAL_LAUNCH.md"
-          fi
+          cmp "$committed_table" "$checkout_table" || {
+            echo "$committed_table differs from the pinned checkout's $checkout_table (an upstream recalibration must be a conscious re-commit)" >&2
+            exit 1
+          }
+          echo "$package_table OK ($header); package, committed fallback and checkout are byte-identical"
+          echo "NOTE: the version the engine's bundled hipBLASLt actually reports is confirmed only at first start on a GPU host; the start resolves the package table and the engine logs 'tuning enabled (... version N)' or 'version mismatch: file=${TABLE_VERSION} runtime=N'. On gfx1100 the packaged table is opt-in: set STRATA_HIPBLASLT_TABLE=on." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build the image from the engine package (nothing is compiled)
         run: |
           set -euo pipefail
-          strata/docker/build.sh --flavor hip --engine "$PKG_DIR" --repo strata --tag "$IMAGE:$IMAGE_TAG"
+          image_version="${IMAGE_TAG%-rocm-gfx110x}"
+          strata/docker/build.sh --flavor hip --engine "$PKG_DIR" --repo strata \
+            --version "$image_version" --tag "$IMAGE:$IMAGE_TAG"
           docker image inspect "$IMAGE:$IMAGE_TAG" --format 'built {{.RepoTags}} {{.Size}} bytes'
+          docker run --rm "$IMAGE:$IMAGE_TAG" strata --version
 
       - name: In-image smoke test (component inventory)
         run: |
@@ -210,16 +244,19 @@ jobs:
       - name: Push the image
         env:
           STRATA_REF_INPUT: ${{ inputs.strata_ref }}
+          ENGINE_RELEASE_INPUT: ${{ inputs.engine_release }}
           ENGINE_ASSET_INPUT: ${{ inputs.engine_asset }}
         run: |
           set -euo pipefail
           docker push "$IMAGE:$IMAGE_TAG"
           digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$IMAGE_TAG")"
+          size="$(docker image inspect --format '{{.Size}}' "$IMAGE:$IMAGE_TAG")"
           {
             echo "### Strata image pushed"
             echo ""
-            echo "- \`$IMAGE:$IMAGE_TAG\`"
-            echo "- Strata \`${STRATA_REF_INPUT}\` (${STRATA_COMMIT})"
+            echo "- \`$IMAGE:$IMAGE_TAG\` (${size} bytes on disk)"
+            echo "- Strata sources \`${STRATA_REF_INPUT}\` (${STRATA_COMMIT})"
+            echo "- Release assets \`${ENGINE_RELEASE_INPUT}\`"
             echo "- Engine package \`${ENGINE_ASSET_INPUT}\` (${PKG_VERSION})"
             echo "- Digest: \`$digest\`"
           } >> "$GITHUB_STEP_SUMMARY"
