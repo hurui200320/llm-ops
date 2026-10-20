@@ -151,11 +151,44 @@ macros:
     --ctx-checkpoints 16
     --checkpoint-min-step 8192
 
+  # Strata (upstream image) on the 2x7900XTX pair: HIP engine, bind mounts only.
+  # No --memory cap: upstream advises none (the engine plans from the host's
+  # meminfo and the entrypoint warns on memory.max); the engine's 28 GiB resident
+  # budget is the actual control. No comgr cache volume: the engine is AOT-built.
+  # --group-add takes HOST gids here: Docker resolves names against the image's
+  # /etc/group (no render entry, and video is 44 there), so pass the numbers
+  # (fedora-tuf: 39/105, `getent group video render`).
+  # Strata refuses to start on a non-loopback bind without a key (serve/server.py:
+  # "a non-loopback bind requires an inference API key") and the entrypoint always
+  # binds 0.0.0.0, so the key is the same one llama-swap validates; the published
+  # port stays on host loopback (upstream docs/DOCKER.md).
+  # See notes/strata/03-llama-swap.md for the record and the verification list.
+  # STRATA_HIPBLASLT_TABLE must be a container env var; inside STRATA_SET it is
+  # silently ignored (measured 2026-10-21).
+  "docker-server-strata-rocm": >
+    docker run --name ${MODEL_ID} --init --rm
+      --device /dev/kfd --device /dev/dri
+      --group-add 39 --group-add 105
+      --security-opt label=disable --security-opt seccomp=unconfined
+      --ulimit memlock=-1:-1 --shm-size 2g --stop-timeout 120
+      -p 127.0.0.1:${PORT}:8080
+      -e API_KEY=${env.STRATA_API_KEY}
+      -e STRATA_HIPBLASLT_TABLE=on
+      -v /mnt/unenc-xfs/strata:/data
+      -v /mnt/unenc-xfs/models:/models:z
+
 # apiKeys: require an API key when making requests to inference endpoints
 # - optional, default: []
 # - when empty (the default) authorization will not be checked as llama-swap is default-allow
 # - each key is a non-empty string
-apiKeys: []
+#
+# One key for the whole swap. llama-swap validates it and its local reverse proxy
+# forwards the client's header verbatim, which is what authenticates the Strata
+# model (the container's own key is this same value — see the Strata macro).
+# llama-swap refuses to load the config when the env var is missing. Clients may
+# send Authorization: Bearer <key> or x-api-key: <key> (Basic works for llama.cpp
+# models but not for Strata, which reads only Bearer/x-api-key).
+apiKeys: ["${env.STRATA_API_KEY}"]
 
 # models: a dictionary of model configurations
 # - required
@@ -471,6 +504,59 @@ models:
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
     concurrencyLimit: 16
+    timeouts:
+      connect: 30
+      keepalive: 30
+      # pp may take a long time so we don't set a timeout here
+      responseHeader: 0
+      tlsHandshake: 10
+      idleConn: 90
+
+
+  # Qwen3.8 Flash-Next IQ3_S on Strata (upstream image, HIP engine, layer split
+  # over both 7900XTX). Driven entirely through the entrypoint's env vars; the
+  # preset "docker" holds the same values, so a start is download-free.
+  # Do not pass KV= (any value makes `strata launch` re-run setup, which rejects
+  # fp16): F16 KV is `kv=fp16` inside STRATA_SET, applied to the engine argv.
+  # Do not pass --slot-save-path: session files are refused on a layer split.
+  # Cold start 1-3 min (30 s on a warm page cache), hence the per-model timeout;
+  # PARALLEL=1 matches concurrencyLimit. Notes: notes/strata/02- and 03-.
+  "qwen3.8-flash-next-iq3s":
+    name: "Qwen3.8 Flash-Next IQ3_S"
+    description: "262144 ctx, F16 KV, Strata layer split over 2x7900XTX, fully resident @28 GiB"
+    cmd: |
+      ${docker-server-strata-rocm}
+        -e MODEL=IQ3_S
+        -e CONTEXT=256k
+        -e GPUS=0,1
+        -e PARALLEL=1
+        -e MODEL_PATH=/models/strata/ISTA-DASLab-Flash-Next
+        -e STRATA_SET="kv=fp16 vram-reserve-mib=3072 vram-reserve-later-mib=700 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=4 STRATA_SPLIT_OVERLAP=1"
+        ghcr.io/niko1221/strata:0.2.1-rocm-gfx110x
+    cmdStop: docker stop -t 120 ${MODEL_ID}
+    proxy: http://127.0.0.1:${PORT}
+    checkEndpoint: /health
+    # The graceful stop llama-swap allows is bounded by this value, so the
+    # 120 s `docker stop` fits inside it with room to spare.
+    healthCheckTimeout: 600
+    concurrencyLimit: 1
+    # Declared, not probed: llama-swap's capability probe sends no auth and would
+    # 401 on Strata's /v1/models. Values are from the Phase-2 /props (tools on,
+    # GPU vision reader, n_ctx 262144).
+    capabilities:
+      in: [text, image]
+      out: [text]
+      tools: true
+      context: 262144
+      disableAuto: true
+    filters:
+      # Qwen3.8-style templates honour preserve_thinking, so chat_template_kwargs
+      # filters work 1:1 with the llama.cpp models above. Verify once against the
+      # pack's template (an unused kwarg is a no-op, not an error).
+      setParamsByID:
+        "${MODEL_ID}:npt":
+          chat_template_kwargs:
+            preserve_thinking: false
     timeouts:
       connect: 30
       keepalive: 30

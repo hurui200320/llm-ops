@@ -11,7 +11,7 @@ published by upstream's own workflow from the signed release engine packages sin
 ([docs/DOCKER.md](https://github.com/Niko1221/Strata/blob/main/docs/DOCKER.md)). Our own
 `strata-image.yml` build was retired on 2026-10-20 after a per-file comparison showed the images
 functionally equivalent — engine byte-identical, terminal differing only by the Windows long-path
-hotfix that landed after upstream's build. Record: [notes/strata/04-official-image.md](../../notes/strata/04-official-image.md).
+hotfix that landed after upstream's build. Record: [notes/strata/01-image.md](../../notes/strata/01-image.md).
 
 ## Pins (image `0.2.1-rocm-gfx110x`)
 
@@ -110,7 +110,9 @@ docker logs -f strata-init    # watch the first pass (pack, the one-time MTP fet
   fedora-tuf, verified 2026-10-20).
 - API key: made on the first start and kept at `/data/state/api-key`; the server listens on the LAN
   (`--access lan`), so a client outside the container must send it as a header (`API_KEY=` /
-  `API_KEY_FILE=` override).
+  `API_KEY_FILE=` override). The production llama-swap lane overrides it with
+  `-e API_KEY=${env.STRATA_API_KEY}` (see "llama-swap wiring"), so there the generated key is not
+  used.
 - Host layout: `/mnt/unenc-xfs/strata/` becomes `/data` — `Strata-data/` (packs, MTP),
   `install/` (run settings, logs), `state/` (presets, key), `config/`, `home/`. Bind mounts only;
   image updates never touch it.
@@ -163,9 +165,40 @@ inside the terminal build stage, which has no git, so the image build fails. `v0
 `STRATA_COMMIT` into the build. The old `docs/TERMINAL_LAUNCH.md` patch is no longer needed;
 0.2.1+ stages it in `docker/build.sh`.
 
-Wiring the image into the host llama-swap (macro with these devices/mounts, per-model env, the
-API-key header, `healthCheckTimeout 600`, `docker stop -t 120`) is tracked in the local deployment
-plan and lands with the Phase 3 work; this upgrade does not touch the llama-swap config.
+## llama-swap wiring (Phase 3)
+
+The host llama-swap ([deploy/llama-swap.config.yaml](../llama-swap.config.yaml)) starts this image
+with the macro **`docker-server-strata-rocm`** and one model, **`qwen3.8-flash-next-iq3s`**.
+Implementation record and the verification checklist: [notes/strata/03-llama-swap.md](../../notes/strata/03-llama-swap.md).
+
+- **No memory cap.** Upstream advises none and the entrypoint warns on `memory.max`; the engine
+  plans from the host's `/proc/meminfo` and the 28 GiB resident budget is the real control
+  (Phase 2 ran uncapped). Measure `memory.peak` in Phase 5 before considering a cap.
+- **Bind mounts only**, same tree as the manual recipe (`/data`, `/models`). No named volumes and no
+  comgr cache: the engine is AOT-built. `/templates` is not mounted — Strata never reads it (a chat
+  template override is a file swap inside the pack).
+- **Gids, not names**: Docker resolves `--group-add` names against the image's `/etc/group` (no
+  `render`, `video` is 44) — the macro passes the host numbers (39/105 on fedora-tuf).
+- **Loopback publish**: `-p 127.0.0.1:${PORT}:8080`. Inside the container the server still binds
+  `0.0.0.0` (the entrypoint's `--access lan`), which is what makes the published port work.
+- **One API key, two layers.** The container's server always requires a key beyond loopback
+  (`serve/server.py`; the entrypoint binds `0.0.0.0`), so the macro passes
+  `-e API_KEY=${env.STRATA_API_KEY}` and llama-swap's `apiKeys` is the same `STRATA_API_KEY`.
+  llama-swap validates the client and its reverse proxy forwards the client's
+  `Authorization`/`x-api-key` verbatim, so the container sees the same credential. It cannot inject
+  an upstream key on its own: only `peers.*.apiKey` does that, local models have no header field.
+  Consequences: every client needs the key; Basic auth works for llama.cpp models but not for Strata
+  (Bearer/x-api-key only); llama-swap's capability probe sends no auth, so the model entry declares
+  `capabilities` instead of relying on discovery.
+- **Per-model knobs**: `healthCheckTimeout: 600` (cold start 1-3 min; llama-swap also bounds the
+  graceful stop by this value, so `cmdStop: docker stop -t 120 ${MODEL_ID}` fits), `concurrencyLimit:
+  1` (matches `PARALLEL=1`), `checkEndpoint: /health` (answers without a key).
+- **Env passthrough is the Phase-2 recipe verbatim**: `MODEL`, `CONTEXT=256k`, `GPUS=0,1`,
+  `PARALLEL=1`, `MODEL_PATH`, and the `STRATA_SET` string (with `kv=fp16`); plus the container env
+  `STRATA_HIPBLASLT_TABLE=on`. Never `KV=`, never `--slot-save-path`.
+- The ORCA (uncensored) model entry is Phase 4 work: the pack does not exist yet, so no entry is
+  staged for it. Parking knobs already ride in `STRATA_SET`; per-model settings wait for the
+  HIP+split parking check (Phase 5).
 
 ## The hipBLASLt tuning table (packaged since 0.2.1)
 

@@ -31,8 +31,9 @@
 # Env:
 #   LLAMA_SWAP_URL  llama-swap root URL (default http://10.233.1.16:8080; /v1
 #                   is appended for the agent config)
-#   API_KEY         bearer token when the backend is not behind llama-swap
-#                   (e.g. a direct Strata server; also accepted as STRATA_KEY)
+#   API_KEY         bearer token sent to the backend (also accepted as STRATA_KEY).
+#                   llama-swap enforces apiKeys since the Phase 3 wiring, so set
+#                   this to STRATA_API_KEY for the swap lanes.
 #   FILTER          --filter regex pinning the instance set (default: frozen
 #                   20-instance pilot below — 8 java + 8 js/ts + 4 cpp; reruns
 #                   on the same filter are comparable, different filters are not)
@@ -57,7 +58,7 @@ SWEBENCH_VERSION="5.0.2"
 
 LLAMA_SWAP_URL="${LLAMA_SWAP_URL:-http://10.233.1.16:8080}"
 BASE_URL="$LLAMA_SWAP_URL/v1"
-API_KEY="${API_KEY:-${STRATA_KEY:-dummy}}"
+API_KEY="${API_KEY:-${STRATA_KEY:-}}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 
 # Frozen pilot: 8 java + 8 js/ts + 4 cpp from SWE-bench Multilingual.
