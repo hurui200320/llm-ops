@@ -16,9 +16,8 @@ documents its own overrides: the Python scripts take flags (e.g. `--base-url`),
 the shell scripts read env vars (e.g. `LLAMA_SWAP_URL`, `LIMIT`). Pointing
 `LLAMA_SWAP_URL` at a direct server that requires a bearer token (e.g. Strata)
 also needs `API_KEY` (or `STRATA_KEY`); the tool-calling, reasoning and
-agentic runners pass it through. Since the Phase 3 wiring, llama-swap itself
-enforces `apiKeys`, so `API_KEY`/`STRATA_KEY` is required there too (use the
-`STRATA_API_KEY` from `deploy/README.md`).
+agentic runners pass it through. llama-swap itself runs with `apiKeys: []`
+(its Strata lane is keyless on host loopback), so the swap lanes need no key.
 
 Decision models such as OpenJev use `/v1/systemone`, not chat completions.
 Use the [System One latency test](#system-one-decision-latency) below rather

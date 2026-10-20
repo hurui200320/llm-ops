@@ -108,11 +108,10 @@ docker logs -f strata-init    # watch the first pass (pack, the one-time MTP fet
   `/etc/group` — it has no `render` entry (`--group-add render` fails) and `video` is Ubuntu's 44,
   not the host's — so use the host numbers as above (`getent group video render`; 39/105 on
   fedora-tuf, verified 2026-10-20).
-- API key: made on the first start and kept at `/data/state/api-key`; the server listens on the LAN
-  (`--access lan`), so a client outside the container must send it as a header (`API_KEY=` /
-  `API_KEY_FILE=` override). The production llama-swap lane overrides it with
-  `-e API_KEY=${env.STRATA_API_KEY}` (see "llama-swap wiring"), so there the generated key is not
-  used.
+- API key: a manual `docker run` uses the LAN bind (`--access lan`), so the server makes a key on the
+  first start and keeps it at `/data/state/api-key`; a client outside the container must send it
+  (`API_KEY=` / `API_KEY_FILE=` override). The llama-swap lane is keyless instead — it binds host
+  loopback and drops the key (see "llama-swap wiring"), so the generated key is not used there.
 - Host layout: `/mnt/unenc-xfs/strata/` becomes `/data` — `Strata-data/` (packs, MTP),
   `install/` (run settings, logs), `state/` (presets, key), `config/`, `home/`. Bind mounts only;
   image updates never touch it.
@@ -179,26 +178,47 @@ Implementation record and the verification checklist: [notes/strata/03-llama-swa
   template override is a file swap inside the pack).
 - **Gids, not names**: Docker resolves `--group-add` names against the image's `/etc/group` (no
   `render`, `video` is 44) — the macro passes the host numbers (39/105 on fedora-tuf).
-- **Loopback publish**: `-p 127.0.0.1:${PORT}:8080`. Inside the container the server still binds
-  `0.0.0.0` (the entrypoint's `--access lan`), which is what makes the published port work.
-- **One API key, two layers.** The container's server always requires a key beyond loopback
-  (`serve/server.py`; the entrypoint binds `0.0.0.0`), so the macro passes
-  `-e API_KEY=${env.STRATA_API_KEY}` and llama-swap's `apiKeys` is the same `STRATA_API_KEY`.
-  llama-swap validates the client and its reverse proxy forwards the client's
-  `Authorization`/`x-api-key` verbatim, so the container sees the same credential. It cannot inject
-  an upstream key on its own: only `peers.*.apiKey` does that, local models have no header field.
-  Consequences: every client needs the key; Basic auth works for llama.cpp models but not for Strata
-  (Bearer/x-api-key only); llama-swap's capability probe sends no auth, so the model entry declares
-  `capabilities` instead of relying on discovery.
+- **Keyless, on host loopback.** Strata refuses a non-loopback bind without an API key
+  (`serve/server.py`: "a non-loopback bind requires an inference API key") and upstream's entrypoint
+  hardcodes `--access lan` (0.0.0.0). This lane runs `--network host` with
+  [entrypoint-local.sh](entrypoint-local.sh) — a fork of upstream's entrypoint with one change,
+  `--access local` — so the server binds `127.0.0.1:${PORT}` on fedora-tuf's loopback, where
+  llama-swap proxies to it (`-e PORT=${PORT}`). `strata launch` drops any stored key when none is
+  given, so no client sends a header and llama-swap stays `apiKeys: []`; the LAN reaches Strata only
+  through llama-swap. The browser UI works at
+  `http://<fedora-tuf>:8080/upstream/qwen3.8-flash-next-iq3s/` (the app uses relative asset and API
+  paths, which llama-swap's prefix stripping preserves).
+- **Re-diff the entrypoint fork on every image bump.** Extract the new
+  `/opt/strata/entrypoint.sh` from the image
+  (`docker run --rm --entrypoint /bin/sh IMAGE -c 'cat /opt/strata/entrypoint.sh'`) and compare it
+  with `entrypoint-local.sh`; re-apply the one-word change and nothing else. The fork must exist in
+  the fedora-tuf checkout before the first start (mode 755): a missing bind source is created by
+  Docker as a root-owned directory and the container dies on `--entrypoint`.
+- **One-time preset fix (2026-10-21).** A preset saved while keyed keeps its `api_key` even with
+  `--access local` (launch only ever sets a key, never clears one). The Phase-2 "docker" preset was
+  edited on the host — `/mnt/unenc-xfs/strata/config/strata/launch-presets/docker.json` →
+  `"api_key": null`,
+  `"access": "local"` (backup `docker.json.bak-20261021-pre-local` beside it) — and the generated
+  `/data/state/api-key` was renamed to `api-key.pre-local.bak`. A future manual LAN run re-creates a
+  key; the swap lane no longer uses one.
 - **Per-model knobs**: `healthCheckTimeout: 600` (cold start 1-3 min; llama-swap also bounds the
   graceful stop by this value, so `cmdStop: docker stop -t 120 ${MODEL_ID}` fits), `concurrencyLimit:
-  1` (matches `PARALLEL=1`), `checkEndpoint: /health` (answers without a key).
+  1` (matches `PARALLEL=1`), `checkEndpoint: /health` (answers without a key); `capabilities` is
+  declared, not probed. llama-swap selects its prober from `/v1/models`' `owned_by`, which Strata
+  omits, so discovery would fall back to the listing-only prober (context + text; no tools/image).
+  Strata's `/props` is llama.cpp-shaped (`chat_template_caps`, `modalities`, measured 2026-10-21),
+  so if upstream ever reports `owned_by: llamacpp` the probe becomes complete.
 - **Env passthrough is the Phase-2 recipe verbatim**: `MODEL`, `CONTEXT=256k`, `GPUS=0,1`,
   `PARALLEL=1`, `MODEL_PATH`, and the `STRATA_SET` string (with `kv=fp16`); plus the container env
   `STRATA_HIPBLASLT_TABLE=on`. Never `KV=`, never `--slot-save-path`.
-- The ORCA (uncensored) model entry is Phase 4 work: the pack does not exist yet, so no entry is
-  staged for it. Parking knobs already ride in `STRATA_SET`; per-model settings wait for the
-  HIP+split parking check (Phase 5).
+- The uncensored model entry is Phase 4 work; the lane is now **SC117 abliterated IQ3_S** (not
+  ORCA). The SC117 GGUF is staged, but its native pack does not exist yet, so no entry is staged.
+  Despite the unchanged GSQ-RCO layout the old `iq3_s` pack cannot be reused: 95 tensors changed
+  type and 1,214/1,223 offsets moved, so its absolute `native_experts.txt` no longer matches (the
+  edited tensors themselves are quantized and read natively from the new shard). Rebuild with
+  `iq_pack` (~1.6 GB, **no** `--experts-bin` / `--compat-bf16`), and reuse the existing `mtp/rt`,
+  which already matches SC117's `strata/rt`. Details: `notes/strata/00-setup.md` §6. Parking knobs
+  already ride in `STRATA_SET`; per-model settings wait for the HIP+split parking check (Phase 5).
 
 ## The hipBLASLt tuning table (packaged since 0.2.1)
 

@@ -3,15 +3,13 @@
 Running on fedora-tuf, which has two AMD 7900XTX.
 
 ```
-STRATA_API_KEY=<key> \
-  /mnt/unenc-xfs/llama-swap -config /mnt/unenc-xfs/llm-ops/deploy/llama-swap.config.yaml -watch-config
+/mnt/unenc-xfs/llama-swap -config /mnt/unenc-xfs/llm-ops/deploy/llama-swap.config.yaml -watch-config
 ```
 
-+ `STRATA_API_KEY`: the one key clients send to llama-swap. `apiKeys` in the config is
-  `["${env.STRATA_API_KEY}"]`, so **missing it makes llama-swap refuse to load the config**; the
-  same value is handed to the Strata container by its macro (`-e API_KEY=${env.STRATA_API_KEY}`).
-  Generate one with `openssl rand -hex 24`. Clients use `Authorization: Bearer <key>` or
-  `x-api-key: <key>` (Basic is accepted by llama-swap but Strata reads only those two).
++ No API key anywhere: `apiKeys` is `[]` (home LAN, single user — see "Security"). The Strata lane
+  is keyless too: `--network host` plus the one-word entrypoint fork
+  [strata/entrypoint-local.sh](strata/entrypoint-local.sh) bind it to the host loopback, where
+  llama-swap proxies; the LAN reaches Strata only through llama-swap.
 + `/mnt/unenc-xfs/models`: copy the archive/LLM content from NAS
 + `/mnt/unenc-xfs/llm-ops`: git clone of this repo
 

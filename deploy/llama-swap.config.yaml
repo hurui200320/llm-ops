@@ -158,23 +158,31 @@ macros:
   # --group-add takes HOST gids here: Docker resolves names against the image's
   # /etc/group (no render entry, and video is 44 there), so pass the numbers
   # (fedora-tuf: 39/105, `getent group video render`).
-  # Strata refuses to start on a non-loopback bind without a key (serve/server.py:
-  # "a non-loopback bind requires an inference API key") and the entrypoint always
-  # binds 0.0.0.0, so the key is the same one llama-swap validates; the published
-  # port stays on host loopback (upstream docs/DOCKER.md).
+  #
+  # Keyless by design: Strata refuses a non-loopback bind without an API key
+  # (serve/server.py), and upstream's entrypoint hardcodes `--access lan` (0.0.0.0).
+  # So this lane runs `--network host` with deploy/strata/entrypoint-local.sh, a
+  # one-word fork that passes `--access local`: the server binds 127.0.0.1:${PORT}
+  # on the host's loopback, where this proxy reaches it. `launch` then drops any
+  # stored key, so the swap needs no apiKeys and clients need no header; nothing on
+  # the LAN can reach Strata except through llama-swap.
+  # --entrypoint replaces the image's `tini -- /opt/strata/entrypoint.sh`; docker's
+  # --init keeps PID1 signal forwarding/reaping, and the fork traps SIGTERM and runs
+  # `strata launch --stop` exactly like upstream.
   # See notes/strata/03-llama-swap.md for the record and the verification list.
   # STRATA_HIPBLASLT_TABLE must be a container env var; inside STRATA_SET it is
   # silently ignored (measured 2026-10-21).
   "docker-server-strata-rocm": >
     docker run --name ${MODEL_ID} --init --rm
+      --network host
+      --entrypoint /entry-local.sh
       --device /dev/kfd --device /dev/dri
       --group-add 39 --group-add 105
       --security-opt label=disable --security-opt seccomp=unconfined
       --ulimit memlock=-1:-1 --shm-size 2g --stop-timeout 120
-      -p 127.0.0.1:${PORT}:8080
-      -e API_KEY=${env.STRATA_API_KEY}
+      -e PORT=${PORT}
       -e STRATA_HIPBLASLT_TABLE=on
-      -v /mnt/unenc-xfs/strata:/data
+      -v /mnt/unenc-xfs/llm-ops/deploy/strata/entrypoint-local.sh:/entry-local.sh:ro
       -v /mnt/unenc-xfs/models:/models:z
 
 # apiKeys: require an API key when making requests to inference endpoints
@@ -182,13 +190,12 @@ macros:
 # - when empty (the default) authorization will not be checked as llama-swap is default-allow
 # - each key is a non-empty string
 #
-# One key for the whole swap. llama-swap validates it and its local reverse proxy
-# forwards the client's header verbatim, which is what authenticates the Strata
-# model (the container's own key is this same value — see the Strata macro).
-# llama-swap refuses to load the config when the env var is missing. Clients may
-# send Authorization: Bearer <key> or x-api-key: <key> (Basic works for llama.cpp
-# models but not for Strata, which reads only Bearer/x-api-key).
-apiKeys: ["${env.STRATA_API_KEY}"]
+# Home LAN, single user: default-allow, no key. This is also what keeps the web
+# UIs usable — a browser navigating to /upstream/<model>/ cannot attach a Bearer
+# header, and Strata only reads Bearer/x-api-key (never Basic), so any apiKeys
+# value breaks the Strata UI through the proxy. The Strata container itself is
+# keyless on host loopback (see its macro) and is not reachable from the LAN.
+apiKeys: []
 
 # models: a dictionary of model configurations
 # - required
@@ -526,6 +533,7 @@ models:
     description: "262144 ctx, F16 KV, Strata layer split over 2x7900XTX, fully resident @28 GiB"
     cmd: |
       ${docker-server-strata-rocm}
+        -v /mnt/unenc-xfs/strata/ISTA-DASLab-Flash-Next:/data
         -e MODEL=IQ3_S
         -e CONTEXT=256k
         -e GPUS=0,1
@@ -540,9 +548,13 @@ models:
     # 120 s `docker stop` fits inside it with room to spare.
     healthCheckTimeout: 600
     concurrencyLimit: 1
-    # Declared, not probed: llama-swap's capability probe sends no auth and would
-    # 401 on Strata's /v1/models. Values are from the Phase-2 /props (tools on,
-    # GPU vision reader, n_ctx 262144).
+    # Declared instead of probed: llama-swap picks its prober from the `owned_by`
+    # field of the upstream's /v1/models, and Strata's listing omits it — so
+    # discovery falls back to the listing-only prober and would advertise
+    # context + text but drop tools and image. Strata's /props IS llama.cpp-shaped
+    # (`chat_template_caps`, `modalities`: measured 2026-10-21), so a future
+    # upstream that reports `owned_by: llamacpp` would make probing complete.
+    # Values here are from that live /props (tools on, GPU vision, n_ctx 262144).
     capabilities:
       in: [text, image]
       out: [text]
