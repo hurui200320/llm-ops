@@ -26,6 +26,10 @@ hotfix that landed after upstream's build. Record: [notes/strata/README.md](../.
 First start verified on fedora-tuf (2026-10-21): engine resolves from the official folder, no setup
 re-run, `prefill gemm: hipBLASLt tuning enabled (26 rows, gfx1100, version 100200)`, `/health` 200,
 auth'd `/v1/models` and a short chat answer, clean `docker stop` (3.6 s, exit 0, VRAM freed).
+The SC117 lane's first start passed the same way the same day on a direct production-env run (no
+setup pass, `--kv fp16` via `STRATA_SET`, file tier 0.0 GiB, 224K needle and vision passes; raw
+logs gitignored under `bench/results/2026-10-21-sc117-smoke/`); its llama-swap entry is
+`qwen3.8-flash-next-sc117-iq3s` (see the wiring section).
 
 Upstream verifies every package against the signed update feed (Ed25519) and re-hashes every file
 inside the build; the gfx110x image itself has not run on a card upstream, but its engine bytes are
@@ -169,7 +173,9 @@ inside the terminal build stage, which has no git, so the image build fails. `v0
 ## llama-swap wiring (Phase 3)
 
 The host llama-swap ([deploy/llama-swap.config.yaml](../llama-swap.config.yaml)) starts this image
-with the macro **`docker-server-strata-rocm`** and one model, **`qwen3.8-flash-next-iq3s`**.
+with the macro **`docker-server-strata-rocm`** and two models appended at the end of `models:` —
+vanilla **`qwen3.8-flash-next-iq3s`** and SC117 **`qwen3.8-flash-next-sc117-iq3s`** (`${PORT}` is
+assigned in config order: 10009 / 10010).
 Implementation record and the verification checklist:
 [notes/strata/README.md](../../notes/strata/README.md#llama-swap-wiring).
 
@@ -214,15 +220,17 @@ Implementation record and the verification checklist:
   so if upstream ever reports `owned_by: llamacpp` the probe becomes complete.
 - **Env passthrough is the Phase-2 recipe verbatim**: `MODEL`, `CONTEXT=256k`, `GPUS=0,1`,
   `PARALLEL=1`, `MODEL_PATH`, and the `STRATA_SET` string (with `kv=fp16`); plus the container env
-  `STRATA_HIPBLASLT_TABLE=on`. Never `KV=`, never `--slot-save-path`.
-- The uncensored model entry is Phase 4 work; the lane is now **SC117 abliterated IQ3_S** (not
-  ORCA). Phase 4 prep is done: the SC117 data tree
+  `STRATA_HIPBLASLT_TABLE=on`. Never `KV=`, never `--slot-save-path`. Neither entry passes
+  `PRESET`: the image default `docker` is saved per lane under each tree's
+  `config/strata/launch-presets/`.
+- The uncensored lane is **SC117 abliterated IQ3_S** (not ORCA). Its entry
+  **`qwen3.8-flash-next-sc117-iq3s`** landed 2026-10-21 as an exact copy of the vanilla block with
+  only the SC117 `/data` mount and `MODEL_PATH` changed. The SC117 data tree
   `/mnt/unenc-xfs/strata/sc117-Flash-Next-uncensored/` has the built `packs/iq3_s`, a copied
-  `mtp/rt`, and a seeded `install/strata-iq3_s.json`; only the llama-swap model entry is missing.
+  `mtp/rt`, and a seeded `install/strata-iq3_s.json`, so the first start goes straight to serving.
   Despite the unchanged GSQ-RCO layout the ISTA pack cannot be reused (95 tensors changed type,
-  1,214/1,223 offsets moved), so the entry must mount the SC117 tree at `/data` and use its own
-  `PRESET=sc117-docker`. Details: `notes/strata/README.md`. Parking knobs
-  already ride in `STRATA_SET`; per-model settings wait for the HIP+split parking check (Phase 5).
+  1,214/1,223 offsets moved). Details: `notes/strata/README.md`. Parking knobs already ride in
+  `STRATA_SET`; per-model settings wait for the HIP+split parking check (Phase 5).
 
 ## The hipBLASLt tuning table (packaged since 0.2.1)
 

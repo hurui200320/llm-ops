@@ -541,7 +541,7 @@ models:
         -e GPUS=0,1
         -e PARALLEL=1
         -e MODEL_PATH=/models/strata/ISTA-DASLab-Flash-Next
-        -e STRATA_SET="kv=fp16 vram-reserve-mib=3072 vram-reserve-later-mib=700 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=4 STRATA_SPLIT_OVERLAP=1"
+        -e STRATA_SET="kv=fp16 vram-reserve-mib=2048 vram-reserve-later-mib=700 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=4 STRATA_SPLIT_OVERLAP=1"
         ghcr.io/niko1221/strata:0.2.1-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
@@ -567,6 +567,55 @@ models:
       # Qwen3.8-style templates honour preserve_thinking, so chat_template_kwargs
       # filters work 1:1 with the llama.cpp models above. Verify once against the
       # pack's template (an unused kwarg is a no-op, not an error).
+      setParamsByID:
+        "${MODEL_ID}:npt":
+          chat_template_kwargs:
+            preserve_thinking: false
+    timeouts:
+      connect: 30
+      keepalive: 30
+      # pp may take a long time so we don't set a timeout here
+      responseHeader: 0
+      tlsHandshake: 10
+      idleConn: 90
+
+
+  # SC117 abliterated (uncensored) transplant of the same ISTA GSQ-RCO IQ3_S.
+  # Exact copy of the vanilla lane above; only the lane's /data tree and
+  # MODEL_PATH differ (it has its own pack: 95 tensors changed type and
+  # 1,214/1,223 offsets moved, so the ISTA pack cannot be reused). PRESET is
+  # unset like vanilla: each lane's tree holds its own "docker" preset.
+  # Seeded install record -> first start goes straight to serving (no setup
+  # pass). Never pass KV=, never pass --slot-save-path. The model is
+  # abliterated with no reliable guardrails (TC-60 class): vanilla stays the
+  # default for untrusted input, and no sensitive or unsandboxed tools on
+  # this lane until the Phase-5 safety/quality verdict.
+  "qwen3.8-flash-next-sc117-iq3s":
+    name: "Qwen3.8 Flash-Next SC117 IQ3_S (abliterated)"
+    description: "262144 ctx, F16 KV, Strata layer split over 2x7900XTX, uncensored"
+    cmd: |
+      ${docker-server-strata-rocm}
+        -v /mnt/unenc-xfs/strata/sc117-Flash-Next-uncensored:/data
+        -e MODEL=IQ3_S
+        -e CONTEXT=256k
+        -e GPUS=0,1
+        -e PARALLEL=1
+        -e MODEL_PATH=/models/strata/sc117-Flash-Next-uncensored
+        -e STRATA_SET="kv=fp16 vram-reserve-mib=2048 vram-reserve-later-mib=700 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=4 STRATA_SPLIT_OVERLAP=1"
+        ghcr.io/niko1221/strata:0.2.1-rocm-gfx110x
+    cmdStop: docker stop -t 120 ${MODEL_ID}
+    proxy: http://127.0.0.1:${PORT}
+    checkEndpoint: /health
+    healthCheckTimeout: 600
+    concurrencyLimit: 20
+    capabilities:
+      in: [text, image]
+      out: [text]
+      tools: true
+      context: 262144
+      disableAuto: true
+    filters:
+      # Same pack template as vanilla (9,993 chars); the :npt alias is identical.
       setParamsByID:
         "${MODEL_ID}:npt":
           chat_template_kwargs:
