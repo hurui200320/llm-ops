@@ -30,7 +30,8 @@ bare `llama-server`.
 
 > **2026-10-21 lane change:** the uncensored GGUF is now **SC117 abliterated IQ3_S**, not ORCA
 > IQ3_XXS. The ORCA rows here are retained as the historical llama.cpp baseline; they are not
-> SC117 measurements. Strata integration and the pack/MTP validation: `notes/strata/00-setup.md` §6.
+> SC117 measurements. Strata Phase 4 prep is done (separate data tree, pack and seeded config);
+> only the llama-swap entry/smoke remain. Details: `notes/strata/README.md`.
 
 + 20 %: pp 424.5 / 412.7, tg 16.6 / 16.7 t/s
 + 60 %: pp 338.6 / 331.4, tg 14.3 / 14.4 t/s

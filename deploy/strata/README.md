@@ -11,7 +11,7 @@ published by upstream's own workflow from the signed release engine packages sin
 ([docs/DOCKER.md](https://github.com/Niko1221/Strata/blob/main/docs/DOCKER.md)). Our own
 `strata-image.yml` build was retired on 2026-10-20 after a per-file comparison showed the images
 functionally equivalent — engine byte-identical, terminal differing only by the Windows long-path
-hotfix that landed after upstream's build. Record: [notes/strata/01-image.md](../../notes/strata/01-image.md).
+hotfix that landed after upstream's build. Record: [notes/strata/README.md](../../notes/strata/README.md).
 
 ## Pins (image `0.2.1-rocm-gfx110x`)
 
@@ -55,7 +55,7 @@ Same rules, plus one path caveat:
   match, presets and packs carry over as-is.
 - The engine folder name inside the image differs (`strata-engine-0.1.46-...` → `0.1.46-...`).
   If an installed run config under `/data/install/` names the engine by absolute path, fix it before
-  the first start (`grep -r "components/engine" /mnt/unenc-xfs/strata/install/`; a config written by
+  the first start (`grep -r "components/engine" /mnt/unenc-xfs/strata/ISTA-DASLab-Flash-Next/install/`; a config written by
   `strata launch` on the retired image may hold the old path). Change `exe` to
   `component:strata-engine` (backup first) or re-run the model through `strata launch`.
 - `strata --version` reports terminal build `0.1.46` (not `0.1.46.1`), and `strata bench run` records
@@ -73,7 +73,7 @@ docker run -d --name strata-init \
   --group-add "$(getent group render | cut -d: -f3)" \
   --security-opt label=disable --security-opt seccomp=unconfined \
   --ulimit memlock=-1:-1 --shm-size 2g --stop-timeout 120 \
-  -v /mnt/unenc-xfs/strata:/data -v /mnt/unenc-xfs/models:/models:z \
+  -v /mnt/unenc-xfs/strata/ISTA-DASLab-Flash-Next:/data -v /mnt/unenc-xfs/models:/models:z \
   -e MODEL=IQ3_S -e CONTEXT=256k -e GPUS=0,1 -e PARALLEL=1 \
   -e MODEL_PATH=/models/strata/ISTA-DASLab-Flash-Next \
   -e STRATA_HIPBLASLT_TABLE=on \
@@ -93,7 +93,7 @@ docker logs -f strata-init    # watch the first pass (pack, the one-time MTP fet
   on every start.
 - **`PARALLEL` still defaults to "fit to the card"** (3 on 24 GB) and `strata launch` turns that into
   a profile override → `--batch 3` (batch slots are otherwise opt-in). Set `PARALLEL=1` for the
-  single-request lane (llama-swap `concurrencyLimit: 1`).
+  single-request lane (the swap's `concurrencyLimit: 20` is only its queue depth).
 - **Session files are unavailable on this split lane, for a different reason than in 0.2.0.**
   `--slot-save-path` is a `strata serve` option, not an engine flag; passing it through `STRATA_SET`
   sends it to the engine and fails with `unknown argument`. Engine 0.1.46 does implement
@@ -112,9 +112,11 @@ docker logs -f strata-init    # watch the first pass (pack, the one-time MTP fet
   first start and keeps it at `/data/state/api-key`; a client outside the container must send it
   (`API_KEY=` / `API_KEY_FILE=` override). The llama-swap lane is keyless instead — it binds host
   loopback and drops the key (see "llama-swap wiring"), so the generated key is not used there.
-- Host layout: `/mnt/unenc-xfs/strata/` becomes `/data` — `Strata-data/` (packs, MTP),
-  `install/` (run settings, logs), `state/` (presets, key), `config/`, `home/`. Bind mounts only;
-  image updates never touch it.
+- Host layout: each lane is its own data tree, mounted at `/data`:
+  `/mnt/unenc-xfs/strata/ISTA-DASLab-Flash-Next/` (vanilla) or
+  `/mnt/unenc-xfs/strata/sc117-Flash-Next-uncensored/` (SC117). Each has `Strata-data/` (packs,
+  MTP), `install/` (run settings, logs), `state/` (presets, key), `config/`, `home/`. The GGUFs
+  stay shared under `/mnt/unenc-xfs/models/`. Bind mounts only; image updates never touch them.
 
 ### Toolbox (bash)
 
@@ -123,7 +125,7 @@ docker run -it --rm \
   --device /dev/kfd --device /dev/dri \
   --group-add "$(getent group video | cut -d: -f3)" \
   --group-add "$(getent group render | cut -d: -f3)" \
-  -v /mnt/unenc-xfs/strata:/data -v /mnt/unenc-xfs/models:/models:z \
+  -v /mnt/unenc-xfs/strata/ISTA-DASLab-Flash-Next:/data -v /mnt/unenc-xfs/models:/models:z \
   ghcr.io/niko1221/strata:0.2.1-rocm-gfx110x sh
 ```
 
@@ -168,7 +170,8 @@ inside the terminal build stage, which has no git, so the image build fails. `v0
 
 The host llama-swap ([deploy/llama-swap.config.yaml](../llama-swap.config.yaml)) starts this image
 with the macro **`docker-server-strata-rocm`** and one model, **`qwen3.8-flash-next-iq3s`**.
-Implementation record and the verification checklist: [notes/strata/03-llama-swap.md](../../notes/strata/03-llama-swap.md).
+Implementation record and the verification checklist:
+[notes/strata/README.md](../../notes/strata/README.md#llama-swap-wiring).
 
 - **No memory cap.** Upstream advises none and the entrypoint warns on `memory.max`; the engine
   plans from the host's `/proc/meminfo` and the 28 GiB resident budget is the real control
@@ -196,14 +199,15 @@ Implementation record and the verification checklist: [notes/strata/03-llama-swa
   Docker as a root-owned directory and the container dies on `--entrypoint`.
 - **One-time preset fix (2026-10-21).** A preset saved while keyed keeps its `api_key` even with
   `--access local` (launch only ever sets a key, never clears one). The Phase-2 "docker" preset was
-  edited on the host — `/mnt/unenc-xfs/strata/config/strata/launch-presets/docker.json` →
+  edited on the host — `/mnt/unenc-xfs/strata/ISTA-DASLab-Flash-Next/config/strata/launch-presets/docker.json` →
   `"api_key": null`,
   `"access": "local"` (backup `docker.json.bak-20261021-pre-local` beside it) — and the generated
   `/data/state/api-key` was renamed to `api-key.pre-local.bak`. A future manual LAN run re-creates a
   key; the swap lane no longer uses one.
 - **Per-model knobs**: `healthCheckTimeout: 600` (cold start 1-3 min; llama-swap also bounds the
   graceful stop by this value, so `cmdStop: docker stop -t 120 ${MODEL_ID}` fits), `concurrencyLimit:
-  1` (matches `PARALLEL=1`), `checkEndpoint: /health` (answers without a key); `capabilities` is
+  20` (queue depth; the engine still has one slot — raised from 1 so concurrent resource requests do
+  not get 429), `checkEndpoint: /health` (answers without a key); `capabilities` is
   declared, not probed. llama-swap selects its prober from `/v1/models`' `owned_by`, which Strata
   omits, so discovery would fall back to the listing-only prober (context + text; no tools/image).
   Strata's `/props` is llama.cpp-shaped (`chat_template_caps`, `modalities`, measured 2026-10-21),
@@ -212,12 +216,12 @@ Implementation record and the verification checklist: [notes/strata/03-llama-swa
   `PARALLEL=1`, `MODEL_PATH`, and the `STRATA_SET` string (with `kv=fp16`); plus the container env
   `STRATA_HIPBLASLT_TABLE=on`. Never `KV=`, never `--slot-save-path`.
 - The uncensored model entry is Phase 4 work; the lane is now **SC117 abliterated IQ3_S** (not
-  ORCA). The SC117 GGUF is staged, but its native pack does not exist yet, so no entry is staged.
-  Despite the unchanged GSQ-RCO layout the old `iq3_s` pack cannot be reused: 95 tensors changed
-  type and 1,214/1,223 offsets moved, so its absolute `native_experts.txt` no longer matches (the
-  edited tensors themselves are quantized and read natively from the new shard). Rebuild with
-  `iq_pack` (~1.6 GB, **no** `--experts-bin` / `--compat-bf16`), and reuse the existing `mtp/rt`,
-  which already matches SC117's `strata/rt`. Details: `notes/strata/00-setup.md` §6. Parking knobs
+  ORCA). Phase 4 prep is done: the SC117 data tree
+  `/mnt/unenc-xfs/strata/sc117-Flash-Next-uncensored/` has the built `packs/iq3_s`, a copied
+  `mtp/rt`, and a seeded `install/strata-iq3_s.json`; only the llama-swap model entry is missing.
+  Despite the unchanged GSQ-RCO layout the ISTA pack cannot be reused (95 tensors changed type,
+  1,214/1,223 offsets moved), so the entry must mount the SC117 tree at `/data` and use its own
+  `PRESET=sc117-docker`. Details: `notes/strata/README.md`. Parking knobs
   already ride in `STRATA_SET`; per-model settings wait for the HIP+split parking check (Phase 5).
 
 ## The hipBLASLt tuning table (packaged since 0.2.1)
@@ -246,7 +250,7 @@ server resolves the table for the card at start (`serve/server.py` with
   copies in this repo were removed with the build; the package is the only copy the image needs. If
   a host-side fallback file is ever wanted, copy it out of the image:
   `docker run --rm IMAGE sh -c 'cat /opt/strata/components/engine/*/tuning/gfx1100-hipblaslt-100200.txt'`.
-  The `/mnt/unenc-xfs/strata/hipblaslt/` copy is no longer needed by 0.2.1.
+  The `/mnt/unenc-xfs/strata/ISTA-DASLab-Flash-Next/hipblaslt/` copy is no longer needed by 0.2.1.
 - Start log lines to check:
 
       hipBLASLt tuning table: gfx1100-hipblaslt-100200.txt (faster prompts; STRATA_HIPBLASLT_TABLE=off turns it off)
