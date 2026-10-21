@@ -7,9 +7,10 @@ Running on fedora-tuf, which has two AMD 7900XTX.
 ```
 
 + No API key anywhere: `apiKeys` is `[]` (home LAN, single user — see "Security"). The Strata lane
-  is keyless too: `--network host` plus the one-word entrypoint fork
-  [strata/entrypoint-local.sh](strata/entrypoint-local.sh) bind it to the host loopback, where
-  llama-swap proxies; the LAN reaches Strata only through llama-swap.
+  is keyless too: the fork [strata/entrypoint-local.sh](strata/entrypoint-local.sh) passes
+  `--no-api-key`, the container runs on the default Docker bridge, and only
+  `127.0.0.1:${PORT}` is published on the host, where llama-swap proxies; the LAN reaches Strata
+  only through llama-swap.
 + `/mnt/unenc-xfs/models`: copy the archive/LLM content from NAS
 + `/mnt/unenc-xfs/llm-ops`: git clone of this repo
 

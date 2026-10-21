@@ -26,46 +26,34 @@ bare `llama-server`.
   **0.2-1.1 GiB free per card after a text+vision warmup**. Also the llama-swap 32g cgroup is too
   small for the CPU-side weights (servers ran with 52g).
 
-## Results (IQ3_S / ORCA uncensored IQ3_XXS, same config)
-
-> **2026-10-21 lane change:** the uncensored GGUF is now **SC117 abliterated IQ3_S**, not ORCA
-> IQ3_XXS. The ORCA rows here are retained as the historical llama.cpp baseline; they are not
-> SC117 measurements. Strata Phase 4 prep is done (separate data tree, pack and seeded config);
-> only the llama-swap entry/smoke remain. Details: `notes/strata/README.md`.
-
+IQ3_S:
 + 20 %: pp 424.5 / 412.7, tg 16.6 / 16.7 t/s
 + 60 %: pp 338.6 / 331.4, tg 14.3 / 14.4 t/s
 + 85 %: pp 298.6 / 294.7, tg 13.3 / 13.3 t/s
 
-**MTP A/B (ORCA only — the vanilla GGUF ships no MTP head): a no on this rig.** The 4.1 GB nextn
-draft doesn't fit VRAM without evicting 4 target expert layers, and even then it is slower than
-no-MTP at every level (accept 0.44-0.50); on CPU the draft more than halves decode (tg 6.5 at
-20 %).
+**MTP A/B: a no on this rig.** The 4.1 GB MTP doesn't fit VRAM without evicting 4 target expert
+layers, and even then it is slower than no-MTP at every level (accept 0.44-0.50); on CPU the
+draft more than halves decode (tg 6.5 at 20 %).
 
 **CPU threads: keep the default 8** (the P-cores). 12 threads is ~1-2.5 % slower on prefill,
 14 ~18 % slower; decode unaffected.
 
-## Takeaways
+## Conclusion
 
-+ Vanilla llama.cpp runs Flash-Next (both lanes, vision included) on the XTX pair, but
-  pp 300-425 / tg 13-17 t/s is far off our targets (pp ≥ 1000, tg ≥ 25 at 85 %) and Strata's
-  upstream XTX numbers (≈1.5K pp, 59-65 tg) — exactly the gap Strata's expert residency is
-  supposed to close.
-+ Model-size effect is small with this placement: ORCA is ~2-4 % slower than IQ3_S at 20-60 %,
-  ~1 % at 85 %.
-+ Not tested: other quants/splits (±1-2 expert layers is the tuning granularity), `--load-mode
-  dio` (would bypass the page cache the CPU weights rely on).
+Vanilla llama.cpp runs Flash-Next (both lanes, vision included) on the XTX pair, but
+pp 300-425 / tg 13-17 t/s is far off our targets (pp ≥ 1000, tg ≥ 25 at 85 %) and Strata's
+upstream XTX numbers (≈1.5K pp, 59-65 tg) — exactly the gap Strata's expert residency is
+supposed to close.
 
 # 20261020 Strata longctx (IQ3_S, 256K, F16 KV)
 
-Same machine and same workload shape, through Strata instead of `llama-server`. Full config and
-raw data: `notes/strata/iq3s-262k-f16kv.md` (K=22 split, 28 GiB resident budget, lend 3609/3609,
-file tier 0.0). Gotcha now baked into `bench/speed/run_longctx.py`: Strata ignores
-`cache_prompt: false`, so the runner prepends a per-request nonce to force cold prefills.
+Same machine and same workload shape, through Strata instead of `llama-server`.
+Gotcha now baked into `bench/speed/run_longctx.py`: Strata ignores `cache_prompt: false`,
+so the runner prepends a per-request nonce to force cold prefills.
 
 Results (pp / tg t/s, 2 cold reps, medians):
 
-+ 20 % (52K): pp 1502.2, tg 52.8
++ 20 % (52K):  pp 1502.2, tg 52.8
 + 60 % (157K): pp 1628.8, tg 49.3
 + 85 % (223K): pp 1574.1, tg 47.9
 

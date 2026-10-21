@@ -1,19 +1,27 @@
 #!/bin/sh
-# Fork of upstream's /opt/strata/entrypoint.sh with ONE change:
-#     --access lan  ->  --access local
-# Provenance: image ghcr.io/niko1221/strata:0.2.1-rocm-gfx110x (terminal commit c093ac2);
-# extracted from the image 2026-10-21, byte-identical to the v0.2.1.1 checkout's docker/entrypoint.sh.
+# Fork of upstream's /opt/strata/entrypoint.sh for the llm-ops llama-swap lane.
 #
-# Why: the llama-swap lane (deploy/llama-swap.config.yaml, macro docker-server-strata-rocm) runs
-# this container with --network host, so `--access local` binds 127.0.0.1 on fedora-tuf's loopback,
-# where llama-swap proxies to it. Strata only requires an API key on a non-loopback bind
-# (serve/server.py: "a non-loopback bind requires an inference API key"), and launch drops any
-# stored key when none is given, so the whole swap stays keyless while nothing on the LAN can
-# reach the server except through llama-swap.
+# Changes from upstream v0.2.2 (image ghcr.io/niko1221/strata:0.2.2-rocm-gfx110x,
+# terminal build 0.1.47; extracted 2026-10-21, sha256 7c74cfd32155541df6dd1401a44f6f0b07712e4dce3b74eb8b33df162ecf3a43):
+#   1. When no API key is given, pass `--no-api-key` to `strata launch` instead of
+#      letting it make one. Strata 0.2.2 allows a non-loopback bind without a key
+#      (with one warning), so the server can listen on 0.0.0.0 inside its own
+#      container network while only 127.0.0.1:${PORT} is published on the host.
+#   2. Do not print upstream's "Strata made one" warning in that case: no key is
+#      made when --no-api-key is used.
+# The script below is upstream v0.2.2 apart from the two key changes and the
+# comment updates that describe them. A key given through API_KEY / API_KEY_FILE
+# still wins and is used exactly as upstream.
+#
+# Why: the llama-swap lane (deploy/llama-swap.config.yaml, macro
+# docker-server-strata-rocm) runs on the default Docker bridge, not --network host.
+# The container's server binds 0.0.0.0; Docker publishes only 127.0.0.1:${PORT},
+# where llama-swap proxies. The LAN reaches Strata only through llama-swap.
 #
 # Maintenance: on every image bump, extract the new entrypoint from the image
 #   docker run --rm --entrypoint /bin/sh IMAGE -c 'cat /opt/strata/entrypoint.sh'
-# and diff it against this file; re-apply the one-word change. Do not change anything else here.
+# and diff it against this file; re-apply the two changes above (the key
+# conditional and the final warning) and nothing else.
 #
 # Upstream text follows.
 #
@@ -33,10 +41,11 @@
 #   VISION        off | on | gpu | cpu  (pictures; the picture reader file is downloaded with the model)
 #   KV            int8 | q4_0 | k8v4 | fp16  (conversation memory format)
 #   GPU / GPUS    card numbers, e.g. 0 or 0,1 (empty or "all": the engine's choice)
+#   GPU_ROLES     a role for each card, e.g. 1=main,0=helper (main, helper or off; cards you do not name are off; not together with GPU / GPUS)
 #   TUNE          quick | thorough | skip   (done once; RETUNE=1 tunes again)
 #   PORT          port inside the container (default 8080)
-#   API_KEY / API_KEY_FILE   the key clients must send. The server listens on every address inside the container, and Strata does
-#                 not serve beyond loopback without a key, so one is always on: yours, or one made on the first start and kept in /data.
+#   API_KEY / API_KEY_FILE   the key clients must send. With neither set, this fork passes --no-api-key: the server starts
+#                 without a key (one warning) and does not write /data/state/api-key. Set one to use a key as upstream does.
 #   PRESET        preset name in /data (default "docker"). Settings above are saved into it; with no settings given a saved preset is reused.
 #   STRATA_SET    advanced engine settings, space separated KEY=VALUE (like `strata launch --set`)
 set -u
@@ -87,6 +96,57 @@ for legacy in HOST LOW_RAM REINSTALL RESIDENT_BUDGET_GIB KV_STREAMING LAYER_SPLI
   [ -n "$v" ] && warn "$legacy is from the older image and is ignored here. See docs/DOCKER.md (\"From the older image\")."
 done
 
+# ---- a volume from the older (0.1.x) image: its models, packs and draft layer are in /data/models, /data/packs and /data/mtp.
+# This image keeps them in /data/Strata-data. Move them over (a rename inside one volume: instant, no copy, no download).
+# A folder that is its own mount (a bind mount of yours) is never touched.
+legacy_moved=""
+for d in models packs mtp; do
+  [ -d "/data/$d" ] || continue
+  grep -q " /data/$d " /proc/self/mountinfo 2>/dev/null && continue
+  [ -n "$(ls -A "/data/$d" 2>/dev/null)" ] || continue
+  mkdir -p "/data/Strata-data/$d" 2>/dev/null || continue
+  for item in "/data/$d"/* "/data/$d"/.[!.]*; do
+    [ -e "$item" ] || continue
+    name=${item##*/}
+    [ -e "/data/Strata-data/$d/$name" ] && continue
+    if mv "$item" "/data/Strata-data/$d/$name" 2>/dev/null; then legacy_moved="$legacy_moved $d/$name"
+    else warn "Could not move $item into /data/Strata-data/$d (the model is downloaded again unless you set MODEL_PATH=/data/$d/...)."; fi
+  done
+  rmdir "/data/$d" 2>/dev/null || true
+done
+[ -n "$legacy_moved" ] && say "Found model files from the older image in the volume and moved them into /data/Strata-data (no copy, nothing is downloaded again):$legacy_moved"
+
+# ---- run settings made by an image for another card or another engine version name that image's engine folder
+# (/opt/strata/components/engine/<package>/...): in this image that folder is not there, so the server would stop at the start. Drop
+# them; the next step writes them again from the model files, which are kept.
+for c in /data/install/strata-*.json; do
+  [ -f "$c" ] || continue
+  gone=$("$PYBIN" -c '
+import json, os, sys
+def walk(v):
+    if isinstance(v, str):
+        yield v
+    elif isinstance(v, dict):
+        for x in v.values():
+            yield from walk(x)
+    elif isinstance(v, list):
+        for x in v:
+            yield from walk(x)
+try:
+    cfg = json.load(open(sys.argv[1], encoding="utf-8-sig"))
+except (OSError, ValueError):
+    sys.exit(0)
+for s in walk(cfg):
+    if s.startswith("/opt/strata/components/") and not os.path.exists(s):
+        print(s)
+        break
+' "$c" 2>/dev/null)
+  if [ -n "$gone" ]; then
+    say "The saved run settings $(basename "$c") name $gone, which this image does not have (made by an image for another card or engine version): making them again. The model files are kept."
+    rm -f "$c"
+  fi
+done
+
 # ---- is there an engine for this card?
 phase checking
 engine_json=$("$STRATA" components engine --output json 2>/dev/null || true)
@@ -104,10 +164,13 @@ MSG
 fi
 
 # the card is found through sysfs even when no device file was passed in: say so now instead of failing when the engine starts
+# (before the model is prepared; /dev/dxg is the GPU of Docker Desktop on WSL2)
 backend=$(printf '%s' "$engine_json" | sed -n 's/.*"backend": *"\([a-z0-9]*\)".*/\1/p' | head -1)
+dev="${STRATA_DEV_DIR:-/dev}"
 case "$backend" in
-  hip)  [ -e /dev/kfd ] || { echo "[X] This is an AMD card, but /dev/kfd is not in the container. Add: --device /dev/kfd --device /dev/dri --group-add video --group-add <render group number> (docs/DOCKER.md)" >&2; exit 3; } ;;
-  sycl) ls /dev/dri/renderD* >/dev/null 2>&1 || { echo "[X] This is an Intel card, but /dev/dri is not in the container. Add: --device /dev/dri --group-add <render group number> (docs/DOCKER.md)" >&2; exit 3; } ;;
+  cuda) ls "$dev"/nvidia[0-9]* >/dev/null 2>&1 || [ -e "$dev/dxg" ] || { echo "[X] This computer has an NVIDIA card, but the container cannot use it, so nothing would run (and the model would be prepared for nothing). Start the container with: --gpus all (needs the NVIDIA Container Toolkit on the host; docs/DOCKER.md, Troubleshooting)." >&2; exit 3; } ;;
+  hip)  [ -e "$dev/kfd" ] || { echo "[X] This is an AMD card, but /dev/kfd is not in the container. Add: --device /dev/kfd --device /dev/dri --group-add video --group-add <render group number> (docs/DOCKER.md)" >&2; exit 3; } ;;
+  sycl) ls "$dev"/dri/renderD* >/dev/null 2>&1 || { echo "[X] This is an Intel card, but /dev/dri is not in the container. Add: --device /dev/dri --group-add <render group number> (docs/DOCKER.md)" >&2; exit 3; } ;;
 esac
 
 # ---- the API key
@@ -118,13 +181,25 @@ if [ -z "$key" ] && [ -n "${API_KEY_FILE:-}" ]; then
 fi
 
 # ---- settings -> `strata launch` flags
-set -- launch --no-tui --access local --port "$PORT" --data-dir /data/Strata-data
+set -- launch --no-tui --access lan --port "$PORT" --data-dir /data/Strata-data
 have=""
 
 preset_exists=""
 if "$STRATA" launch --list-presets --output json 2>/dev/null | grep -q "\"name\": *\"$PRESET\""; then preset_exists=1; fi
 
 model_path="${MODEL_PATH:-${GGUF_DIR:-}}"
+if [ -n "$model_path" ]; then
+  # a folder that is not mounted (or a typo) must not end as "missing /xxx.gguf" after a minute of setup, and must never turn into a download
+  if [ ! -e "$model_path" ]; then
+    die "MODEL_PATH=$model_path is not in the container, so no model file can be found there. Mount your folder at that place, for example: -v /srv/gguf/IQ3_XXS:$model_path:ro (docs/DOCKER.md, \"Files you already have\"). Nothing was downloaded." 2
+  elif [ -d "$model_path" ] && ! ls "$model_path"/*.gguf >/dev/null 2>&1; then
+    sub=$(find "$model_path" -maxdepth 2 -name '*.gguf' 2>/dev/null | head -1)
+    if [ -n "$sub" ]; then
+      die "MODEL_PATH=$model_path has no .gguf files directly in it, but there are some in ${sub%/*}. Set MODEL_PATH=${sub%/*} (the folder that holds the shards of one model). Nothing was downloaded." 2
+    fi
+    die "MODEL_PATH=$model_path holds no .gguf files. Mount the folder with the model's shards (the -0000N-of-0000M.gguf files). Nothing was downloaded." 2
+  fi
+fi
 [ -n "${MODEL:-}" ]       && { set -- "$@" --model "$MODEL"; have=1; }
 [ -n "${FAMILY:-}" ]      && { set -- "$@" --family "$FAMILY"; have=1; }
 [ -n "$model_path" ]      && { set -- "$@" --model-path "$model_path"; have=1; }
@@ -153,8 +228,19 @@ case "$gpus" in ""|all|ALL) ;; *)
     fi
   done ;;
 esac
+# GPU_ROLES=1=main,0=helper: a role for each card (main, helper or off; cards you do not name are off). `launch --gpu-roles` writes them into the
+# run settings at every start, so nothing saved has to be dropped.
+roles=$(printf '%s' "${GPU_ROLES:-}" | tr -d ' ')
+if [ -n "$roles" ]; then
+  case "$gpus" in ""|all|ALL) ;; *) die "Set GPU_ROLES or GPU / GPUS, not both." 2 ;; esac
+  set -- "$@" --gpu-roles "$roles"; have=1
+fi
 [ -n "${STRATA_SET:-}" ] && { for kv in $STRATA_SET; do set -- "$@" --set "$kv"; done; have=1; }
-[ -n "$key" ] && { set -- "$@" --api-key-env STRATA_LAUNCH_KEY; }
+if [ -n "$key" ]; then
+  set -- "$@" --api-key-env STRATA_LAUNCH_KEY
+else
+  set -- "$@" --no-api-key                  # keyless lane: only 127.0.0.1:${PORT} is published on the host
+fi
 
 # tune once: ask only when this preset has not been tuned yet (a restart must not tune again for 20 minutes)
 tune_mode=$(printf '%s' "${TUNE:-}" | tr 'A-Z' 'a-z')
@@ -202,7 +288,10 @@ trap on_term TERM INT
 RESET_INT='import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execv(sys.argv[1], sys.argv[1:])'
 
 phase preparing
-say "Starting Strata: ${MODEL:-recommended model}${model_path:+ from $model_path} (preset '$PRESET')."
+if [ -n "${MODEL:-}" ]; then what="$MODEL${model_path:+ from $model_path}"
+elif [ -n "$model_path" ]; then what="the model files in $model_path"
+else what="the recommended model"; fi
+say "Starting Strata: $what (preset '$PRESET')."
 if [ -n "$key" ]; then
   STRATA_LAUNCH_KEY="$key" "$PYBIN" -c "$RESET_INT" "$STRATA" "$@" &
 else
@@ -215,15 +304,14 @@ launch_pid=""
 [ -n "$stopping" ] && exit 0
 if [ "$rc" -ne 0 ]; then
   phase failed
-  die "strata launch stopped with code $rc (the lines above say why). The container ends; a restart continues where it stopped (downloads resume)." "$rc"
+  die "strata launch stopped with code $rc (the lines above say why). The container ends. Fix that and start it again: finished steps are not repeated, and an interrupted download continues where it stopped." "$rc"
 fi
 
 # keep the key where `docker exec ... strata monitor` and the health check can read it (private file on the volume)
 ( umask 077; "$STRATA" launch --show-key --preset "$PRESET" > "$KEY_FILE" 2>/dev/null ) || true
 [ -s "$KEY_FILE" ] || rm -f "$KEY_FILE"
 if [ -z "$key" ]; then
-  warn "No API_KEY was set, so Strata made one (the server listens on all addresses in the container and will not run without a key)."
-  warn "Show it with: docker exec <container> strata launch --show-key --preset $PRESET   Set your own with -e API_KEY=..."
+  say "No API_KEY was set: serving without one (--no-api-key); only 127.0.0.1:${PORT} is published on the host."
 fi
 phase serving
 say "Serving on port $PORT. Watch it: docker exec -it <container> strata monitor    Stop: docker stop <container>"

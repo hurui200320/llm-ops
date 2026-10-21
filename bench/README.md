@@ -17,7 +17,7 @@ the shell scripts read env vars (e.g. `LLAMA_SWAP_URL`, `LIMIT`). Pointing
 `LLAMA_SWAP_URL` at a direct server that requires a bearer token (e.g. Strata)
 also needs `API_KEY` (or `STRATA_KEY`); the tool-calling, reasoning and
 agentic runners pass it through. llama-swap itself runs with `apiKeys: []`
-(its Strata lane is keyless on host loopback), so the swap lanes need no key.
+(its Strata lane is keyless on a loopback-published bridge port), so the swap lanes need no key.
 
 Decision models such as OpenJev use `/v1/systemone`, not chat completions.
 Use the [System One latency test](#system-one-decision-latency) below rather
