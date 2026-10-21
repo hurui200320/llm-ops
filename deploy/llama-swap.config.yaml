@@ -541,7 +541,7 @@ models:
         -e GPUS=0,1
         -e PARALLEL=1
         -e MODEL_PATH=/models/strata/ISTA-DASLab-Flash-Next
-        -e STRATA_SET="kv=fp16 vram-reserve-mib=2048 vram-reserve-later-mib=700 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=4 STRATA_SPLIT_OVERLAP=1"
+        -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=768 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=4 STRATA_SPLIT_OVERLAP=1"
         ghcr.io/niko1221/strata:0.2.1-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
@@ -601,7 +601,7 @@ models:
         -e GPUS=0,1
         -e PARALLEL=1
         -e MODEL_PATH=/models/strata/sc117-Flash-Next-uncensored
-        -e STRATA_SET="kv=fp16 vram-reserve-mib=2048 vram-reserve-later-mib=700 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=4 STRATA_SPLIT_OVERLAP=1"
+        -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=768 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=4 STRATA_SPLIT_OVERLAP=1"
         ghcr.io/niko1221/strata:0.2.1-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
