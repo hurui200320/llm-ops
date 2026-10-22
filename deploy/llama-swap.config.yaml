@@ -529,6 +529,12 @@ models:
   # 0.2.2 / engine 0.1.47: the first start drops the 0.2.1 install record (it
   # names the 0.1.46 vision reader) and re-runs setup; the pack and MTP are
   # reused (measured 2026-10-21).
+  # 2026-10-22 pp/tg tuning (0.2.2 / 0.1.47, vanilla IQ3_S, measured direct):
+  #   pipeline-windows=2 + layer-split=26 + trim-stage-weights + spec-min-p=0.7
+  #   + STRATA_SCORES_THREAD=1. 60%: pp 1675 -> 2017, tg 48.6 -> 67.4;
+  #   85%: pp 1669 -> 2174, tg 47.7 -> 66.5. STRATA_SPLIT_OVERLAP is gone:
+  #   pipeline-windows supersedes it (the engine log says so). Details and the
+  #   rejected arms: notes/qwen3.8/Flash-Next.md, "20261022 Strata pp/tg tuning".
   # Do not pass KV= (any value makes `strata launch` re-run setup, which rejects
   # fp16): F16 KV is `kv=fp16` inside STRATA_SET, applied to the engine argv.
   # Do not pass --slot-save-path: session files are refused on a layer split.
@@ -546,7 +552,7 @@ models:
         -e GPUS=0,1
         -e PARALLEL=1
         -e MODEL_PATH=/models/strata/ISTA-DASLab-Flash-Next
-        -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=768 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=4 STRATA_SPLIT_OVERLAP=1"
+        -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=768 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=4 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1"
         ghcr.io/niko1221/strata:0.2.2-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
@@ -608,7 +614,7 @@ models:
         -e GPUS=0,1
         -e PARALLEL=1
         -e MODEL_PATH=/models/strata/sc117-Flash-Next-uncensored
-        -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=768 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=4 STRATA_SPLIT_OVERLAP=1"
+        -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=768 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=4 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1"
         ghcr.io/niko1221/strata:0.2.2-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}

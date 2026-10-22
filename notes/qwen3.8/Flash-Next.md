@@ -114,3 +114,91 @@ run aborts.)
 + **Coding/agentic work: deploy the vanilla IQ3_S.** For structured-output-heavy automation add
   a JSON/response-format constraint; injections were refused but quoted back (partial, not clean
   pass). The uncensored lane was not run.
+
+# 20261022 Strata pp/tg tuning (0.2.2 / engine 0.1.47)
+
+Goal: shorten the benchmark suite by raising pp and tg only. No quality knobs: F16 KV and the
+existing MTP/quant are unchanged, and nothing from the "quality changes the numbers" class
+(`STRATA_PF_FUSED`, `STRATA_HIP_WMMA`, `--mtp-q4`, KV int8) was enabled. The knobs kept are
+exact or placement-only (near-ties can flip because the expert/cache placement changed; the
+answers do not degrade).
+
+Setup: vanilla IQ3_S lane, 2x7900XTX, 262144 ctx, F16 KV, resident budget 28 GiB. Each arm ran
+in a direct container on `127.0.0.1:10100` with the production entrypoint/env and a fresh
+`PRESET=strata-tune-<arm>` (so `--set` values cannot leak between arms). The built-in
+`TUNE=quick` was not used: on this machine class its only restart arms are
+`kv-resident 65536` and `prefill auto:32768`, and it has no split-geometry arms.
+`bench/speed/run_longctx.py --ctx 262144 --out-pct 1` (cold prefills via the per-request nonce),
+2 reps unless marked 1. A direct server has no `/tokenize`, so the runner sizes each level with
+a calibration request: that is an extra cold prefill and is **not** part of the measured rep.
+Raw JSON/logs: `bench/results/strata-tune/` (gitignored).
+
+Baseline (0.2.2, 2 reps): 20 % pp/tg **1430.8 / 52.3**; 60 % **1674.9 / 48.6**; 85 %
+**1668.6 / 47.7**. Acceptance 0.53; auto K=23 (layers 0-22 / 23-47), 8097 + 6849 cache slots,
+25.4 GiB RAM copy, lend 3611/3611, file tier 0.0. The 20 % pp point is noisy (reps 1280 /
+1581); 60/85 are the reliable pp points. 0.2.2's 85 % is higher than the 0.2.0-beta note's
+1574/47.9; use this baseline for 0.2.2.
+
+## Kept
+
+Final settings (added to the lane's `STRATA_SET`; `STRATA_SPLIT_OVERLAP=1` removed because
+`--pipeline-windows` supersedes it, and the engine log says so):
+
+```
+pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1
+```
+
+| Arm | Change on top of baseline | 60 % pp/tg | 85 % pp/tg | Read |
+|---|---|---|---|---|
+| pipeline | `pipeline-windows=2` | 1638.8 / 61.45 | (not run) | tg **+26.6 %** at 60, pp −2.2 %; 20 % 1514.4/61.15 (tg +17 %) |
+| K26 | pipeline + `layer-split=26` | 1866.2 / 62.7 | (not run) | pp **+13.9 %**, tg +2 % over pipeline; layers 0-25 / 26-47 |
+| spec floor | K26 + `spec-min-p=0.7` | 1977.6 / 66.0 | 1864.0 / 62.6 (1 rep) | tg +5.3 %, pp +6 %; draft count 2100→~1500, acceptance 0.57→0.68 |
+| scores | + `STRATA_SCORES_THREAD=1` | 1986.3 / 64.05 | 2088.1 / 63.65 | pp +5.5 % at 60 against the 1-rep control (1900.3) and +9.7 % at 85; the 2-rep spec-floor median (1977.6) is inside the noise; same tokens (gfx1100 opt-in) |
+| trim | + `trim-stage-weights=on` (K26 explicit) | **2017.1 / 67.35** | **2173.95 / 66.5** | final; pp +1.5 % / +4.1 %, tg +5.2 % / +4.5 % over scores-only (2 reps) |
+
+Final vs baseline: **20 % +23.8 % pp / +26.3 % tg; 60 % +20.4 % pp / +38.7 % tg;
+85 % +30.3 % pp / +39.6 % tg.** Average request latency at 60 % fell 147.4 → 116.6 s and at
+85 % 187.5 → 141.3 s (−21 % / −25 %; cold prefill + the same 2621-token output). The final's
+20 % point (2 reps) is 1770.9 / 66.0. `trim-stage-weights` moves experts from RAM to VRAM:
+GPU caches 31.3 GiB (vs 27.8), RAM copy 22.4 GiB (vs 25.9), lend 3591/3591, file tier still
+0.0. Layout: layers 0-25 on CUDA0 (x16), 26-47 on CUDA1 (x4), 8452 + 7972 slots.
+`pipeline-windows=2` keeps 272-284 MiB of CUDA0 out of the expert cache; that is included in
+the numbers.
+
+## Rejected (do not repeat)
+
+| Arm | 60 % pp/tg | Why not |
+|---|---|---|
+| `aux-cpus=auto` | 1616.0 / 48.0 | pp −3.5 %, tg −1.1 % vs baseline (20 % 1434.6/50.8 vs 1430.8/52.3); the 2x3080 +10 % decode result does not reproduce here |
+| `pool-workers=7` (on pipeline) | 1634.5 / 58.8 | tg −4.3 % vs pipeline's 61.45; the default 15 workers is better |
+| `trim-stage-weights` alone (K23 + pipeline) | 1684.4 / 60.15 | pp +2.8 %, tg −2.1 % vs pipeline; neutral on its own, it pays with K26 (pp) and with K26 + scores (both) |
+| `layer-split=27` (on pipeline) | 1858.4 / 60.65 | K26 is 1866.2 / 62.7; slightly worse on both |
+| `layer-split=29` (on pipeline) | 1766.6 / 59.0 | clearly worse than K26 (too much on the x4 card) |
+| `STRATA_IO_THREADS=32` (on scores+trim) | 1963.3 / 70.7 (1 rep) | 85 % 2088.0 / 60.7 vs 2084.8 / 68.7; no pp gain and worse tg at 85 |
+| `STRATA_SH_STREAM=1` (on scores+trim) | 1983.8 / 60.2 | tg −10.6 % at 60 % vs the final; the identity output is fine but it does not pay on gfx1100 here |
+| `prefill-pipe=1` (on the final) | 2042.8 / 62.8 (1 rep) | 85 % 2150.0 / 64.2; pp +1.3 % / −1.1 %, tg −6.8 % / −3.5 % vs the final; no win, so no b/a sweep |
+
+Notes on safety: `spec-min-p=0.7` is the tuner's exact class (it only gates draft extension;
+answers are unchanged). `STRATA_SCORES_THREAD=1` is documented bitwise the warp scorer's scores
+and same tokens. `pipeline-windows`, K, and trim change cache placement, so greedy text can
+differ at near-ties from a run with another placement; there is no quant/quality change. If a
+run must be byte-identical to the old lane, keep the baseline instead.
+
+Applied to both Strata lanes (vanilla and SC117) in `deploy/llama-swap.config.yaml`; SC117 was
+not re-measured, but it is the same model/layout and the knobs are model-agnostic.
+
+Production verification (2026-10-22, after the config was scp'd to fedora-tuf and llama-swap
+restarted): the vanilla lane loaded with `--pipeline-windows 2 --layer-split 26
+--trim-stage-weights --spec-min-p 0.7`, `STRATA_SCORES_THREAD=1` in the run config's `env`,
+no `--aux-cpus`, caches 8452 + 7972 slots, RAM copy 22.37 GiB, layers 0-25 / 26-47; SC117
+loaded the same args/env (8395 + 7939 slots, RAM copy 22.54 GiB) and answered a 1-token
+request in 46 s cold. Both lanes' `docker` presets were deleted before this start: the
+vanilla one had captured `--aux-cpus auto` from an early tuning arm (the tuning harness now
+uses `PRESET=strata-tune-<arm>` per arm), so the first production start rebuilt the run
+config from the install config + the new `STRATA_SET`. SC117 was not re-benchmarked.
+Vision smoke after the change (SC117 lane, 640x360 red/blue PNG): answered correctly, 286
+prompt tokens, 1.35 s prompt time; no reader fallback error in the start log. The 0.2.2
+vision reader was not re-selected explicitly; the lane kept its GPU/CPU choice.
+Through llama-swap after the restart (production path, 1 rep): vanilla 20 % pp/tg
+1743.5 / 68.9, 60 % 1988.6 / 65.3 — the direct-container finalC numbers reproduce within the
+rep spread (1770.9 / 66.0 and 2017.1 / 67.35). SC117 was put back as the loaded lane.
