@@ -170,7 +170,7 @@ macros:
   # --entrypoint replaces the image's `tini -- /opt/strata/entrypoint.sh`; docker's
   # --init keeps PID1 signal forwarding/reaping, and the fork traps SIGTERM and runs
   # `strata launch --stop` exactly like upstream.
-  # See notes/strata/README.md (llama-swap wiring) for the record and the
+  # See notes/strata.md (llama-swap wiring) for the record and the
   # verification list.
   # STRATA_HIPBLASLT_TABLE must be a container env var; inside STRATA_SET it is
   # silently ignored (measured 2026-10-21).
@@ -545,7 +545,7 @@ models:
   # out of the expert cache and disables pipeline-windows; a lone request then
   # decodes 38% slower at 60%, and two concurrent requests finish later than
   # queueing both on this single slot — see notes/qwen3.8/Flash-Next.md
-  # ("PARALLEL quick test"). Notes: notes/strata/README.md.
+  # ("PARALLEL quick test"). Notes: notes/strata.md.
   "qwen3.8-flash-next-iq3s":
     name: "Qwen3.8 Flash-Next IQ3_S"
     description: "262144 ctx, F16 KV, Strata layer split over 2x7900XTX, fully resident @28 GiB"
@@ -607,7 +607,7 @@ models:
   # The pack and MTP are reused. Never pass KV=, never pass --slot-save-path.
   # The model is abliterated with no reliable guardrails (TC-60 class): vanilla stays the
   # default for untrusted input, and no sensitive or unsandboxed tools on
-  # this lane until the Phase-5 safety/quality verdict.
+  # this lane until a safety/quality review clears it.
   "qwen3.8-flash-next-sc117-iq3s":
     name: "Qwen3.8 Flash-Next SC117 IQ3_S (abliterated)"
     description: "262144 ctx, F16 KV, Strata layer split over 2x7900XTX, uncensored"

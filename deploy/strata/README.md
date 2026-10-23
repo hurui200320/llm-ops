@@ -11,7 +11,7 @@ published by upstream's own workflow from the signed release engine packages sin
 ([docs/DOCKER.md](https://github.com/Niko1221/Strata/blob/main/docs/DOCKER.md)). Our own
 `strata-image.yml` build was retired on 2026-10-20 after a per-file comparison showed the images
 functionally equivalent — engine byte-identical, terminal differing only by the Windows long-path
-hotfix that landed after upstream's build. Record: [notes/strata/README.md](../../notes/strata/README.md).
+hotfix that landed after upstream's build. Record: [notes/strata.md](../../notes/strata.md).
 
 ## Pins (image `0.2.2-rocm-gfx110x`)
 
@@ -32,8 +32,7 @@ slots, `prefill gemm: hipBLASLt tuning enabled (26 rows, gfx1100, version 100200
 VRAM freed). The SC117 lane passed the same start; its setup picks the lane's own mmproj (see the
 wiring section). Deployed on fedora-tuf 2026-10-21; both lanes serve. On SC117 the keyless
 bridge/loopback, `:npt`, a declared-tool call, 640×360 vision with the lane's own mmproj and the
-`/upstream/` UI assets were verified; the vanilla↔SC117 switch and the re-bench remain. Record:
-[notes/strata/README.md](../../notes/strata/README.md).
+`/upstream/` UI assets were verified. Record: [notes/strata.md](../../notes/strata.md).
 
 Upstream verifies every package against the signed update feed (Ed25519) and re-hashes every file
 inside the build; the gfx110x image itself has not run on a card upstream, but its engine bytes are
@@ -59,8 +58,7 @@ the ones runtime-verified on fedora-tuf.
   which does not have it, so 0.2.2 is the first official image that can run the lane keyless on a
   non-loopback bind. `deploy/strata/entrypoint-local.sh` adds the flag only when no key is set.
 - The engine is 0.1.47. The gfx1100 hipBLASLt table is unchanged (same file, hash and version
-  `100200`). The release notes claim no RX 7000 speed change; the 0.2.2 re-bench is still pending
-  and remains separate from this upgrade.
+  `100200`). The release notes claim no RX 7000 speed change.
 - **Rollback:** back up `install/strata-iq3_s.json` and
   `config/strata/launch-presets/docker.json` before the first start. 0.2.2 rewrites the install
   record with the 0.1.47 vision paths; the 0.2.1 entrypoint does not repair a config that names a
@@ -108,21 +106,28 @@ The first start (or a settings change) downloads/prepares the model; every later
 to serving. Init/pack passes run outside llama-swap:
 
 ```sh
-docker run -d --name strata-init \
+docker run -d --name strata-init --init --rm \
   --device /dev/kfd --device /dev/dri \
   --group-add "$(getent group video | cut -d: -f3)" \
   --group-add "$(getent group render | cut -d: -f3)" \
   --security-opt label=disable --security-opt seccomp=unconfined \
   --ulimit memlock=-1:-1 --shm-size 2g --stop-timeout 120 \
   -p 127.0.0.1:8080:8080 \
+  --entrypoint /entry-local.sh \
+  -e PORT=8080 \
+  -v /mnt/unenc-xfs/llm-ops/deploy/strata/entrypoint-local.sh:/entry-local.sh:ro \
   -v /mnt/unenc-xfs/strata/ISTA-DASLab-Flash-Next:/data -v /mnt/unenc-xfs/models:/models:z \
   -e MODEL=IQ3_S -e CONTEXT=256k -e GPUS=0,1 -e PARALLEL=1 \
   -e MODEL_PATH=/models/strata/ISTA-DASLab-Flash-Next \
   -e STRATA_HIPBLASLT_TABLE=on \
-  -e STRATA_SET="kv=fp16 vram-reserve-mib=3072 vram-reserve-later-mib=700 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=4 STRATA_SPLIT_OVERLAP=1" \
+  -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=768 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=4 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1" \
   ghcr.io/niko1221/strata:0.2.2-rocm-gfx110x
 docker logs -f strata-init    # 0.2.2 re-runs setup once; the pack and MTP are reused
 ```
+
+This uses the same keyless entrypoint as the swap lanes, so an init run does not create an API key.
+Stop the container when setup finishes; the swap lane then reuses the prepared tree. The current
+lane settings are also listed in [notes/strata.md](../../notes/strata.md).
 
 - `MODEL_PATH` takes a folder of GGUF files or one `.gguf` (`GGUF_DIR` still works as an alias).
   Nothing is downloaded for the model itself; the prepared pack and MTP layer are written under
@@ -150,10 +155,11 @@ docker logs -f strata-init    # 0.2.2 re-runs setup once; the pack and MTP are r
   `/etc/group` — it has no `render` entry (`--group-add render` fails) and `video` is Ubuntu's 44,
   not the host's — so use the host numbers as above (`getent group video render`; 39/105 on
   fedora-tuf, verified 2026-10-20).
-- API key: a manual `docker run` uses the LAN bind (`--access lan`) and, without `API_KEY` or
-  `--no-api-key`, makes a key on the first start and keeps it at `/data/state/api-key`; a client
-  outside the container must send it (`API_KEY=` / `API_KEY_FILE=` override). The llama-swap lane
-  is keyless instead: the fork adds `--no-api-key`, the container runs on a bridge network, and only
+- API key: with the upstream entrypoint, a manual `docker run` uses the LAN bind (`--access lan`)
+  and, without `API_KEY` or `--no-api-key`, makes a key on the first start and keeps it at
+  `/data/state/api-key`; a client outside the container must send it (`API_KEY=` /
+  `API_KEY_FILE=` override). The llama-swap lanes and the init command above use the fork instead:
+  it adds `--no-api-key`, writes no key, the container runs on a bridge network, and only
   `127.0.0.1:${PORT}` is published on the host (see "llama-swap wiring").
 - Host layout: each lane is its own data tree, mounted at `/data`:
   `/mnt/unenc-xfs/strata/ISTA-DASLab-Flash-Next/` (vanilla) or
@@ -209,18 +215,18 @@ Build from **`v0.2.1.1` or later** (0.2.2 is fine): the 0.2.1 tag's `package_ter
 passes `STRATA_COMMIT` into the build. The old `docs/TERMINAL_LAUNCH.md` patch is no longer needed;
 0.2.1+ stages it in `docker/build.sh`.
 
-## llama-swap wiring (Phase 3)
+## llama-swap wiring
 
 The host llama-swap ([deploy/llama-swap.config.yaml](../llama-swap.config.yaml)) starts this image
 with the macro **`docker-server-strata-rocm`** and two models appended at the end of `models:` —
 vanilla **`qwen3.8-flash-next-iq3s`** and SC117 **`qwen3.8-flash-next-sc117-iq3s`** (`${PORT}` is
 assigned in config order: 10009 / 10010).
 Implementation record and current pins:
-[notes/strata/README.md](../../notes/strata/README.md).
+[notes/strata.md](../../notes/strata.md).
 
 - **No memory cap.** Upstream advises none and the entrypoint warns on `memory.max`; the engine
-  plans from the host's `/proc/meminfo` and the 28 GiB resident budget is the real control
-  (Phase 2 ran uncapped). Measure `memory.peak` in Phase 5 before considering a cap.
+  plans from the host's `/proc/meminfo` and the 28 GiB resident budget is the real control. The
+  lane runs uncapped; measure `memory.peak` if a cap is ever considered.
 - **Bind mounts only**, same tree as the manual recipe (`/data`, `/models`). No named volumes and no
   comgr cache: the engine is AOT-built. `/templates` is not mounted — Strata never reads it (a chat
   template override is a file swap inside the pack).
@@ -256,7 +262,8 @@ Implementation record and current pins:
   omits, so discovery would fall back to the listing-only prober (context + text; no tools/image).
   Strata's `/props` is llama.cpp-shaped (`chat_template_caps`, `modalities`, measured 2026-10-21),
   so if upstream ever reports `owned_by: llamacpp` the probe becomes complete.
-- **Env passthrough is the Phase-2 recipe verbatim**: `MODEL`, `CONTEXT=256k`, `GPUS=0,1`,
+- **Env passthrough is the production recipe in [notes/strata.md](../../notes/strata.md)**:
+  `MODEL`, `CONTEXT=256k`, `GPUS=0,1`,
   `PARALLEL=1`, `MODEL_PATH`, and the `STRATA_SET` string (with `kv=fp16`); plus the container env
   `STRATA_HIPBLASLT_TABLE=on`. Never `KV=`, never `--slot-save-path`. Neither entry passes
   `PRESET`: the image default `docker` is saved per lane under each tree's
@@ -267,11 +274,10 @@ Implementation record and current pins:
   `/mnt/unenc-xfs/strata/sc117-Flash-Next-uncensored/` has the built `packs/iq3_s`, a copied
   `mtp/rt`, and an install record. 0.2.2's first start drops that record (it names the 0.1.46
   vision reader) and re-runs setup; it selects the lane's own mmproj
-  (`907,542,944 B`, sha256 `2e788f8c…`), not the ISTA pin. The 0.2.2 smoke served with it; vision
-  with this copy is not yet exercised. Despite the unchanged GSQ-RCO layout the ISTA pack cannot be
-  reused (95 tensors changed type, 1,214/1,223 offsets moved). Details: `notes/strata/README.md`.
-  Parking knobs already ride in `STRATA_SET`; per-model settings wait for the HIP+split parking
-  check (Phase 5).
+  (`907,542,944 B`, sha256 `2e788f8c…`), not the ISTA pin. Vision with this copy was verified with
+  a 640×360 image after deployment. Despite the unchanged GSQ-RCO layout the ISTA pack cannot be
+  reused (95 tensors changed type, 1,214/1,223 offsets moved). Details: `notes/strata.md`.
+  Parking knobs already ride in `STRATA_SET`; current per-lane settings are in `notes/strata.md`.
 
 ## The hipBLASLt tuning table (packaged since 0.2.1)
 
