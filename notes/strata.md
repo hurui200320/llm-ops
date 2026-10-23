@@ -10,16 +10,17 @@ own `/data` tree:
 
 | llama-swap ID | Model | Port | Model folder | Data tree |
 | --- | --- | ---: | --- | --- |
-| `qwen3.8-flash-next-iq3s` | vanilla ISTA-DASLab IQ3_S | 10009 | `/mnt/unenc-xfs/models/strata/ISTA-DASLab-Flash-Next` | `/mnt/unenc-xfs/strata/ISTA-DASLab-Flash-Next` |
-| `qwen3.8-flash-next-sc117-iq3s` | SC117 abliterated IQ3_S | 10010 | `/mnt/unenc-xfs/models/strata/sc117-Flash-Next-uncensored` | `/mnt/unenc-xfs/strata/sc117-Flash-Next-uncensored` |
+| `qwen3.8-flash-next-iq3s` | vanilla ISTA-DASLab IQ3_S | 10007 | `/mnt/unenc-xfs/models/strata/ISTA-DASLab-Flash-Next` | `/mnt/unenc-xfs/strata/ISTA-DASLab-Flash-Next` |
+| `qwen3.8-flash-next-sc117-iq3s` | SC117 abliterated IQ3_S | 10008 | `/mnt/unenc-xfs/models/strata/sc117-Flash-Next-uncensored` | `/mnt/unenc-xfs/strata/sc117-Flash-Next-uncensored` |
 
 Both use 262144-token context, F16 KV, `PARALLEL=1`, a 28 GiB locked resident budget, and the same
 layer split across the cards. The containers are keyless on the default Docker bridge with only
 `127.0.0.1:${PORT}` published; clients and the browser UI reach them through llama-swap on `:8080`.
 
-Both lanes serve through llama-swap (one loaded at a time) on image 0.2.3 (engine 0.1.48), pinned
-2026-10-23; the lane tuning is from 2026-10-22 and carried over unchanged. The full
-command/upgrade runbook is
+Both lanes serve through llama-swap (one loaded at a time) on image 0.2.3 (engine 0.1.48),
+deployed 2026-10-23 (commit `cae796b`); the lane tuning is from 2026-10-22 and carried over
+unchanged. 0.2.3 spot-check (vanilla, through llama-swap): 60 % pp/tg 2077/66.0, 85 % 2132/63.3
+(0.2.2: 2017/67.4 and 2174/66.5 — within noise). The full runbook is
 [`deploy/strata/README.md`](../deploy/strata/README.md); speed and quality measurements are in
 [`notes/qwen3.8/Flash-Next.md`](qwen3.8/Flash-Next.md).
 
@@ -136,7 +137,7 @@ Stop the container when setup finishes; the swap lane then reuses the prepared t
 
 [`deploy/llama-swap.config.yaml`](../deploy/llama-swap.config.yaml) defines the shared macro
 **`docker-server-strata-rocm`** and appends the two models at the end of `models:` (`${PORT}` is
-assigned in config order, hence 10009/10010). Host llama-swap runs with `-watch-config`, so entry
+assigned in config order, hence 10007/10008). Host llama-swap runs with `-watch-config`, so entry
 changes are picked up live; no environment variable is needed to load a lane.
 
 - Container shape: `--name ${MODEL_ID} --init --rm`, `-p 127.0.0.1:${PORT}:${PORT}`,
@@ -189,9 +190,7 @@ supersedes `STRATA_SPLIT_OVERLAP` and is incompatible with engine batch slots, w
 - **Upgrades**: pull and pin the new image, back up `install/strata-iq3_s.json` and
   `config/strata/launch-presets/docker.json`, make sure no Strata model is loaded, re-diff the
   entrypoint fork, then let llama-swap reload or start the vanilla lane first. The 0.2.2→0.2.3
-  pack and MTP are compatible without a repack. Keep the old image for rollback; the 0.2.2
-  entrypoint also repairs an install record naming a missing component, so a rollback re-runs one
-  setup pass and re-records the 0.1.47 paths — keep the config backups anyway.
+  pack and MTP are compatible without a repack.
 - **0.2.3.1 is a Control-only hotfix and has no docker image (as of 2026-10-23).** The 0.2.3 image
   bundles Control 0.1.48; 0.2.3.1's Control 0.1.48.1 fixes `BUILD.json` archs parsing on the
   Windows NVIDIA package (#3810) and an AMD engine-recognition check on the Windows HIP path. The

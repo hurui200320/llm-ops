@@ -449,6 +449,9 @@ models:
   # MTP are reused (no repack). Terminal 0.2.3 bundles the pre-hotfix Control
   # 0.1.48: the two 0.2.3.1 fixes are off this container's CONTROL setup path,
   # and the 0.1.48 hip-rx7900 package is the same one 0.2.3.1 ships.
+  # 2026-10-23 0.2.3 spot-check (0.1.48, identical settings, through llama-swap):
+  #   60% pp 2077 / tg 66.0, 85% pp 2132 / tg 63.3 (0.2.2: 2017/67.4, 2174/66.5);
+  #   within noise — no RX 7000 regression from the 0.1.48 rebuild.
   # 2026-10-22 pp/tg tuning (0.2.2 / 0.1.47, vanilla IQ3_S, measured direct):
   #   pipeline-windows=2 + layer-split=26 + trim-stage-weights + spec-min-p=0.7
   #   + STRATA_SCORES_THREAD=1. 60%: pp 1675 -> 2017, tg 48.6 -> 67.4;

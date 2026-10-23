@@ -204,3 +204,31 @@ the queue for its ~1-4 min prefill, but still better than halving everyone's spe
 Revisit only if Strata ships `--batch` + `--pipeline-windows` compatibility, or a KV-streaming mode that keeps the
 expert cache intact while slots exist (that would fix the eviction but not the 53 tg pipeline ceiling), or the workload
 truly needs 2+ simultaneous long decodes.
+
+
+# 20261023 0.2.3 upgrade spot-check (engine 0.1.48)
+
+Same runner and lane settings as the 20261022 tuning (`bench/speed/run_longctx.py --ctx 262144
+--out-pct 1`, 2 reps), on the upgraded image `ghcr.io/niko1221/strata:0.2.3-rocm-gfx110x` /
+engine 0.1.48. This run went through llama-swap; the 20261022 numbers were measured directly on
+the lane. The first start per lane dropped the 0.2.2 install record and re-ran setup once; no
+repack and no engine/mmproj download; the hipBLASLt table is unchanged (`gfx1100-hipblaslt-100200.txt`,
+version `100200`).
+
+Vanilla lane (`qwen3.8-flash-next-iq3s`):
+
+| Level | 0.2.3 pp / tg | accept | 0.2.2 final pp / tg | accept |
+|---|---|---|---|---|
+| 60 % (157K) | 2077.3 / 65.95 | 0.654 | 2017.1 / 67.35 | 0.68 |
+| 85 % (223K) | 2132.5 / 63.30 | 0.670 | 2173.9 / 66.5 | — |
+
+Latency: 60 % 117.3 / 113.0 s; 85 % 147.2 / 143.2 s (0.2.2: 116.6 / 141.3 s). Rep peaks: 60 %
+pp 2135 / tg 66.2; 85 % pp 2180 / tg 64.6. `cache_n` 0 on every rep (cold prefill).
+
+Verdict: pp within ±2 % and tg within −2 %/−5 % of the 0.2.2 tuning; acceptance 0.65-0.67 vs 0.68.
+No RX 7000 regression from the 0.1.48 rebuild (upstream claims none; the Strix Halo changes are
+gfx1151-only). Treat the tg delta as run-to-run noise unless it repeats.
+
+SC117 swapped in cleanly through llama-swap (~50 s cold, own mmproj), answered a chat, a
+`get_weather` tool call and a 640×360 picture ("Blue"); its engine argv shows engine 0.1.48, the
+same split/knobs and hipBLASLt tuning.
