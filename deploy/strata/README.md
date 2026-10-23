@@ -56,18 +56,22 @@ docker run -d --name strata-init --init --rm \
   --entrypoint /entry-local.sh \
   -e PORT=8080 \
   -v /mnt/unenc-xfs/llm-ops/deploy/strata/entrypoint-local.sh:/entry-local.sh:ro \
+  -v /mnt/unenc-xfs/llm-ops/templates:/templates:ro \
   -v /mnt/unenc-xfs/strata/ISTA-DASLab-Flash-Next:/data -v /mnt/unenc-xfs/models:/models:z \
   -e MODEL=IQ3_S -e CONTEXT=256k -e GPUS=0,1 -e PARALLEL=1 \
   -e MODEL_PATH=/models/strata/ISTA-DASLab-Flash-Next \
   -e STRATA_HIPBLASLT_TABLE=on \
+  -e CHAT_TEMPLATE_PATH=/templates/qwen3.8/Flash-Next-chat-template.jinja \
   -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=768 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1" \
   ghcr.io/niko1221/strata:0.2.3-rocm-gfx110x
 docker logs -f strata-init    # 0.2.3 re-runs setup once; the pack and MTP are reused
 ```
 
 This uses the same keyless entrypoint as the swap lanes, so an init run does not create an API key.
-Stop the container when setup finishes; the swap lane then reuses the prepared tree. The current
-lane settings are also listed in [notes/strata.md](../../notes/strata.md).
+Stop the container when setup finishes; the swap lane then reuses the prepared tree. A first setup
+writes the GGUF's own template (the fork warns when no pack exists yet), and a repack re-extracts it
+after the pre-launch swap; either way the next start installs the repo template (see "Chat template
+override"). The current lane settings are also listed in [notes/strata.md](../../notes/strata.md).
 
 - `MODEL_PATH` takes a folder of GGUF files or one `.gguf` (`GGUF_DIR` still works as an alias).
   Nothing is downloaded for the model itself; the prepared pack and MTP layer are written under
@@ -167,15 +171,17 @@ Implementation record and current pins:
 - **No memory cap.** Upstream advises none and the entrypoint warns on `memory.max`; the engine
   plans from the host's `/proc/meminfo` and the 28 GiB resident budget is the real control. The
   lane runs uncapped; measure `memory.peak` if a cap is ever considered.
-- **Bind mounts only**, same tree as the manual recipe (`/data`, `/models`). No named volumes and no
-  comgr cache: the engine is AOT-built. `/templates` is not mounted — Strata never reads it (a chat
-  template override is a file swap inside the pack).
+- **Bind mounts only**, same tree as the manual recipe (`/data`, `/models`, `/templates`). No named
+  volumes and no comgr cache: the engine is AOT-built. `/templates` is the repo's `templates/` checkout,
+  read-only: Strata never reads it — the entrypoint fork copies the Qwen template out of it (see "Chat
+  template override").
 - **Gids, not names**: Docker resolves `--group-add` names against the image's `/etc/group` (no
   `render`, `video` is 44) — the macro passes the host numbers (39/105 on fedora-tuf).
 - **Keyless, on a Docker bridge.** Strata 0.2.3 still makes the API key optional; upstream's entrypoint
   still hardcodes `--access lan` (0.0.0.0). This lane runs on the default Docker bridge with
   [entrypoint-local.sh](entrypoint-local.sh), a fork of upstream's entrypoint that passes
-  `--no-api-key` when no key is set and suppresses upstream's false "Strata made one" warning. Docker
+  `--no-api-key` when no key is set, suppresses upstream's false "Strata made one" warning, and
+  installs `CHAT_TEMPLATE_PATH` over every pack's chat template. Docker
   publishes only `127.0.0.1:${PORT}` (`-p 127.0.0.1:${PORT}:${PORT}`) on the host, where llama-swap
   proxies; there is no `--network host`. `launch` stores no key, so llama-swap stays `apiKeys: []`
   and clients send no header; the LAN reaches Strata only through llama-swap. The browser UI works
@@ -184,10 +190,10 @@ Implementation record and current pins:
 - **Re-diff the entrypoint fork on every image bump.** Extract the new
   `/opt/strata/entrypoint.sh` from the image
   (`docker run --rm --entrypoint /bin/sh IMAGE -c 'cat /opt/strata/entrypoint.sh'`) and compare it
-  with `entrypoint-local.sh`; re-apply the two changes (the `--no-api-key` conditional and the final
-  keyless warning) and nothing else. The fork must exist in the fedora-tuf checkout before the first
-  start (mode 755): a missing bind source is created by Docker as a root-owned directory and the
-  container dies on `--entrypoint`.
+  with `entrypoint-local.sh`; re-apply the three changes (the `--no-api-key` conditional, the final
+  keyless warning, and the pack chat-template swap) and nothing else. The fork must exist in the
+  fedora-tuf checkout before the first start (mode 755): a missing bind source is created by Docker
+  as a root-owned directory and the container dies on `--entrypoint`.
 - **Preset/key state.** Each lane's `docker` preset is `"access": "lan"`, `"no_key": true`,
   `"api_key": null`; the private launch config gets `"api_key": "none"` (the server's "no key"
   sentinel), and no `/data/state/api-key` is written. A manual run with `API_KEY` still creates
@@ -217,6 +223,27 @@ Implementation record and current pins:
   lane. Despite the unchanged GSQ-RCO layout the ISTA pack cannot be reused (95 tensors changed
   type, 1,214/1,223 offsets moved). Details: `notes/strata.md`.
   Parking knobs already ride in `STRATA_SET`; current per-lane settings are in `notes/strata.md`.
+
+## Chat template override
+
+Strata has no `--chat-template-file` (unlike `llama-server`). Setup extracts the chat template into
+the prepared pack at `<data>/Strata-data/packs/<pack>/tokenizer/chat_template.jinja`, and the server
+reads that copy at every start. A one-time swap survives re-installs, but a fresh pack or a
+pack-format bump re-extracts the GGUF's own template — so both lanes re-apply the repo copy on every
+start:
+
+- `entrypoint-local.sh` compares `CHAT_TEMPLATE_PATH` with every pack's copy and replaces it when it
+  differs (silent when equal; warns when no pack exists yet).
+- The macro mounts the repo's `templates/` at `/templates:ro` — a directory mount, like the llama.cpp
+  lanes: a single-file mount would go stale because `fetch-templates.sh` replaces the file by rename —
+  and sets `CHAT_TEMPLATE_PATH=/templates/qwen3.8/Flash-Next-chat-template.jinja`.
+
+Updating the template: run `templates/fetch-templates.sh`, commit, `git pull` in
+`/mnt/unenc-xfs/llm-ops`, then restart the lane. Nothing is repacked and no GGUF is re-downloaded. A
+start that runs setup (fresh pack, repack) serves the GGUF's template once (the fork warns only when
+no pack exists yet); the next start installs the repo copy. After a template change, verify a short
+chat, a declared tool call and the `:npt` alias (its `chat_template_kwargs.preserve_thinking` must
+still be honoured); record the result in [notes/strata.md](../../notes/strata.md).
 
 ## The hipBLASLt tuning table (packaged since 0.2.1)
 

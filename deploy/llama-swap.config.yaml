@@ -166,6 +166,11 @@ macros:
   # verification list.
   # STRATA_HIPBLASLT_TABLE must be a container env var; inside STRATA_SET it is
   # silently ignored (measured 2026-10-21).
+  # Chat template: Strata has no --chat-template-file; it reads the template that
+  # setup extracted into <pack>/tokenizer/chat_template.jinja at every start. The
+  # fork replaces that copy with the repo's templates/ checkout (mounted at
+  # /templates, like the llama.cpp lanes) when CHAT_TEMPLATE_PATH is set, so Qwen
+  # template updates arrive with a git pull + lane restart, no GGUF re-download.
   "docker-server-strata-rocm": >
     docker run --name ${MODEL_ID} --init --rm
       -p 127.0.0.1:${PORT}:${PORT}
@@ -176,7 +181,9 @@ macros:
       --ulimit memlock=-1:-1 --shm-size 2g --stop-timeout 120
       -e PORT=${PORT}
       -e STRATA_HIPBLASLT_TABLE=on
+      -e CHAT_TEMPLATE_PATH=/templates/qwen3.8/Flash-Next-chat-template.jinja
       -v /mnt/unenc-xfs/llm-ops/deploy/strata/entrypoint-local.sh:/entry-local.sh:ro
+      -v /mnt/unenc-xfs/llm-ops/templates:/templates:ro
       -v /mnt/unenc-xfs/models:/models:z
 
 # apiKeys: require an API key when making requests to inference endpoints

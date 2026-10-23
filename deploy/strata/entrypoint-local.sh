@@ -11,7 +11,13 @@
 #      container network while only 127.0.0.1:${PORT} is published on the host.
 #   2. Do not print upstream's "Strata made one" warning in that case: no key is
 #      made when --no-api-key is used.
-# The script below is upstream v0.2.3 apart from the two key changes and the
+#   3. When CHAT_TEMPLATE_PATH is set, replace every prepared pack's
+#      tokenizer/chat_template.jinja with that file before the server starts.
+#      Strata has no --chat-template-file flag: setup extracts the template into
+#      the pack and the server reads it per start, so a file swap is the only
+#      override. This keeps the repo's templates/ checkout the source of truth;
+#      an upstream Qwen template update needs no GGUF re-download or repack.
+# The script below is upstream v0.2.3 apart from the three changes above and the
 # comment updates that describe them. A key given through API_KEY / API_KEY_FILE
 # still wins and is used exactly as upstream.
 #
@@ -22,8 +28,9 @@
 #
 # Maintenance: on every image bump, extract the new entrypoint from the image
 #   docker run --rm --entrypoint /bin/sh IMAGE -c 'cat /opt/strata/entrypoint.sh'
-# and diff it against this file; re-apply the two changes above (the key
-# conditional and the final warning) and nothing else.
+# and diff it against this file; re-apply the three changes above (the key
+# conditional, the final warning, and the pack chat-template swap) and nothing
+# else.
 #
 # Upstream text follows.
 #
@@ -48,6 +55,8 @@
 #   PORT          port inside the container (default 8080)
 #   API_KEY / API_KEY_FILE   the key clients must send. With neither set, this fork passes --no-api-key: the server starts
 #                 without a key (one warning) and does not write /data/state/api-key. Set one to use a key as upstream does.
+#   CHAT_TEMPLATE_PATH   a chat_template.jinja to copy over every pack's extracted template before the server starts (Strata
+#                 has no template flag; the pack's tokenizer/chat_template.jinja is what it reads). Fork change 3.
 #   PRESET        preset name in /data (default "docker"). Settings above are saved into it; with no settings given a saved preset is reused.
 #   STRATA_SET    advanced engine settings, space separated KEY=VALUE (like `strata launch --set`)
 set -u
@@ -201,6 +210,30 @@ if [ -n "$model_path" ]; then
     fi
     die "MODEL_PATH=$model_path holds no .gguf files. Mount the folder with the model's shards (the -0000N-of-0000M.gguf files). Nothing was downloaded." 2
   fi
+fi
+
+# ---- chat template (fork change 3). Strata has no --chat-template-file: setup extracts the template into
+# <pack>/tokenizer/chat_template.jinja and the server reads that copy at every start. With CHAT_TEMPLATE_PATH set,
+# put that file in place of each pack's copy, so the repo checkout (mounted read-only, e.g. at /templates) is the
+# source of truth and a template update upstream needs no GGUF download or repack. Only a change is reported.
+if [ -n "${CHAT_TEMPLATE_PATH:-}" ]; then
+  [ -r "$CHAT_TEMPLATE_PATH" ] || die "CHAT_TEMPLATE_PATH=$CHAT_TEMPLATE_PATH cannot be read. Mount the file (or its folder) into the container and point CHAT_TEMPLATE_PATH at it. Nothing was started." 2
+  packs=""
+  for t in /data/Strata-data/packs/*/tokenizer/chat_template.jinja; do
+    [ -f "$t" ] || continue
+    packs=1
+    if "$PYBIN" -c 'import sys; sys.exit(0 if open(sys.argv[1], "rb").read() == open(sys.argv[2], "rb").read() else 1)' "$CHAT_TEMPLATE_PATH" "$t" 2>/dev/null; then
+      continue                                  # already the wanted template: leave the pack untouched
+    fi
+    if cp -f "$CHAT_TEMPLATE_PATH" "$t"; then
+      say "Chat template: replaced ${t#/data/Strata-data/packs/} with $CHAT_TEMPLATE_PATH."
+    else
+      die "Could not write $t. Nothing was started." 2
+    fi
+  done
+  # A fresh tree has no pack yet: setup runs inside `strata launch`, after this swap, and writes the GGUF's own
+  # template. The next start replaces it, because by then the pack exists. Same after a repack (pack format bump).
+  [ -n "$packs" ] || warn "CHAT_TEMPLATE_PATH is set, but no pack has a tokenizer/chat_template.jinja yet: setup writes the GGUF's own template this start; the override is applied on the next start."
 fi
 [ -n "${MODEL:-}" ]       && { set -- "$@" --model "$MODEL"; have=1; }
 [ -n "${FAMILY:-}" ]      && { set -- "$@" --family "$FAMILY"; have=1; }
