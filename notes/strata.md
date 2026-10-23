@@ -240,6 +240,10 @@ supersedes `STRATA_SPLIT_OVERLAP` and is incompatible with engine batch slots, w
   in the GGUFs. Strata reads the pack's `tokenizer/chat_template.jinja` at every
   start and has no template flag; the fork swaps the file before `strata launch` (see "Init / first
   start"). To update: `templates/fetch-templates.sh`, commit, `git pull` in `/mnt/unenc-xfs/llm-ops`,
-  restart the lane. The GGUF is never re-downloaded or repacked.
+  restart the lane. The GGUF is never re-downloaded or repacked. Verified on fedora-tuf 2026-10-24:
+  both packs were rewritten right after the pull, a deliberately diverged pack was replaced at the
+  next start (`Chat template: replaced iq3_s/tokenizer/chat_template.jinja …` as the first log line,
+  `cmp` identical afterwards), and a short chat, a declared tool call
+  (`get_weather{"city":"Paris"}`) and the `:npt` alias all answered through llama-swap.
 - **API key**: the swap lanes are keyless and have no `/data/state/api-key`. A manual run with
   `API_KEY` set still creates and uses a key.
