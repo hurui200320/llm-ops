@@ -127,14 +127,6 @@ macros:
     --ctx-checkpoints 16
     --checkpoint-min-step 13107
 
-  # Ornith's recurrent checkpoints are small (~63 MiB), with no active draft.
-  # Minimum spacing does not guarantee periodic checkpoints or context coverage;
-  # message boundaries and prompt-end checkpoints can bypass it.
-  "ornith15-ctx-ckpt": >
-    --cache-ram 40960
-    --ctx-checkpoints 32
-    --checkpoint-min-step 8192
-
   # Four private KV slots already retain their prefixes in VRAM. Eagerly copying
   # idle slots to RAM added seconds to each short turn; save only on replacement.
   # Measured with all four 128K slots populated; see notes/muse-glimmer/30B.md.
@@ -315,80 +307,6 @@ models:
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
     concurrencyLimit: 10
-    timeouts:
-      connect: 30
-      keepalive: 30
-      # pp may take a long time so we don't set a timeout here
-      responseHeader: 0
-      tlsHandshake: 10
-      idleConn: 90
-
-
-  # Ornith 1.5 35B-A3B official Q8_0 with vision.
-  # MTP is built into the GGUF but measured slower (pp 1892 vs 2397, tg 30.6 vs 34.5):
-  # VRAM was too tight, so llama-server fought the desktop stack (gnome shell)
-  # for VRAM and everything slowed down. Spec stays off until there is real
-  # headroom; re-enable with --spec-type draft-mtp and re-verify with bench/speed.
-  "ornith-1.5-35b-a3b-q80-vision":
-    name: "Ornith 1.5 35B-A3B Q8_0 vision"
-    description: "256K context, vision on GPU, MoE 35B total / 3B active"
-    cmd: |
-      ${docker-server-rocm}
-        ${ornith15-ctx-ckpt}
-        --model                 /models/ornith-1.5/ornith-35B-A3B/Ornith-1.5-35B-A3B-Q8_0.gguf
-        --mmproj                /models/ornith-1.5/ornith-35B-A3B/mmproj-Ornith-1.5-35B-A3B-bf16.gguf
-        --chat-template-file /templates/ornith-1.5/35B-chat-template.jinja
-        --spec-type none
-        --jinja --reasoning on --reasoning-preserve
-        -b 2048 -ub 512
-        --image-min-tokens 512 --image-max-tokens 4096
-        -ngl 99
-        --main-gpu 0 --split-mode layer --tensor-split 20,22
-        --ctx-size 262144
-        --temp 0.9 --top-p 0.95 --top-k 40 --min-p 0.01 --repeat-penalty 1.0 --presence-penalty 1.2
-        --load-mode dio
-        --no-kv-unified
-        --flash-attn on
-        --parallel 1
-    cmdStop: docker stop ${MODEL_ID}
-    proxy: http://127.0.0.1:${PORT}
-    checkEndpoint: /health
-    concurrencyLimit: 5
-    timeouts:
-      connect: 30
-      keepalive: 30
-      # pp may take a long time so we don't set a timeout here
-      responseHeader: 0
-      tlsHandshake: 10
-      idleConn: 90
-
-
-  # Ornith 1.5 35B-A3B Abliterated (uncensored) Q8_0 with vision.
-  # This GGUF has no MTP head, so no --spec-type flag.
-  "ornith-1.5-35b-a3b-abliterated-q80-vision":
-    name: "Ornith 1.5 35B-A3B Abliterated Q8_0 vision"
-    description: "256K context, vision on GPU, uncensored, MoE 35B total / 3B active"
-    cmd: |
-      ${docker-server-rocm}
-        ${ornith15-ctx-ckpt}
-        --model                 /models/ornith-1.5/pocketaihub-35B-A3B-Abliterated/Ornith-1.5-35B-A3B-Abliterated-Q8_0.gguf
-        --mmproj                /models/ornith-1.5/pocketaihub-35B-A3B-Abliterated/mmproj-Ornith-1.5-35B-A3B-Abliterated-F16.gguf
-        --chat-template-file /templates/ornith-1.5/35B-chat-template.jinja
-        --jinja --reasoning on --reasoning-preserve
-        -b 2048 -ub 512
-        --image-min-tokens 512 --image-max-tokens 4096
-        -ngl 99
-        --main-gpu 0 --split-mode layer --tensor-split 20,22
-        --ctx-size 262144
-        --temp 0.9 --top-p 0.95 --top-k 40 --min-p 0.01 --repeat-penalty 1.0 --presence-penalty 1.2
-        --load-mode dio
-        --no-kv-unified
-        --flash-attn on
-        --parallel 1
-    cmdStop: docker stop ${MODEL_ID}
-    proxy: http://127.0.0.1:${PORT}
-    checkEndpoint: /health
-    concurrencyLimit: 5
     timeouts:
       connect: 30
       keepalive: 30
