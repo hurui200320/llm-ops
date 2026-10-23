@@ -17,8 +17,9 @@ Both use 262144-token context, F16 KV, `PARALLEL=1`, a 28 GiB locked resident bu
 layer split across the cards. The containers are keyless on the default Docker bridge with only
 `127.0.0.1:${PORT}` published; clients and the browser UI reach them through llama-swap on `:8080`.
 
-Both lanes are deployed and serve through llama-swap (one loaded at a time) on image 0.2.2 (engine
-0.1.47), deployed 2026-10-21; the lane tuning is from 2026-10-22. The full command/upgrade runbook is
+Both lanes serve through llama-swap (one loaded at a time) on image 0.2.3 (engine 0.1.48), pinned
+2026-10-23; the lane tuning is from 2026-10-22 and carried over unchanged. The full
+command/upgrade runbook is
 [`deploy/strata/README.md`](../deploy/strata/README.md); speed and quality measurements are in
 [`notes/qwen3.8/Flash-Next.md`](qwen3.8/Flash-Next.md).
 
@@ -26,14 +27,14 @@ Both lanes are deployed and serve through llama-swap (one loaded at a time) on i
 
 | What | Value |
 | --- | --- |
-| Image | `ghcr.io/niko1221/strata:0.2.2-rocm-gfx110x`, digest `sha256:99ae1768abd51d14ad684f751f42a256ad5f41079adf3ec5da04673c659ebc5b` |
-| Terminal | tag `v0.2.2`, commit `e6fff4ad12908de74952abe53b2bade45a68aa0f`; `strata 0.2.2 (build 0.1.47; python 3.12.15)` |
-| Engine | `strata-engine-0.1.47-linux-x86_64-hip-rx7900`, 242,020,538 B, sha256 `ecaaee56…`, manifest `build_id 76f90e58436d+rocm`, 581 files |
-| hipBLASLt table | packaged `tuning/gfx1100-hipblaslt-100200.txt`, sha256 `1bb8cd2e…`, version `100200` |
+| Image | `ghcr.io/niko1221/strata:0.2.3-rocm-gfx110x`, digest `sha256:4dd91b54cdf64870b837d00fb031c9b0531d6ea6a9b6fdf72d506912d3029109`, 1,847,098,151 B |
+| Terminal | tag `v0.2.3`, commit `5c8dd322528cc84f68f461ad54a506b9da8fa8d4`; `strata 0.2.3 (build 0.1.48; python 3.12.15)` |
+| Engine | `strata-engine-0.1.48-linux-x86_64-hip-rx7900`, 242,858,823 B, sha256 `13bcf38c…`, manifest `build_id 6f8800aefe27+rocm`, variant `rx7900`, 581 files (`engine-component.json` sha256 `59a2ac74…`, byte-identical to the image) |
+| hipBLASLt table | packaged `tuning/gfx1100-hipblaslt-100200.txt`, sha256 `1bb8cd2e…`, version `100200` (unchanged from 0.2.2, verified 2026-10-23) |
 
 The image is upstream's published package (public, no login). We do not build or patch images
 locally; a new upstream image is deployed as a new pin. The engine folder inside the image is
-`/opt/strata/components/engine/0.1.47-linux-x86_64-hip-rx7900` (upstream drops the
+`/opt/strata/components/engine/0.1.48-linux-x86_64-hip-rx7900` (upstream drops the
 `strata-engine-` prefix); reference it as `component:strata-engine`, never by path.
 
 ## Host and data layout
@@ -107,8 +108,8 @@ docker run -d --name strata-init --init --rm \
   -v /mnt/unenc-xfs/models:/models:z \
   -e MODEL=IQ3_S -e CONTEXT=256k -e GPUS=0,1 -e PARALLEL=1 \
   -e MODEL_PATH=/models/strata/ISTA-DASLab-Flash-Next \
-  -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=768 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=4 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1" \
-  ghcr.io/niko1221/strata:0.2.2-rocm-gfx110x
+  -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=768 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1" \
+  ghcr.io/niko1221/strata:0.2.3-rocm-gfx110x
 docker logs -f strata-init
 ```
 
@@ -121,9 +122,12 @@ Stop the container when setup finishes; the swap lane then reuses the prepared t
   launch by **`kv=fp16` in `STRATA_SET`**, which replaces the installed `--kv int8` in the engine
   argv. Do not pass `KV=fp16` — `strata launch` forwards it to setup, which exits 6, and
   `desc_matches()` repeats the failure on every start.
-- 0.2.2's first start drops a 0.2.1 install record (it names the 0.1.46 vision reader), re-runs
-  setup once and reuses the existing pack and MTP. A warm first start took about 30 s. Both lanes
-  went through this; the SC117 setup selects its own mmproj from the model folder.
+- 0.2.3's first start drops the 0.2.2 install record (it names the 0.1.47 engine/vision paths),
+  re-runs setup once and reuses the existing pack and MTP. No repack and no engine/mmproj
+  download. Both lanes go through this; the SC117 setup selects its own mmproj from the model
+  folder. A warm first start took ~40 s in the 2026-10-23 smoke (≈30 s of it the model load);
+  the same smoke verified chat, a declared-tool call, `max_tokens:-1` and 640×360 vision, and a
+  warm second start needed no setup pass (stop 2.4 s, exit 0, VRAM freed).
 - The vanilla pack needs no chat-template override. The template is extracted at pack time into
   `<pack>/tokenizer/chat_template.jinja` and read per start; an override is a file swap in the pack
   (there is no `--chat-template-file` flag), and it survives re-installs.
@@ -165,7 +169,7 @@ vram-reserve-later-mib=768
 resident-budget-gib=28
 prompt-cache-spread=on
 conversation-cache-mib=8192
-conversation-cache-slots=4
+conversation-cache-slots=8
 pipeline-windows=2
 layer-split=26
 trim-stage-weights=on
@@ -184,10 +188,20 @@ supersedes `STRATA_SPLIT_OVERLAP` and is incompatible with engine batch slots, w
   frees VRAM via `strata launch --stop`; `docker stop -t 120` is sized for that.
 - **Upgrades**: pull and pin the new image, back up `install/strata-iq3_s.json` and
   `config/strata/launch-presets/docker.json`, make sure no Strata model is loaded, re-diff the
-  entrypoint fork, then let llama-swap reload or start the vanilla lane first. The 0.2.1→0.2.2
-  pack and MTP are compatible without a repack. Keep the old image for rollback; a rollback to
-  0.2.1 needs the config backups because 0.2.2 rewrites the install record with 0.1.47 vision
-  paths, and the 0.2.1 entrypoint does not repair a config naming a missing component.
+  entrypoint fork, then let llama-swap reload or start the vanilla lane first. The 0.2.2→0.2.3
+  pack and MTP are compatible without a repack. Keep the old image for rollback; the 0.2.2
+  entrypoint also repairs an install record naming a missing component, so a rollback re-runs one
+  setup pass and re-records the 0.1.47 paths — keep the config backups anyway.
+- **0.2.3.1 is a Control-only hotfix and has no docker image (as of 2026-10-23).** The 0.2.3 image
+  bundles Control 0.1.48; 0.2.3.1's Control 0.1.48.1 fixes `BUILD.json` archs parsing on the
+  Windows NVIDIA package (#3810) and an AMD engine-recognition check on the Windows HIP path. The
+  container runs setup with `STRATA_CONTROL_INSTALL=1` and resolves the engine through
+  `strata_control/engine_component.py`, so neither fix is on this lane's path, and the 0.1.48
+  engine packages are identical in both releases. If upstream publishes `0.2.3.1-rocm-gfx110x`,
+  prefer it — a drop-in tag change.
+- **Vision token cap (0.2.3).** The server and the reader clamp image tokens by default when
+  `vision.max_tokens` is absent (CPU reader 300, GPU reader 1024; #3690). The lane's install record
+  carries the reader settings setup wrote; the 2026-10-23 smoke verified a 640×360 picture.
 - **Never** pass `KV=`; use `kv=` inside `STRATA_SET`. `KV=fp16` is forwarded to setup, which
   accepts only `int8|q4_0|k8v4` and exits 6, and `desc_matches()` repeats the failure on every
   start.

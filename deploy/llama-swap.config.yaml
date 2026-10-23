@@ -444,9 +444,11 @@ models:
   # Qwen3.8 Flash-Next IQ3_S on Strata (upstream image, HIP engine, layer split
   # over both 7900XTX). Driven entirely through the entrypoint's env vars; the
   # preset "docker" holds the same values, so a start is download-free.
-  # 0.2.2 / engine 0.1.47: the first start drops the 0.2.1 install record (it
-  # names the 0.1.46 vision reader) and re-runs setup; the pack and MTP are
-  # reused (measured 2026-10-21).
+  # 0.2.3 / engine 0.1.48: the first start drops the 0.2.2 install record (it
+  # names the 0.1.47 engine/vision paths) and re-runs setup once; the pack and
+  # MTP are reused (no repack). Terminal 0.2.3 bundles the pre-hotfix Control
+  # 0.1.48: the two 0.2.3.1 fixes are off this container's CONTROL setup path,
+  # and the 0.1.48 hip-rx7900 package is the same one 0.2.3.1 ships.
   # 2026-10-22 pp/tg tuning (0.2.2 / 0.1.47, vanilla IQ3_S, measured direct):
   #   pipeline-windows=2 + layer-split=26 + trim-stage-weights + spec-min-p=0.7
   #   + STRATA_SCORES_THREAD=1. 60%: pp 1675 -> 2017, tg 48.6 -> 67.4;
@@ -476,7 +478,7 @@ models:
         -e PARALLEL=1
         -e MODEL_PATH=/models/strata/ISTA-DASLab-Flash-Next
         -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=768 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1"
-        ghcr.io/niko1221/strata:0.2.2-rocm-gfx110x
+        ghcr.io/niko1221/strata:0.2.3-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
@@ -519,8 +521,8 @@ models:
   # MODEL_PATH differ (it has its own pack: 95 tensors changed type and
   # 1,214/1,223 offsets moved, so the ISTA pack cannot be reused). PRESET is
   # unset like vanilla: each lane's tree holds its own "docker" preset.
-  # 0.2.2 / engine 0.1.47: the first start drops the old install record and
-  # re-runs setup; it picks this lane's own mmproj from the model folder
+  # 0.2.3 / engine 0.1.48: the first start drops the 0.2.2 install record and
+  # re-runs setup once; it picks this lane's own mmproj from the model folder
   # (907,542,944 B, sha256 2e788f8c..., measured 2026-10-21), not the ISTA pin.
   # The pack and MTP are reused. Never pass KV=, never pass --slot-save-path.
   # The model is abliterated with no reliable guardrails (TC-60 class): vanilla stays the
@@ -538,7 +540,7 @@ models:
         -e PARALLEL=1
         -e MODEL_PATH=/models/strata/sc117-Flash-Next-uncensored
         -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=768 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1"
-        ghcr.io/niko1221/strata:0.2.2-rocm-gfx110x
+        ghcr.io/niko1221/strata:0.2.3-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health

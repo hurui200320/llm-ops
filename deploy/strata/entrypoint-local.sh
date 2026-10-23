@@ -1,15 +1,17 @@
 #!/bin/sh
 # Fork of upstream's /opt/strata/entrypoint.sh for the llm-ops llama-swap lane.
 #
-# Changes from upstream v0.2.2 (image ghcr.io/niko1221/strata:0.2.2-rocm-gfx110x,
-# terminal build 0.1.47; extracted 2026-10-21, sha256 7c74cfd32155541df6dd1401a44f6f0b07712e4dce3b74eb8b33df162ecf3a43):
+# Changes from upstream v0.2.3 (image ghcr.io/niko1221/strata:0.2.3-rocm-gfx110x,
+# terminal build 0.1.48; extracted 2026-10-23, sha256
+# 7c74cfd32155541df6dd1401a44f6f0b07712e4dce3b74eb8b33df162ecf3a43 — the same
+# bytes as v0.2.2, so the fork needed no script changes):
 #   1. When no API key is given, pass `--no-api-key` to `strata launch` instead of
-#      letting it make one. Strata 0.2.2 allows a non-loopback bind without a key
+#      letting it make one. Strata 0.2.3 allows a non-loopback bind without a key
 #      (with one warning), so the server can listen on 0.0.0.0 inside its own
 #      container network while only 127.0.0.1:${PORT} is published on the host.
 #   2. Do not print upstream's "Strata made one" warning in that case: no key is
 #      made when --no-api-key is used.
-# The script below is upstream v0.2.2 apart from the two key changes and the
+# The script below is upstream v0.2.3 apart from the two key changes and the
 # comment updates that describe them. A key given through API_KEY / API_KEY_FILE
 # still wins and is used exactly as upstream.
 #

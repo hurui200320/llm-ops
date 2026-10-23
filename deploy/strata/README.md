@@ -13,32 +13,72 @@ published by upstream's own workflow from the signed release engine packages sin
 functionally equivalent — engine byte-identical, terminal differing only by the Windows long-path
 hotfix that landed after upstream's build. Record: [notes/strata.md](../../notes/strata.md).
 
-## Pins (image `0.2.2-rocm-gfx110x`)
+## Pins (image `0.2.3-rocm-gfx110x`)
 
 | What | Value |
 | --- | --- |
-| Image | `ghcr.io/niko1221/strata:0.2.2-rocm-gfx110x`, digest `sha256:99ae1768abd51d14ad684f751f42a256ad5f41079adf3ec5da04673c659ebc5b` (pulled 2026-10-21), 1,842,812,422 B / 1.84 GB on disk |
-| Terminal | upstream tag `v0.2.2`, commit `e6fff4ad12908de74952abe53b2bade45a68aa0f`; `strata --version` = `strata 0.2.2 (build 0.1.47; python 3.12.15 at /opt/strata/terminal/python/bin/python3)`; image entrypoint sha256 `7c74cfd3…` (byte-identical to the `v0.2.2` checkout) |
-| Engine package | `strata-engine-0.1.47-linux-x86_64-hip-rx7900` from the `v0.2.2` release, 242,020,538 bytes, asset sha256 `ecaaee56a0fb44313ed246f57655f95857f017a64cb5fb43104b0417c86b21ba`, manifest `build_id 76f90e58436d+rocm`, variant `rx7900`, 581 files — **byte-identical** to the package in the image (`engine-component.json` sha256 matches) |
-| Engine folder in the image | `/opt/strata/components/engine/0.1.47-linux-x86_64-hip-rx7900` (upstream names the folder without the `strata-engine-` prefix; always reference the engine as `component:strata-engine`, never by path) |
-| hipBLASLt table | packaged at `tuning/gfx1100-hipblaslt-100200.txt` (sha256 `1bb8cd2e232ce1dec5dc0f303e5bd3b32abd9444330a4428a995ad4db8fb97be`), **unchanged from 0.2.1**. On gfx1100 it is **opt-in**: pass `STRATA_HIPBLASLT_TABLE=on` as a **container environment variable** (`-e`), **not** inside `STRATA_SET` (see the tuning section) |
+| Image | `ghcr.io/niko1221/strata:0.2.3-rocm-gfx110x`, digest `sha256:4dd91b54cdf64870b837d00fb031c9b0531d6ea6a9b6fdf72d506912d3029109` (pulled 2026-10-23), 1,847,098,151 B / 1.85 GB on disk |
+| Terminal | upstream tag `v0.2.3`, commit `5c8dd322528cc84f68f461ad54a506b9da8fa8d4`; `strata --version` = `strata 0.2.3 (build 0.1.48; python 3.12.15 at /opt/strata/terminal/python/bin/python3)`; image entrypoint sha256 `7c74cfd3…` (byte-identical to the `v0.2.2` checkout) |
+| Engine package | `strata-engine-0.1.48-linux-x86_64-hip-rx7900` from the `v0.2.3` release, 242,858,823 bytes, asset sha256 `13bcf38c3ebef5261e7a99c6ce67b66a16e2c6a518586d7e96672c0f72178cfa`, manifest `build_id 6f8800aefe27+rocm`, variant `rx7900`, 581 files — **byte-identical** to the package in the image (asset and image `engine-component.json` both sha256 `59a2ac74297b1714314cd30c93008aae4f661e9311b1cd654443e9111b81259b`, `BUILD.json` both `7108976a…`) |
+| Engine folder in the image | `/opt/strata/components/engine/0.1.48-linux-x86_64-hip-rx7900` (upstream names the folder without the `strata-engine-` prefix; always reference the engine as `component:strata-engine`, never by path) |
+| hipBLASLt table | packaged at `tuning/gfx1100-hipblaslt-100200.txt` (sha256 `1bb8cd2e232ce1dec5dc0f303e5bd3b32abd9444330a4428a995ad4db8fb97be`), **unchanged from 0.2.1/0.2.2**. On gfx1100 it is **opt-in**: pass `STRATA_HIPBLASLT_TABLE=on` as a **container environment variable** (`-e`), **not** inside `STRATA_SET` (see the tuning section) |
 
-0.2.2 first start verified on fedora-tuf (2026-10-21) on a throwaway copy of the vanilla data tree:
-the entrypoint drops the 0.2.1 install record (it names the 0.1.46 vision reader), setup re-runs
-once with **no repack**, and the lane serves keyless on a loopback-published bridge port. Engine
-0.1.47 gave the same split (`K=22`, `CUDA0` then `CUDA1`), 26.81 GiB resident, 7332 + 6875 expert
-slots, `prefill gemm: hipBLASLt tuning enabled (26 rows, gfx1100, version 100200)`, `/health` 200,
-`/v1/models` 200 without a key, a short chat answer, and a clean `docker stop` (2.9 s, exit 0,
-VRAM freed). The SC117 lane passed the same start; its setup picks the lane's own mmproj (see the
-wiring section). Deployed on fedora-tuf 2026-10-21; both lanes serve. On SC117 the keyless
-bridge/loopback, `:npt`, a declared-tool call, 640×360 vision with the lane's own mmproj and the
-`/upstream/` UI assets were verified. Record: [notes/strata.md](../../notes/strata.md).
+0.2.3 first start verified on fedora-tuf (2026-10-23) on a reflinked throwaway copy of the vanilla
+data tree: the entrypoint drops the 0.2.2 install record (it names the 0.1.47 `strata-vision-hip`),
+setup re-runs once with **no repack** (50 files in `Strata-data/` before and after; only
+`mtp/tensors/verified.json` re-stamped) and **no download**, and the lane serves keyless on a
+loopback-published bridge port after about 40 s (≈30 s of it is the model load). Engine 0.1.48
+gave the same split (`CUDA0` 0-25 / `CUDA1` 26-47), 22.37 GiB resident, MTP layer 1348 MiB,
+`prefill gemm: hipBLASLt tuning enabled (26 rows, gfx1100, version 100200)`, `/health` 200,
+`/v1/models` 200 without a key, a short chat answer, `max_tokens:-1` accepted, a declared-tool call
+(`get_weather{"city":"Paris"}`) and 640×360 vision ("Red"). A warm second start took ≈40 s with no
+setup pass, and `docker stop -t 120` took 2.4 s (exit 0, VRAM back to 0.19 GiB). The SC117 lane
+uses the same flow; its setup picks the lane's own mmproj (see the wiring section). Record:
+[notes/strata.md](../../notes/strata.md).
 
 Upstream verifies every package against the signed update feed (Ed25519) and re-hashes every file
 inside the build; the gfx110x image itself has not run on a card upstream, but its engine bytes are
 the ones runtime-verified on fedora-tuf.
 
-## Upgrading from 0.2.1 (0.2.2, engine 0.1.47)
+## Upgrading from 0.2.2 (0.2.3, engine 0.1.48)
+
+- `/data` needs **no repack**: `iq_pack`, `pack_index`, `pack_layer`, `strata_pack`, `mtp_pack`,
+  `mtp_rt` and the GGUF readers are unchanged between `v0.2.2` and `v0.2.3` (only `mtp_fetch.py`
+  gained the OS-certificate import), and the llama.cpp pin is unchanged. The existing pack and MTP
+  layer load as-is.
+- The 0.2.3 entrypoint drops a run config whose fields name a missing engine folder. Both lanes do
+  **one setup pass** on the first 0.2.3 start; the log says `The saved run settings
+  strata-iq3_s.json name /opt/strata/components/engine/0.1.47-... ... making them again. The model
+  files are kept.` The pack is not rebuilt, and no engine or mmproj file is downloaded.
+- **Terminal 0.2.3 bundles the pre-hotfix Control 0.1.48.** Upstream's 0.2.3.1 release
+  (Control 0.1.48.1) fixes `BUILD.json` archs parsing on the Windows NVIDIA package (#3810) and an
+  AMD engine-recognition check on the Windows HIP path; upstream had not published a `0.2.3.1`
+  docker image when 0.2.3 was pinned (2026-10-23). Neither fix is on this container's code path:
+  `strata launch` runs setup with `STRATA_CONTROL_INSTALL=1` and resolves the engine through
+  `strata_control/engine_component.py` (arch logic unchanged there; `engine-component.json` writes
+  `archs` as a list). The 0.1.48 engine packages are the same files in both releases. If upstream
+  ever publishes `0.2.3.1-rocm-gfx110x`, prefer it — a drop-in tag change.
+- **API behavior is unchanged from 0.2.2.** `max_tokens` `-1`/`0` still mean "no cap" (the
+  below-1-is-a-400 change was reverted before 0.2.3 shipped). The conversation cache is auto-sized
+  only when `--conversation-cache-mib` is absent (#3493); our explicit `mib`/`slots` are kept, and
+  the start log does not print the auto-size line.
+- **Vision:** the server and the reader now clamp image tokens by default (CPU reader 300, GPU
+  reader 1024) when `vision.max_tokens` is absent (#3690); our install records carry the reader
+  settings setup wrote. Verified in the 2026-10-23 smoke (640×360, answer "Red").
+- **hipBLASLt:** the packaged-table flow is unchanged (the engine also finds its own table when
+  `STRATA_HIPBLASLT_TUNING` is absent). The start log must still say `prefill gemm: hipBLASLt
+  tuning enabled (26 rows, gfx1100, version 100200)`.
+- **Rollback:** re-pin `0.2.2-rocm-gfx110x` (the image stays on the host). The 0.2.2 entrypoint
+  also drops an install record that names a missing component, so a rollback re-runs one setup pass
+  and re-records the 0.1.47 paths; the pack and MTP are compatible both ways. Keep the
+  `install/strata-iq3_s.json` and `config/strata/launch-presets/docker.json` backups made before
+  the first 0.2.3 start anyway.
+- **Deploy order:** pull and pin the image, confirm `deploy/strata/entrypoint-local.sh` is mode
+  755, make sure no Strata model is loaded, then let llama-swap's `-watch-config` reload (or
+  restart it). Start the vanilla lane first and watch its one-time setup pass; SC117 then re-runs
+  setup too and picks its own mmproj. The 0.2.2 image stays on the host for rollback.
+
+## Upgrading from 0.2.1 to 0.2.2 (historical, engine 0.1.47)
 
 - `/data` needs **no repack**: `iq_pack`, `pack_index`, `pack_layer`, `strata_pack`, `mtp_pack`,
   `mtp_rt` and the GGUF readers are unchanged between `v0.2.1.4` and `v0.2.2`. The existing pack
@@ -120,9 +160,9 @@ docker run -d --name strata-init --init --rm \
   -e MODEL=IQ3_S -e CONTEXT=256k -e GPUS=0,1 -e PARALLEL=1 \
   -e MODEL_PATH=/models/strata/ISTA-DASLab-Flash-Next \
   -e STRATA_HIPBLASLT_TABLE=on \
-  -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=768 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=4 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1" \
-  ghcr.io/niko1221/strata:0.2.2-rocm-gfx110x
-docker logs -f strata-init    # 0.2.2 re-runs setup once; the pack and MTP are reused
+  -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=768 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1" \
+  ghcr.io/niko1221/strata:0.2.3-rocm-gfx110x
+docker logs -f strata-init    # 0.2.3 re-runs setup once; the pack and MTP are reused
 ```
 
 This uses the same keyless entrypoint as the swap lanes, so an init run does not create an API key.
@@ -132,7 +172,7 @@ lane settings are also listed in [notes/strata.md](../../notes/strata.md).
 - `MODEL_PATH` takes a folder of GGUF files or one `.gguf` (`GGUF_DIR` still works as an alias).
   Nothing is downloaded for the model itself; the prepared pack and MTP layer are written under
   `/data` (`Strata-data/`).
-- **`KV=fp16` still breaks the install** (0.2.2's `setup.py` accepts only `int8|q4_0|k8v4`, while
+- **`KV=fp16` still breaks the install** (0.2.3's `setup.py` accepts only `int8|q4_0|k8v4`, while
   `strata launch` passes `--kv fp16` straight through → argparse error → exit 6 with no `[X]` line).
   Install with the default int8 and put **`kv=fp16` in `STRATA_SET`**: lowercase keys become engine
   flags (`--kv fp16` is appended after setup's own `--kv int8` is stripped). Do not set `KV=fp16`
@@ -143,11 +183,11 @@ lane settings are also listed in [notes/strata.md](../../notes/strata.md).
   single-request lane (the swap's `concurrencyLimit: 20` is only its queue depth).
 - **Session files are unavailable on this split lane, for a different reason than in 0.2.0.**
   `--slot-save-path` is a `strata serve` option, not an engine flag; passing it through `STRATA_SET`
-  sends it to the engine and fails with `unknown argument`. Engine 0.1.47 does implement
+  sends it to the engine and fails with `unknown argument`. Engine 0.1.48 does implement
   `SAVE`/`RESTORE`, but it refuses session files with a layer split
   (`session files do not support --layer-split`; also `--batch`, `--peer-device`). Our production
   pair is a split, so only parking (`--conversation-cache-*`) works. Do not pass the flag.
-- No `--memory` cap: 0.2.2 still plans from the host's RAM and the entrypoint warns when a cgroup cap
+- No `--memory` cap: 0.2.3 still plans from the host's RAM and the entrypoint warns when a cgroup cap
   is seen.
 - `--stop-timeout 120`: SIGTERM drains, unloads and frees the VRAM (`strata launch --stop`). Docker's
   default 10 s is too short for a big model.
@@ -175,7 +215,7 @@ docker run -it --rm \
   --group-add "$(getent group video | cut -d: -f3)" \
   --group-add "$(getent group render | cut -d: -f3)" \
   -v /mnt/unenc-xfs/strata/ISTA-DASLab-Flash-Next:/data -v /mnt/unenc-xfs/models:/models:z \
-  ghcr.io/niko1221/strata:0.2.2-rocm-gfx110x sh
+  ghcr.io/niko1221/strata:0.2.3-rocm-gfx110x sh
 ```
 
 Any command replaces the server start (`docker run … image strata launch --help`, `… image sh`).
@@ -196,21 +236,21 @@ and passed to `docker/build.sh --engine`. `docker exec strata-init strata status
 
 ### Local build (fallback)
 
-Only for a hotfix the official images do not carry yet (a same-day release like `v0.2.2`) or a
+Only for a hotfix the official images do not carry yet (a same-day release like `v0.2.3`) or a
 no-registry host:
 
 ```sh
-git -C <strata-checkout> worktree add /tmp/strata-v0.2.2 v0.2.2   # or a fresh clone
-tar -xzf strata-engine-0.1.47-linux-x86_64-hip-rx7900.tar.gz -C <empty-dir>
-/tmp/strata-v0.2.2/docker/build.sh --flavor hip \
-  --engine <empty-dir> --repo /tmp/strata-v0.2.2 \
-  --version 0.2.2 --tag strata:0.2.2-rocm-gfx110x-local
+git -C <strata-checkout> worktree add /tmp/strata-v0.2.3 v0.2.3   # v0.2.3.1 for the Control hotfix
+tar -xzf strata-engine-0.1.48-linux-x86_64-hip-rx7900.tar.gz -C <empty-dir>
+/tmp/strata-v0.2.3/docker/build.sh --flavor hip \
+  --engine <empty-dir> --repo /tmp/strata-v0.2.3 \
+  --version 0.2.3 --tag strata:0.2.3-rocm-gfx110x-local
 ```
 
 Needs network (base image + the terminal's pinned CPython 3.12 and hash-locked wheels). `--ctx-only`
 keeps the assembled context; `STRATA_DOCKER_BUILD_OPTS` adds docker-build options.
 
-Build from **`v0.2.1.1` or later** (0.2.2 is fine): the 0.2.1 tag's `package_terminal.py` calls
+Build from **`v0.2.1.1` or later** (0.2.3 is fine): the 0.2.1 tag's `package_terminal.py` calls
 `git` inside the terminal build stage, which has no git, so the image build fails. `v0.2.1.1`
 passes `STRATA_COMMIT` into the build. The old `docs/TERMINAL_LAUNCH.md` patch is no longer needed;
 0.2.1+ stages it in `docker/build.sh`.
@@ -232,7 +272,7 @@ Implementation record and current pins:
   template override is a file swap inside the pack).
 - **Gids, not names**: Docker resolves `--group-add` names against the image's `/etc/group` (no
   `render`, `video` is 44) — the macro passes the host numbers (39/105 on fedora-tuf).
-- **Keyless, on a Docker bridge.** Strata 0.2.2 makes the API key optional; upstream's entrypoint
+- **Keyless, on a Docker bridge.** Strata 0.2.3 still makes the API key optional; upstream's entrypoint
   still hardcodes `--access lan` (0.0.0.0). This lane runs on the default Docker bridge with
   [entrypoint-local.sh](entrypoint-local.sh), a fork of upstream's entrypoint that passes
   `--no-api-key` when no key is set and suppresses upstream's false "Strata made one" warning. Docker
@@ -248,7 +288,8 @@ Implementation record and current pins:
   keyless warning) and nothing else. The fork must exist in the fedora-tuf checkout before the first
   start (mode 755): a missing bind source is created by Docker as a root-owned directory and the
   container dies on `--entrypoint`.
-- **Preset/key state (2026-10-21).** 0.2.2's `--no-api-key` rewrites each lane's `docker` preset to
+- **Preset/key state (2026-10-21, carried over unchanged by 0.2.3).** 0.2.2's `--no-api-key`
+  rewrites each lane's `docker` preset to
   `"access": "lan"`, `"no_key": true`, `"api_key": null`; the private launch config gets
   `"api_key": "none"` (the server's "no key" sentinel), and no `/data/state/api-key` is written.
   The 0.2.1 hand edit (`"access": "local"`, `"api_key": null`, backup
@@ -272,11 +313,12 @@ Implementation record and current pins:
   **`qwen3.8-flash-next-sc117-iq3s`** landed 2026-10-21 as an exact copy of the vanilla block with
   only the SC117 `/data` mount and `MODEL_PATH` changed. The SC117 data tree
   `/mnt/unenc-xfs/strata/sc117-Flash-Next-uncensored/` has the built `packs/iq3_s`, a copied
-  `mtp/rt`, and an install record. 0.2.2's first start drops that record (it names the 0.1.46
-  vision reader) and re-runs setup; it selects the lane's own mmproj
+  `mtp/rt`, and an install record. 0.2.3's first start drops the 0.2.2 record (it names the 0.1.47
+  engine/vision paths) and re-runs setup once; it selects the lane's own mmproj
   (`907,542,944 B`, sha256 `2e788f8c…`), not the ISTA pin. Vision with this copy was verified with
-  a 640×360 image after deployment. Despite the unchanged GSQ-RCO layout the ISTA pack cannot be
-  reused (95 tensors changed type, 1,214/1,223 offsets moved). Details: `notes/strata.md`.
+  a 640×360 image after the 0.2.2 deployment; the 0.2.3 smoke repeated the check on the vanilla
+  lane. Despite the unchanged GSQ-RCO layout the ISTA pack cannot be reused (95 tensors changed
+  type, 1,214/1,223 offsets moved). Details: `notes/strata.md`.
   Parking knobs already ride in `STRATA_SET`; current per-lane settings are in `notes/strata.md`.
 
 ## The hipBLASLt tuning table (packaged since 0.2.1)
@@ -286,8 +328,9 @@ speed on the 7900 XTX); its solution ids are valid only for the hipBLASLt versio
 with. Since 0.2.1 the AMD engine package carries `tuning/gfx1100-hipblaslt-100200.txt` (listed and
 hashed in `engine-component.json`) and records `hipblaslt_version: 100200` in `BUILD.json`. The
 server resolves the table for the card at start (`serve/server.py` with
-`strata_control/hipblaslt_tuning.py`) and passes it to the engine; the engine still reads only
-`STRATA_HIPBLASLT_TUNING` and validates magic/arch/version itself.
+`strata_control/hipblaslt_tuning.py`) and passes it to the engine; the engine validates
+magic/arch/version itself and, since 0.2.3, also falls back to the table beside its own exe when
+`STRATA_HIPBLASLT_TUNING` is absent (`STRATA_HIPBLASLT_TABLE=off` still turns it off).
 
 - On gfx1100 the packaged table is **opt-in**: set `STRATA_HIPBLASLT_TABLE=on`. Without it the start
   logs `... is in this package and not used by default (faster prompts, but answers can differ in
