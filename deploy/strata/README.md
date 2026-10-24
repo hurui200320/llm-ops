@@ -191,9 +191,10 @@ assembled context; `STRATA_DOCKER_BUILD_OPTS` adds docker-build options.
 The host llama-swap ([deploy/llama-swap.config.yaml](../llama-swap.config.yaml)) starts this image
 with the macro **`docker-server-strata-rocm`** and the models appended at the end of `models:` —
 vanilla **`qwen3.8-flash-next-iq3s`**, SC117 **`qwen3.8-flash-next-sc117-iq3s`** and DeepSeek
-**`deepseek-v4.1-flash-2bpw`** (`${PORT}` is assigned in config order: 10007 / 10008 / 10009 — the
-three lane entries are 7th to 9th in `models:`). `CHAT_TEMPLATE_PATH` is per model entry, not in the
-macro (each lane names its own template). Implementation record and current pins:
+**`deepseek-v4.1-flash-2bpw`**. `${PORT}` is assigned in **model-ID order** (llama-swap sorts the
+IDs, not the file): the DeepSeek lane is 10001 and the two Qwen lanes are 10008/10009; those
+per-lane ports are internal to the proxy (clients use `:8080`). `CHAT_TEMPLATE_PATH` is per model
+entry, not in the macro (each lane names its own template). Implementation record and current pins:
 [notes/strata.md](../../notes/strata.md).
 
 - **No memory cap.** Upstream advises none and the entrypoint warns on `memory.max`; the engine
@@ -256,9 +257,10 @@ macro (each lane names its own template). Implementation record and current pins
 
 ## DeepSeek (dsv41) lane
 
-**`deepseek-v4.1-flash-2bpw`** (9th entry, port 10009) serves the IST-DASLab 2.00 bpw set of
-DeepSeek-V4.1-Flash on the image's `strata-dsv41` engine. Same container shape as the Qwen lanes
-(entrypoint fork, keyless bridge, `-t 120`, `/health`), with these differences:
+**`deepseek-v4.1-flash-2bpw`** (sorts first by model ID, so `${PORT}` = 10001; the two Qwen lanes are
+10008/10009) serves the IST-DASLab 2.00 bpw set of DeepSeek-V4.1-Flash on the image's `strata-dsv41`
+engine. Same container shape as the Qwen lanes (entrypoint fork, keyless bridge, `-t 120`,
+`/health`), with these differences:
 
 - **Engine discovery.** In this image the Terminal never finds the added binary on its own (setup
   looks in `engine-dsv41/` stores, and in a container `ROOT/engine` does not exist). Entrypoint fork
@@ -278,13 +280,14 @@ DeepSeek-V4.1-Flash on the image's `strata-dsv41` engine. Same container shape a
 - **First start** (`healthCheckTimeout: 1200`): setup runs outside llama-swap — a one-time SHA-256
   pass over the files (~257 GB), a 5.8 MB Unsloth metadata-shard download, the pack + hot-expert
   profile, and the 16-token smoke (the first gfx1100 run of the binary). Later starts take a few
-  minutes. Full record: [notes/strata.md](../../notes/strata.md).
+  minutes. Full record: [notes/strata.md](../../notes/strata.md); speed:
+  [notes/deepseek/v41f1017.md](../../notes/deepseek/v41f1017.md).
 
   The init run (stop the container when setup finishes; the lane reuses the prepared tree):
 
   ```sh
   docker run -d --name strata-init-ds --init --rm \
-    -p 127.0.0.1:10009:8080 \
+    -p 127.0.0.1:10109:8080 \
     --entrypoint /entry-local.sh \
     --device /dev/kfd --device /dev/dri \
     --group-add "$(getent group video | cut -d: -f3)" \
@@ -305,10 +308,10 @@ DeepSeek-V4.1-Flash on the image's `strata-dsv41` engine. Same container shape a
   docker logs -f strata-init-ds
   ```
 
-  The host port is 10009 (8080 belongs to llama-swap); inside the container the server uses
-  `PORT=8080` like the other manual runs. `--entrypoint /entry-local.sh` is the fork, which also
-  resolves `STRATA_DSV41_EXE` — a manual run through the upstream entrypoint would stop at the
-  engine check.
+  The host port is 10109 (8080 belongs to llama-swap, and 10001–10009 are the lanes' internal
+  ports); inside the container the server uses `PORT=8080` like the other manual runs.
+  `--entrypoint /entry-local.sh` is the fork, which also resolves `STRATA_DSV41_EXE` — a manual run
+  through the upstream entrypoint would stop at the engine check.
 
 ## Chat template override
 

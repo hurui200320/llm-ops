@@ -616,9 +616,13 @@ models:
   # (notes/strata.md).
   # Later starts take a few minutes (the CPU experts are read in first), hence the
   # 1200 s health timeout, larger than the Qwen lanes' 600.
+  # Port: llama-swap expands ${PORT} in model-ID order (sorted, not file order —
+  # measured 2026-10-25), so this ID sorts first: 10001. The two Qwen Strata lanes
+  # are 10008/10009; the per-lane ports are internal to the proxy (:8080 is the
+  # user-facing one).
   "deepseek-v4.1-flash-2bpw":
     name: "DeepSeek V4.1-Flash IST-DAS 2.00 bpw"
-    description: "262144 ctx, dsv41 engine over 2x7900XTX, 45 GB experts in VRAM, 40 GB RAM store"
+    description: "262144 ctx, fixed kv cache quant, no vision yet"
     cmd: |
       ${docker-server-strata-rocm}
         -v /mnt/unenc-xfs/strata/ISTA-DASLab-dsv41f1017:/data

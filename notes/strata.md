@@ -13,9 +13,9 @@ own `/data` tree (the DeepSeek lane pairs its two cards with `--tp 2` instead; s
 
 | llama-swap ID | Model | Port | Model folder | Data tree |
 | --- | --- | ---: | --- | --- |
-| `qwen3.8-flash-next-iq3s` | vanilla ISTA-DASLab IQ3_S | 10007 | `/mnt/unenc-xfs/models/strata/ISTA-DASLab-Flash-Next` | `/mnt/unenc-xfs/strata/ISTA-DASLab-Flash-Next` |
-| `qwen3.8-flash-next-sc117-iq3s` | SC117 abliterated IQ3_S | 10008 | `/mnt/unenc-xfs/models/strata/sc117-Flash-Next-uncensored` | `/mnt/unenc-xfs/strata/sc117-Flash-Next-uncensored` |
-| `deepseek-v4.1-flash-2bpw` | ISTA-DASLab DeepSeek-V4.1-Flash IQ2_XXS (2.00 bpw) | 10009 | `/mnt/unenc-xfs/models/strata/ISTA-DASLab-dsv41f1017` | `/mnt/unenc-xfs/strata/ISTA-DASLab-dsv41f1017` |
+| `qwen3.8-flash-next-iq3s` | vanilla ISTA-DASLab IQ3_S | 10008 | `/mnt/unenc-xfs/models/strata/ISTA-DASLab-Flash-Next` | `/mnt/unenc-xfs/strata/ISTA-DASLab-Flash-Next` |
+| `qwen3.8-flash-next-sc117-iq3s` | SC117 abliterated IQ3_S | 10009 | `/mnt/unenc-xfs/models/strata/sc117-Flash-Next-uncensored` | `/mnt/unenc-xfs/strata/sc117-Flash-Next-uncensored` |
+| `deepseek-v4.1-flash-2bpw` | ISTA-DASLab DeepSeek-V4.1-Flash IQ2_XXS (2.00 bpw) | 10001 | `/mnt/unenc-xfs/models/strata/ISTA-DASLab-dsv41f1017` | `/mnt/unenc-xfs/strata/ISTA-DASLab-dsv41f1017` |
 
 The two Qwen lanes use 262144-token context, F16 KV, `PARALLEL=1`, a 28 GiB locked resident
 budget, and the same layer split across the cards. All three containers are keyless on the default
@@ -164,7 +164,9 @@ next start puts the repo template in place (see the chat-template bullet).
 
 [`deploy/llama-swap.config.yaml`](../deploy/llama-swap.config.yaml) defines the shared macro
 **`docker-server-strata-rocm`** and appends the three models at the end of `models:` (`${PORT}` is
-assigned in config order, hence 10007/10008/10009). `CHAT_TEMPLATE_PATH` is per model entry, not in
+assigned in **model-ID order** — llama-swap sorts the IDs, not the file — so the DeepSeek lane is
+10001 and the two Qwen lanes moved to 10008/10009 when it was added; measured 2026-10-25). These
+ports are internal to the proxy; clients use `:8080`. `CHAT_TEMPLATE_PATH` is per model entry, not in
 the macro: each lane names its own template (the two Qwen lanes
 `/templates/qwen3.8/Flash-Next-chat-template.jinja`, the DeepSeek lane its own). Host llama-swap runs with `-watch-config`, so entry
 changes are picked up live; no environment variable is needed to load a lane.
@@ -276,10 +278,10 @@ supersedes `STRATA_SPLIT_OVERLAP` and is incompatible with engine batch slots, w
 
 ## DeepSeek-V4.1-Flash lane (dsv41)
 
-Added 2026-10-25; **the deploy and the first measurements are pending** (the lane entry and the
-entrypoint fork are in the repo; the host checkout must be updated, then the init run follows). It
-serves the IST-DASLab **2.00 bpw** set (IQ2_XXS) of DeepSeek-V4.1-Flash (1017B-parameter MoE, 40
-layers × 384 experts, top-6) on the image's own `strata-dsv41` engine.
+Deployed 2026-10-25 (init + lane running; deploy facts below, the measured speed curve is in
+[`notes/deepseek/v41f1017.md`](deepseek/v41f1017.md)). It serves the IST-DASLab **2.00 bpw** set
+(IQ2_XXS) of DeepSeek-V4.1-Flash (1017B-parameter MoE, 40 layers × 384 experts, top-6) on the
+image's own `strata-dsv41` engine.
 
 ### Model files and pins
 
@@ -371,11 +373,65 @@ lane"): the Qwen init with the DeepSeek values — `MODEL=IST-DAS-2.00bpw`, `FAM
 llama-swap start the lane. Later starts take a few minutes (the CPU lane's experts are read first),
 hence the lane's 1200 s health timeout.
 
-### Pending (next session)
+### Deploy record (2026-10-25)
 
-- Init run, smoke, and a declared tool call through llama-swap.
-- Warm/cold restart timing and RAM settling against the 40 GB store cap.
-- 60 %/85 % pp/tg with `bench/speed/run_longctx.py --model deepseek-v4.1-flash-2bpw --ctx 262144`
-  (first pass `--in-pcts 20,60,85 --reps 1`; the full default run is hours at these speeds).
-- Optional afterwards: `TUNE=quick` (dsv41's own tuner, 5–10 min) and `ssd-cache`/`dspark-block`
-  variations.
+The init (the README command) took about six minutes: the one-time SHA-256 pass over the ~258 GB at
+~0.7 GB/s, the 5.8 MB Unsloth metadata shard, the 14 MB pack
+(`Strata-data/packs/deepseek-v4.1-flash-ist-das-2.00bpw`), and the 16-token smoke — which passed,
+so the gfx110x `strata-dsv41` binary ran its **first kernels on the 7900 XTXs** without a fix.
+The lane then started through llama-swap with no setup pass.
+
+The engine log of the lane's start (`state/strata/launch/docker.engine.log`) records the actual
+placement:
+
+    engine started: .../strata-dsv41 --serve --pack ... --max-context 262144 --eos 1 --dspark auto
+                    --dspark-conf 0.65 --tp 2 --ssd-cache 40 --layer-split auto
+    ds4: tensor parallel 2 -> 1: the experts' 256-value blocks split n_ff 2304 no other way (each GPU its own layers)
+    ds4: DSpark not loaded: the routed experts (132 GB) are far more than the GPU holds (50 GB) ...
+    ds4: RAM store: up to 3893 slots of 10.3 MB (40.0 GB), policy 0, 8 reader threads, unbuffered reads
+    ds4: RAM store: 3637 of the profile's hottest experts read in (28.2 GB) in 4.7 s
+    ds4: CUDA0 layers [0, 20]: weights 2.96 GB, experts 18.74 GB (2256 of 8064 in VRAM), caches 0.24 GB, 586 MiB free
+    ds4: CUDA1 layers [21, 39] + head: weights 2.91 GB, experts 19.15 GB (2097 of 7296 in VRAM), caches 0.10 GB, 592 MiB free
+    ds4: 11007 routed experts on the CPU lane (94.9 GB, in place in the model's files), 16 threads
+
+- **Placement**: 4,353 of 15,360 experts (37.9 GB) in VRAM, 11,007 (94.9 GB) on the CPU lane. The
+  `--plan` predicted 5,202/45 GB; the engine balances its own layer blocks (0-20 / 21-39) with
+  per-card reserves and caches, hence the difference. `--tp 2` was demoted to a plain layer split:
+  the IQ2_XXS experts' 256-value blocks cannot be split across two cards. DSpark stays unloaded
+  (auto): its verify rounds read 3.3× a token's bytes for no gain at this expert-to-VRAM ratio.
+- **RAM**: the 40 GB store is pre-filled with 3,637 hot experts (28.2 GB) at load; at rest the box
+  shows ~39 GiB used and ~22–23 GiB available (including reclaimable page cache), so the dev-work
+  budget holds. `free` overstates the engine's cost because the Engram table and most CPU experts
+  are page cache.
+- **API through llama-swap**: `/health` 200; `/v1/models` shows `deepseek-v4.1-flash`, n_ctx
+  262144, text-only modalities; a declared tool call returns `get_weather{"city":"Paris"}`
+  (`finish_reason: tool_calls`, DSML translated server-side — note `/props` reports
+  `supports_tools: false` from the packed template's capabilities, so llama-swap uses the lane's
+  declared `tools: true`); `reasoning_effort: "none"` answers without thinking; `max_tokens: -1`
+  accepted; streaming SSE ends with `[DONE]`.
+- **Timing**: cold start through llama-swap 48.9 s (page cache warm from the init), warm restart
+  43.4 s, `docker stop` 1.8 s with VRAM back to 26/232 MiB. The fork's chat-template swap ran on
+  the lane's first start ("Chat template: replaced deepseek-v4.1-flash-ist-das-2.00bpw/
+  tokenizer/chat_template.jinja …").
+- **Cosmetics**: the setup plan prints a spurious "needs more disk space" warning (it compares
+  free space with the full 257 GB download even when all files are present; only the 5.8 MB shard
+  was fetched). The lane's first start also logs "The model already installed here is somewhere
+  else than the folder you gave" — a display quirk of the folder comparison for multi-file
+  families; it reuses the install record and does not re-run setup.
+- **Ports**: llama-swap expands `${PORT}` in model-ID order, not file order (measured: this ID
+  sorts first and got 10001; the Qwen lanes moved to 10008/10009). The per-lane ports are internal;
+  only `:8080` is user-facing.
+- **Qwen regression after the port move**: the vanilla Qwen lane was started through the swap on
+  the new port (10008), said "qwen IQ3_S is already installed with these choices" (no setup pass),
+  answered, and stopped in 6.8 s; the pack template already matched the repo copy (the fork's swap
+  is silent when equal).
+
+### Speed
+
+The measured curve (20 %/40 % reps, 60 %/85 % calibration prefills), the host RAM/VRAM envelope and
+the comparison with the Qwen lane are in [`notes/deepseek/v41f1017.md`](deepseek/v41f1017.md).
+
+### Pending
+
+- Optional: a full standard curve (60 %/85 % tg, out 10 %, reps 2) when hours are available, and
+  `TUNE=quick` (dsv41's own tuner, 5–10 min) plus `ssd-cache`/`dspark-block` variations.
