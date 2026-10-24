@@ -14,10 +14,9 @@ terminal differing only by the Windows long-path hotfix that landed after upstre
 
 **0.2.4 is the exception.** Upstream has published no 0.2.4 image yet, and no image of theirs can carry a DeepSeek
 engine on an RX 7900: the signed feed has `strata-dsv41` packages for cuda13 and hip-rx9070 only. We therefore build
-`ghcr.io/hurui200320/llm-ops-strata:0.2.4-rocm-gfx110x` with
-[`.github/workflows/strata-image.yml`](../../.github/workflows/strata-image.yml) — the signed 0.1.48 rx7900 package,
-upstream's own `docker/build.sh`, plus `strata-dsv41` compiled for gfx1100/gfx1101/gfx1102 beside the engine. See
-"Building the 0.2.4 image". The 0.2.3 pins and run recipes below are what fedora-tuf runs today.
+`ghcr.io/hurui200320/llm-ops-strata:0.2.4-rocm-gfx110x` ourselves with
+[`.github/workflows/strata-image.yml`](../../.github/workflows/strata-image.yml). See "Building the 0.2.4.x image".
+The 0.2.3 pins and run recipes below are what fedora-tuf runs today.
 
 ## Pins (image `0.2.3-rocm-gfx110x`)
 
@@ -144,53 +143,21 @@ on the pulled 0.2.0 image 2026-10-20; `strata bench run` is new in 0.2.1 and rec
 engine updates are new packages, or a local package built on the host with `packaging/build_hip_linux.sh`
 and passed to `docker/build.sh --engine`. `docker exec strata-init strata status` works from outside.
 
-## Building the 0.2.4 image (with the RX 7900 DeepSeek engine)
+## Building the 0.2.4.x image (with the RX 7900 DeepSeek engine)
 
-Workflow: **Actions → strata-image → Run workflow** (`.github/workflows/strata-image.yml`, manual only). Inputs:
-`strata_ref` and `engine_release` (default `v0.2.4`), `image_tag` (`0.2.4-rocm-gfx110x`), `therock_pin`
-(`7.10.0a20251120` — the ROCm line the released rx7900 package was built with; `docs/AMD_HIP.md` in the Strata tree
-records it), `hipblaslt_table_version` (`100200`), `include_dsv41`, and `push` (off = build and smoke-test only).
+Run **Actions → strata-image → Run workflow**. [`.github/workflows/strata-image.yml`](../../.github/workflows/strata-image.yml)
+is the source of truth: its header says why the image exists and what it changes against an upstream one, its `env:`
+block pins the Strata tag, the engine release, the TheRock ROCm line and the hipBLASLt table, and its steps are the
+build and its gates (signed fetch, package checks, the `strata-dsv41` build, the in-image smoke tests). The two
+remaining switches: `include_dsv41` (add the RX 7900 DeepSeek binary) and `push` (off builds and smoke-tests without
+publishing). The run summary carries the digests.
 
-What it does:
+A local build is those same steps run by hand (Docker + network, no GPU): upstream's `docker/fetch-engines.py`,
+[build-dsv41.sh](build-dsv41.sh) and `docker/build.sh`. Tags since **v0.2.4.1** also need the nested-`tools/` context
+fix the workflow applies; without it the Terminal stage stops at `installer tool missing: tools/dsv41/tune.py`.
 
-1. `strata/docker/fetch-engines.py --flavors rocm-gfx110x` — upstream's fetch: the feed's Ed25519 signature, the
-   archive's SHA-256, the manifest hash, the package signature and every file. The unpacked package is byte-identical
-   to the release one.
-2. Builds **`strata-dsv41` only** for `gfx1100;gfx1101;gfx1102` from the same Strata tag with
-   [build-dsv41.sh](build-dsv41.sh) (the flags of upstream's `packaging/build_hip_linux.sh` DSV41 block; TheRock
-   `gfx110X-dgpu` wheels; no GPU needed, every code object is ahead-of-time).
-3. Copies it **beside `strata`** in the package folder — exactly the shape upstream's rx9070 package ships (its build
-   sets `DSV41=1`). `setup.py`'s `dsv41_exe()` falls back to `<engine dir>/strata-dsv41`, so no environment variable is
-   involved. The manifest does not list the file and the terminal verifies every *listed* file, so the package still
-   passes its integrity check; `binary_deps.py` in the image build checks the new binary's imports, and the pre-flight
-   `ldd` in the workflow fails early if it needs a library the package does not bundle.
-4. `strata/docker/build.sh --flavor hip` builds the image; the Dockerfile re-verifies the package and resolves every
-   library. The smoke tests run `strata --version`, the component inventory (`--backend hip --full`: usable, no
-   problems) and `strata-dsv41 --version` inside the image, with no GPU.
-
-The image differs from an upstream 0.2.4 gfx110x image by exactly one file (`strata-dsv41`, our build). The engine
-package is the released, signed 0.1.48 one; the Terminal is built from `strata_ref`, as upstream's own publish does.
-The workflow summary carries the digests and the `entrypoint.sh` diff against
-[entrypoint-local.sh](entrypoint-local.sh) — re-apply the fork's three changes before the first start on a new tag.
-
-Manual build without CI (Docker + network; a local clone of `Niko1221/Strata`):
-
-```sh
-git -C <strata-checkout> worktree add /tmp/strata-v0.2.4 v0.2.4
-python3 /tmp/strata-v0.2.4/docker/fetch-engines.py --release-tag v0.2.4 --out pkgs --flavors rocm-gfx110x
-python3 -m venv /tmp/rocm-venv && . /tmp/rocm-venv/bin/activate
-pip install --index-url https://rocm.nightlies.amd.com/v2/gfx110X-dgpu/ "rocm[libraries,devel]==7.10.0a20251120"
-rocm-sdk init
-SRC=/tmp/strata-v0.2.4 LLAMA=<llama.cpp at third_party/ggml/VERSION.txt> \
-  HP=$(rocm-sdk path --root) LIBW=<site-packages>/_rocm_sdk_libraries_gfx110X_dgpu \
-  deploy/strata/build-dsv41.sh
-install -m 0755 build-dsv41/strata-dsv41 pkgs/0.1.48-linux-x86_64-hip-rx7900/
-/tmp/strata-v0.2.4/docker/build.sh --flavor hip --engine pkgs/0.1.48-linux-x86_64-hip-rx7900 \
-  --repo /tmp/strata-v0.2.4 --version 0.2.4 --tag strata:0.2.4-rocm-gfx110x-local
-```
-
-Upstream image builds still work when a plain upstream image is wanted (0.2.3 is fine; build from **`v0.2.1.1` or
-later**, because 0.2.1's `package_terminal.py` calls `git` inside the Terminal build stage, which has no git):
+A plain upstream image (no DeepSeek engine) still builds (0.2.3 is fine; build from **`v0.2.1.1` or later**, because
+0.2.1's `package_terminal.py` calls `git` inside the Terminal build stage, which has no git):
 
 ```sh
 git -C <strata-checkout> worktree add /tmp/strata-v0.2.3 v0.2.3

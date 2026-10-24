@@ -3,8 +3,8 @@ name: strata-image
 # Builds a Strata (AMD HIP, RDNA 3: gfx1100 / gfx1101 / gfx1102) image for the llm-ops lanes and pushes it to GHCR.
 #
 # Upstream builds these images from signed release engine packages with docker/build.sh (nothing is compiled), but
-# as of 0.2.4 it has published no image yet — and its gfx110x images will never carry a DeepSeek engine: the signed
-# feed has strata-dsv41 packages for cuda13 and hip-rx9070 only, so an RX 7900 can never self-install one. This
+# as of 0.2.4.2 it has published no 0.2.4.x image yet — and its gfx110x images will never carry a DeepSeek engine: the
+# signed feed has strata-dsv41 packages for cuda13 and hip-rx9070 only, so an RX 7900 can never self-install one. This
 # workflow therefore:
 #
 #   1. fetches the released qwen engine package through upstream's own docker/fetch-engines.py — the signed feed,
@@ -16,10 +16,20 @@ name: strata-image
 #   3. puts strata-dsv41 beside `strata` in that package folder — the shape upstream's rx9070 package ships (its
 #      build sets DSV41=1) — and builds the image with upstream's docker/build.sh.
 #
-# The result differs from an upstream 0.2.4-rocm-gfx110x image by exactly one added file (strata-dsv41, our build):
-# every other byte is the released package, and the Terminal is built from the requested tag, as upstream does.
-# The Dockerfile's verify stage re-checks the package (every listed file, binary_deps on every ELF, ldd in the image),
-# so a dsv41 binary that needs a library the package does not bundle stops the build instead of failing at run time.
+# The result differs from an upstream 0.2.4.2-rocm-gfx110x image by exactly one added file (strata-dsv41, our build):
+# every other byte is the released package, and the Terminal is built from the same tag, as upstream does. The
+# Dockerfile's verify stage re-checks the package (every listed file, binary_deps on every ELF, ldd in the image), so
+# a dsv41 binary that needs a library the package does not bundle stops the build instead of failing at run time.
+#
+# The upstream versions are PINNED in `env:` below, not workflow inputs: the image is bound to one Strata source tag,
+# one released engine package, one TheRock ROCm line and one hipBLASLt tuning table. build-dsv41.sh's flags and the
+# package gate are written against exactly that combination, so moving any of them is a reviewed code change.
+#
+# That tag needs one source fix that upstream has not made: since v0.2.4.1 package_terminal.py bundles the DeepSeek
+# scripts (INSTALLER_SCRIPTS, "tools/dsv41/*"), while docker/build.sh copies only `tools/*.py` into the Docker build
+# context — the Terminal stage died with "installer tool missing: tools/dsv41/tune.py" (upstream's own docker images
+# are broken the same way). The step before the image build widens that pathspec in the tag's checkout; it skips
+# itself when a later tag ships the fix and fails loudly if the line it knows is gone.
 #
 # Manual trigger only. See deploy/strata/README.md for the run recipe and deploy/strata/entrypoint-local.sh for the
 # entrypoint fork that must be re-diffed on every image bump.
@@ -27,31 +37,6 @@ name: strata-image
 on:
   workflow_dispatch:
     inputs:
-      strata_ref:
-        description: "Strata source tag: the Terminal, the Dockerfile and the dsv41 sources"
-        required: true
-        default: "v0.2.4.2"
-        type: string
-      engine_release:
-        description: "Release tag that carries the signed feed and the qwen engine packages"
-        required: true
-        default: "v0.2.4"
-        type: string
-      image_tag:
-        description: "Image tag (empty: <strata_ref without v>-rocm-gfx110x)"
-        required: false
-        default: "0.2.4.2-rocm-gfx110x"
-        type: string
-      therock_pin:
-        description: "TheRock ROCm wheels (gfx110X-dgpu index) of the ROCm line the released package was built with"
-        required: true
-        default: "7.10.0a20251120"
-        type: string
-      hipblaslt_table_version:
-        description: "hipBLASLt version the package's gfx1100 tuning table must match (BUILD.json hipblaslt_version)"
-        required: true
-        default: "100200"
-        type: string
       include_dsv41:
         description: "Build strata-dsv41 for gfx110x and put it beside the engine (DeepSeek on RX 7900)"
         required: true
@@ -63,9 +48,19 @@ on:
         default: true
         type: boolean
 
+# The upstream pins: a workflow input must not be able to pair a source tag with a package, ROCm line or tuning
+# table it was not built against. Move them here as one reviewed change (see the header and deploy/strata/README.md).
 env:
   IMAGE: ghcr.io/hurui200320/llm-ops-strata
   STRATA_REPO: Niko1221/Strata
+  # Terminal sources, the Dockerfile and the dsv41 sources (deploy/strata/build-dsv41.sh's flags are its tag's).
+  STRATA_REF: v0.2.4.2
+  # The release that carries the signed feed and the qwen engine packages (no 0.2.4.1/0.2.4.2 release exists).
+  ENGINE_RELEASE: v0.2.4
+  # TheRock ROCm wheels (gfx110X-dgpu index) of the ROCm line the released package was built with.
+  THEROCK_PIN: "7.10.0a20251120"
+  # hipBLASLt version the package's gfx1100 tuning table must match (BUILD.json hipblaslt_version).
+  HIPBLASLT_TABLE_VERSION: "100200"
   ROCM_INDEX: https://rocm.nightlies.amd.com/v2/gfx110X-dgpu/
 
 permissions:
@@ -87,31 +82,25 @@ jobs:
       - name: Check out this repository (the workflow and deploy/strata/build-dsv41.sh)
         uses: actions/checkout@v4
 
-      - name: Check out Strata at the requested tag
+      - name: Check out Strata at the pinned tag
         uses: actions/checkout@v4
         with:
           repository: ${{ env.STRATA_REPO }}
-          ref: ${{ inputs.strata_ref }}
+          ref: ${{ env.STRATA_REF }}
           path: strata
           fetch-depth: 1
           persist-credentials: false
 
       - name: Derive the image tag and record the commit
-        env:
-          IMAGE_TAG_INPUT: ${{ inputs.image_tag }}
-          STRATA_REF: ${{ inputs.strata_ref }}
         run: |
           set -euo pipefail
-          tag="${IMAGE_TAG_INPUT}"
-          if [ -z "$tag" ]; then tag="${STRATA_REF#v}-rocm-gfx110x"; fi
-          version="${tag%-rocm-gfx110x}"
-          if [ "$version" = "$tag" ]; then version="${STRATA_REF#v}"; fi
+          tag="${STRATA_REF#v}-rocm-gfx110x"
           {
             echo "IMAGE_TAG=$tag"
-            echo "IMAGE_VERSION=$version"
+            echo "IMAGE_VERSION=${STRATA_REF#v}"
             echo "STRATA_COMMIT=$(git -C strata rev-parse HEAD)"
           } >> "$GITHUB_ENV"
-          echo "image: $IMAGE:$tag (version label $version)"
+          echo "image: $IMAGE:$tag (version label ${STRATA_REF#v})"
 
       - name: Free disk space (the ROCm wheels, the build and the image need about 25 GB)
         run: |
@@ -129,8 +118,6 @@ jobs:
           ninja --version
 
       - name: Fetch the released qwen engine package (signed feed, every file verified)
-        env:
-          ENGINE_RELEASE: ${{ inputs.engine_release }}
         run: |
           set -euo pipefail
           python3 strata/docker/fetch-engines.py --release-tag "$ENGINE_RELEASE" \
@@ -145,7 +132,7 @@ jobs:
 
       - name: "Gate: the package is the release's rx7900 engine and its gfx1100 tuning table"
         env:
-          TABLE_VERSION: ${{ inputs.hipblaslt_table_version }}
+          TABLE_VERSION: ${{ env.HIPBLASLT_TABLE_VERSION }}
         run: |
           set -euo pipefail
           python3 - "$PKG_DIR" <<'PY'
@@ -188,7 +175,7 @@ jobs:
 
       - name: "Install the TheRock ROCm the released package was built with (gfx110X-dgpu wheels)"
         env:
-          THEROCK_PIN: ${{ inputs.therock_pin }}
+          THEROCK_PIN: ${{ env.THEROCK_PIN }}
         run: |
           set -euo pipefail
           python3 -m venv .rocm-venv
@@ -273,6 +260,29 @@ jobs:
             exit 1
           }
           echo "every library strata-dsv41 imports is in the package or belongs to the OS / GPU driver"
+
+      - name: "Patch docker/build.sh: the Terminal's nested tools/ modules must reach the build context (upstream gap since v0.2.4.1)"
+        run: |
+          set -euo pipefail
+          f=strata/docker/build.sh
+          # package_terminal.py bundles the DeepSeek scripts (INSTALLER_SCRIPTS = tools/dsv41/pack_gguf, smoke, tune) and
+          # add_installer()/local_imports() stop the build when one is not in the source tree it runs on. build.sh fills
+          # terminal-src/ with `git ls-files ... ':(glob)tools/*.py'`, which matches only the top-level modules, so the
+          # Dockerfile's terminal stage died with "installer tool missing: tools/dsv41/tune.py". Widen the pathspec for
+          # this checkout (the build context gains source files only; add_installer decides what enters the bundle).
+          if grep -q "':(glob)tools/\*\*/\*\.py'" "$f"; then
+            echo "docker/build.sh already includes the nested tools/ modules; nothing to patch"
+          elif grep -q "':(glob)tools/\*\.py'" "$f"; then
+            sed -i "s#':(glob)tools/\*\.py'#':(glob)tools/**/*.py'#" "$f"
+          else
+            echo "docker/build.sh no longer has the tools pathspec this patch knows; re-check the upstream source" >&2
+            exit 1
+          fi
+          git -C strata ls-files -- ':(glob)tools/**/*.py' | grep -qx 'tools/dsv41/tune.py' || {
+            echo "the tools pathspec does not see tools/dsv41/tune.py" >&2
+            exit 1
+          }
+          git -C strata diff -- docker/build.sh || true
 
       - name: Build the image from the engine package (nothing else is compiled)
         run: |
@@ -362,18 +372,15 @@ jobs:
       - name: Summary
         if: ${{ always() }}
         env:
-          STRATA_REF_INPUT: ${{ inputs.strata_ref }}
-          ENGINE_RELEASE_INPUT: ${{ inputs.engine_release }}
-          THEROCK_PIN_INPUT: ${{ inputs.therock_pin }}
           PUSHED: ${{ inputs.push }}
         run: |
           {
             echo "### Strata image"
             echo ""
             echo "- image: \`${IMAGE}:${IMAGE_TAG:-?}\` (version label \`${IMAGE_VERSION:-?}\`, pushed: ${PUSHED})"
-            echo "- Strata sources \`${STRATA_REF_INPUT}\` (${STRATA_COMMIT:-?})"
-            echo "- release \`${ENGINE_RELEASE_INPUT}\`: engine package ${PKG_VERSION:-?}, manifest sha256 \`${ENGINE_MANIFEST_SHA:-?}\`"
-            echo "- TheRock ROCm \`${THEROCK_PIN_INPUT}\`; llama.cpp \`${LLAMA_PIN:-not fetched}\`"
+            echo "- Strata sources \`${STRATA_REF}\` (${STRATA_COMMIT:-?})"
+            echo "- release \`${ENGINE_RELEASE}\`: engine package ${PKG_VERSION:-?}, manifest sha256 \`${ENGINE_MANIFEST_SHA:-?}\`"
+            echo "- TheRock ROCm \`${THEROCK_PIN}\`; llama.cpp \`${LLAMA_PIN:-not fetched}\`"
             if [ -n "${DSV41_VERSION:-}" ]; then
               echo "- strata-dsv41 (our gfx110x build): \`${DSV41_VERSION}\`, sha256 \`${DSV41_SHA256:-?}\`"
               echo "- image delta vs upstream: the released package + this one file beside \`strata\` (nothing else)"
