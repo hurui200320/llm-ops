@@ -1,0 +1,383 @@
+name: strata-image
+
+# Builds a Strata (AMD HIP, RDNA 3: gfx1100 / gfx1101 / gfx1102) image for the llm-ops lanes and pushes it to GHCR.
+#
+# Upstream builds these images from signed release engine packages with docker/build.sh (nothing is compiled), but
+# as of 0.2.4 it has published no image yet — and its gfx110x images will never carry a DeepSeek engine: the signed
+# feed has strata-dsv41 packages for cuda13 and hip-rx9070 only, so an RX 7900 can never self-install one. This
+# workflow therefore:
+#
+#   1. fetches the released qwen engine package through upstream's own docker/fetch-engines.py — the signed feed,
+#      the archive's SHA-256, the manifest hash, the package signature and every file are checked there — so the
+#      engine is byte-identical to what upstream puts in its own images;
+#   2. compiles ONLY strata-dsv41 for gfx1100/gfx1101/gfx1102 from the same Strata tag with the TheRock ROCm wheels
+#      the released package was built with (the setup.py pin for the gfx110X family; no GPU is needed, every code
+#      object is ahead-of-time). deploy/strata/build-dsv41.sh carries the flags;
+#   3. puts strata-dsv41 beside `strata` in that package folder — the shape upstream's rx9070 package ships (its
+#      build sets DSV41=1) — and builds the image with upstream's docker/build.sh.
+#
+# The result differs from an upstream 0.2.4-rocm-gfx110x image by exactly one added file (strata-dsv41, our build):
+# every other byte is the released package, and the Terminal is built from the requested tag, as upstream does.
+# The Dockerfile's verify stage re-checks the package (every listed file, binary_deps on every ELF, ldd in the image),
+# so a dsv41 binary that needs a library the package does not bundle stops the build instead of failing at run time.
+#
+# Manual trigger only. See deploy/strata/README.md for the run recipe and deploy/strata/entrypoint-local.sh for the
+# entrypoint fork that must be re-diffed on every image bump.
+
+on:
+  workflow_dispatch:
+    inputs:
+      strata_ref:
+        description: "Strata source tag: the Terminal, the Dockerfile and the dsv41 sources"
+        required: true
+        default: "v0.2.4"
+        type: string
+      engine_release:
+        description: "Release tag that carries the signed feed and the qwen engine packages"
+        required: true
+        default: "v0.2.4"
+        type: string
+      image_tag:
+        description: "Image tag (empty: <strata_ref without v>-rocm-gfx110x)"
+        required: false
+        default: "0.2.4-rocm-gfx110x"
+        type: string
+      therock_pin:
+        description: "TheRock ROCm wheels (gfx110X-dgpu index) of the ROCm line the released package was built with"
+        required: true
+        default: "7.10.0a20251120"
+        type: string
+      hipblaslt_table_version:
+        description: "hipBLASLt version the package's gfx1100 tuning table must match (BUILD.json hipblaslt_version)"
+        required: true
+        default: "100200"
+        type: string
+      include_dsv41:
+        description: "Build strata-dsv41 for gfx110x and put it beside the engine (DeepSeek on RX 7900)"
+        required: true
+        default: true
+        type: boolean
+      push:
+        description: "Push the image to GHCR (off: build and smoke-test only)"
+        required: true
+        default: true
+        type: boolean
+
+env:
+  IMAGE: ghcr.io/hurui200320/llm-ops-strata
+  STRATA_REPO: Niko1221/Strata
+  ROCM_INDEX: https://rocm.nightlies.amd.com/v2/gfx110X-dgpu/
+
+permissions:
+  contents: read
+
+concurrency:
+  group: strata-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and smoke-test the HIP image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out this repository (the workflow and deploy/strata/build-dsv41.sh)
+        uses: actions/checkout@v4
+
+      - name: Check out Strata at the requested tag
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.STRATA_REPO }}
+          ref: ${{ inputs.strata_ref }}
+          path: strata
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Derive the image tag and record the commit
+        env:
+          IMAGE_TAG_INPUT: ${{ inputs.image_tag }}
+          STRATA_REF: ${{ inputs.strata_ref }}
+        run: |
+          set -euo pipefail
+          tag="${IMAGE_TAG_INPUT}"
+          if [ -z "$tag" ]; then tag="${STRATA_REF#v}-rocm-gfx110x"; fi
+          version="${tag%-rocm-gfx110x}"
+          if [ "$version" = "$tag" ]; then version="${STRATA_REF#v}"; fi
+          {
+            echo "IMAGE_TAG=$tag"
+            echo "IMAGE_VERSION=$version"
+            echo "STRATA_COMMIT=$(git -C strata rev-parse HEAD)"
+          } >> "$GITHUB_ENV"
+          echo "image: $IMAGE:$tag (version label $version)"
+
+      - name: Free disk space (the ROCm wheels, the build and the image need about 25 GB)
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          docker system prune -af >/dev/null 2>&1 || true
+          df -h /
+
+      - name: Install the build tools (no ROCm from the host or apt)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build python3-venv
+          cmake --version | head -1
+          ninja --version
+
+      - name: Fetch the released qwen engine package (signed feed, every file verified)
+        env:
+          ENGINE_RELEASE: ${{ inputs.engine_release }}
+        run: |
+          set -euo pipefail
+          python3 strata/docker/fetch-engines.py --release-tag "$ENGINE_RELEASE" \
+            --flavors rocm-gfx110x --out pkgs > fetch.out
+          cat fetch.out
+          line="$(tail -1 fetch.out)"
+          flavor="$(printf '%s' "$line" | cut -f1)"
+          folder="$(printf '%s' "$line" | cut -f3)"
+          [ "$flavor" = "rocm-gfx110x" ] || { echo "unexpected fetch output: $line" >&2; exit 1; }
+          [ -f "$folder/engine-component.json" ] || { echo "no package folder in: $line" >&2; exit 1; }
+          echo "PKG_DIR=$PWD/$folder" >> "$GITHUB_ENV"
+
+      - name: "Gate: the package is the release's rx7900 engine and its gfx1100 tuning table"
+        env:
+          TABLE_VERSION: ${{ inputs.hipblaslt_table_version }}
+        run: |
+          set -euo pipefail
+          python3 - "$PKG_DIR" <<'PY'
+          import hashlib, json, os, pathlib, sys
+
+          pkg = pathlib.Path(sys.argv[1])
+          m = json.loads((pkg / "engine-component.json").read_text(encoding="utf-8"))
+          assert m.get("id") == "strata-engine", f"id {m.get('id')!r}"
+          assert m.get("platform") == "linux-x86_64", f"platform {m.get('platform')!r}"
+          assert m.get("backend") == "hip", f"backend {m.get('backend')!r}"
+          assert m.get("variant") == "rx7900", f"variant {m.get('variant')!r}"
+          archs = m.get("archs") or []
+          for want in ("gfx1100", "gfx1101", "gfx1102"):
+              assert want in archs, f"{want} is not in archs {archs}"
+          assert m.get("entrypoint") == "strata", f"entrypoint {m.get('entrypoint')!r}"
+          assert m.get("files"), "the manifest lists no files"
+
+          build = json.loads((pkg / "BUILD.json").read_text(encoding="utf-8"))
+          assert build.get("version") == m.get("version"), (
+              f"BUILD.json version {build.get('version')!r} != manifest version {m.get('version')!r}")
+          assert build.get("variant") == "rx7900", f"BUILD.json variant {build.get('variant')!r}"
+          want = int(os.environ["TABLE_VERSION"])
+          got = build.get("hipblaslt_version")
+          assert got == want, f"BUILD.json hipblaslt_version {got!r} != pinned {want}"
+
+          table = pkg / "tuning" / f"gfx1100-hipblaslt-{want}.txt"
+          assert table.is_file(), f"{table} is missing: this package would run plain hipBLAS"
+          entry = next((f for f in m["files"] if f.get("path") == f"tuning/{table.name}"), None)
+          assert entry is not None, f"tuning/{table.name} is not listed in engine-component.json"
+          digest = hashlib.sha256(table.read_bytes()).hexdigest()
+          assert digest == entry.get("sha256"), f"{table.name} sha256 {digest} != manifest {entry.get('sha256')}"
+          print(f"package OK: engine {m['version']} variant={m.get('variant')} archs={archs} files={len(m['files'])}")
+          print(f"tuning/{table.name} sha256={digest}")
+          PY
+          version="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["version"])' "$PKG_DIR/engine-component.json")"
+          {
+            echo "PKG_VERSION=$version"
+            echo "ENGINE_MANIFEST_SHA=$(sha256sum "$PKG_DIR/engine-component.json" | cut -d' ' -f1)"
+          } >> "$GITHUB_ENV"
+
+      - name: "Install the TheRock ROCm the released package was built with (gfx110X-dgpu wheels)"
+        env:
+          THEROCK_PIN: ${{ inputs.therock_pin }}
+        run: |
+          set -euo pipefail
+          python3 -m venv .rocm-venv
+          # shellcheck disable=SC1091
+          . .rocm-venv/bin/activate
+          pip install --quiet --disable-pip-version-check --no-cache-dir \
+            --index-url "$ROCM_INDEX" "rocm[libraries,devel]==${THEROCK_PIN}"
+          # the 7.10 wheels expand the devel contents lazily (setup.py only asks for the root); init is newer
+          rocm-sdk init >/dev/null 2>&1 || true
+          sp="$(python3 -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+          hp="$(rocm-sdk path --root)"
+          if [ ! -x "$hp/llvm/bin/clang++" ]; then hp="$sp/_rocm_sdk_devel"; fi
+          libw="$(ls -d "$sp"/_rocm_sdk_libraries_* 2>/dev/null | grep -i 'gfx110x' | head -1 || true)"
+          [ -n "$libw" ] || libw="$(ls -d "$sp"/_rocm_sdk_libraries_* 2>/dev/null | head -1 || true)"
+          [ -x "$hp/llvm/bin/clang++" ] || { echo "no clang++ under $hp" >&2; exit 1; }
+          [ -n "$libw" ] && [ -d "$libw/lib" ] || { echo "no family libraries under $sp" >&2; exit 1; }
+          libpath="$libw/lib:$hp/lib"
+          core="$sp/_rocm_sdk_core/lib"
+          [ -d "$core" ] && libpath="$libpath:$core"
+          {
+            echo "HP=$hp"
+            echo "LIBW=$libw"
+            echo "LD_LIBRARY_PATH=$libpath"
+          } >> "$GITHUB_ENV"
+          echo "ROCm devel: $hp"
+          echo "ROCm libraries: $libw"
+          echo "LD_LIBRARY_PATH: $libpath"
+
+      - name: Fetch llama.cpp at the commit Strata pins (third_party/ggml/VERSION.txt)
+        run: |
+          set -euo pipefail
+          pin="$(awk 'NR == 1 { print $1 }' strata/third_party/ggml/VERSION.txt)"
+          [ -n "$pin" ] || { echo "no pinned llama.cpp commit in third_party/ggml/VERSION.txt" >&2; exit 1; }
+          git init -q llama.cpp
+          git -C llama.cpp remote add origin https://github.com/ggml-org/llama.cpp.git
+          # GitHub serves one commit by SHA; a full fetch is the fallback for a server that refuses that
+          if git -C llama.cpp fetch -q --depth 1 origin "$pin"; then
+            git -C llama.cpp checkout -q FETCH_HEAD
+          else
+            git -C llama.cpp fetch -q origin
+            git -C llama.cpp checkout -q "$pin"
+          fi
+          {
+            echo "LLAMA=$PWD/llama.cpp"
+            echo "LLAMA_PIN=$pin"
+          } >> "$GITHUB_ENV"
+          echo "llama.cpp $pin"
+
+      - name: "Build strata-dsv41 for gfx1100/gfx1101/gfx1102 (no GPU needed)"
+        if: ${{ inputs.include_dsv41 }}
+        timeout-minutes: 180
+        env:
+          SRC: ${{ github.workspace }}/strata
+          OUT: ${{ github.workspace }}/dsv41-build
+        run: |
+          set -euo pipefail
+          deploy/strata/build-dsv41.sh
+          "$HP/llvm/bin/llvm-objdump" --offloading dsv41-build/strata-dsv41 | tee offloading.txt
+          for arch in gfx1100 gfx1101 gfx1102; do
+            grep -q "$arch" offloading.txt || { echo "no $arch code object in strata-dsv41" >&2; exit 1; }
+          done
+          version="$(dsv41-build/strata-dsv41 --version | head -1)"
+          {
+            echo "DSV41_VERSION=$version"
+            echo "DSV41_SHA256=$(sha256sum dsv41-build/strata-dsv41 | cut -d' ' -f1)"
+          } >> "$GITHUB_ENV"
+          echo "strata-dsv41: $version"
+
+      - name: Put strata-dsv41 beside the engine (the shape of upstream's rx9070 package)
+        if: ${{ inputs.include_dsv41 }}
+        run: |
+          set -euo pipefail
+          install -m 0755 dsv41-build/strata-dsv41 "$PKG_DIR/strata-dsv41"
+          sha256sum "$PKG_DIR/strata-dsv41"
+          # The released manifest does not list this file (by design): the terminal verifies every LISTED file and
+          # accepts a binary beside the engine — that is how upstream's DSV41=1 packages ship it (setup.py chmods it,
+          # dsv41_exe() falls back to <engine dir>/strata-dsv41). binary_deps.py in the image build checks its imports.
+          missing="$(LD_LIBRARY_PATH="$PKG_DIR" ldd "$PKG_DIR/strata-dsv41" | grep 'not found' || true)"
+          [ -z "$missing" ] || {
+            echo "strata-dsv41 needs libraries the package does not bundle:" >&2
+            echo "$missing" >&2
+            exit 1
+          }
+          echo "every library strata-dsv41 imports is in the package or belongs to the OS / GPU driver"
+
+      - name: Build the image from the engine package (nothing else is compiled)
+        run: |
+          set -euo pipefail
+          strata/docker/build.sh --flavor hip --engine "$PKG_DIR" --repo strata \
+            --version "$IMAGE_VERSION" --tag "$IMAGE:$IMAGE_TAG"
+          docker image inspect "$IMAGE:$IMAGE_TAG" --format 'built {{.RepoTags}} {{.Size}} bytes'
+
+      - name: In-image smoke test (Terminal, component inventory)
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint /opt/strata/terminal/bin/strata "$IMAGE:$IMAGE_TAG" --version
+          mkdir -p smoke-data
+          set +e
+          # --backend hip: the runner has no GPU to detect; naming the backend makes the package resolve through the
+          # platform gate, the signature policy and the entrypoint hash, exactly as it does on a gfx1100 host.
+          # --full hashes every file of the package (its manifest), not only the entrypoint.
+          docker run --rm -v "$PWD/smoke-data:/data" --entrypoint /opt/strata/terminal/bin/strata \
+            "$IMAGE:$IMAGE_TAG" components engine --backend hip --full --output json > engine-list.json
+          rc=$?
+          set -e
+          echo "strata components engine exit code: $rc (0 = the package resolved for the HIP backend)"
+          python3 - "$rc" engine-list.json "$PKG_VERSION" <<'PY'
+          import json, sys
+
+          rc, path, version = sys.argv[1], sys.argv[2], sys.argv[3]
+          data = json.load(open(path, encoding="utf-8"))
+          installed = [f"{i.get('version')} {i.get('platform')}-{i.get('backend')}" for i in data.get("installed") or []]
+          print("component inventory:", installed)
+          assert any(i.get("version") == version for i in data.get("installed") or []), (
+              f"engine {version} is not in the inventory")
+          problems = [str(p) for p in (data.get("problems") or [])]
+          assert not problems, f"the component folder reports problems: {problems}"
+          assert data.get("usable") is True, (
+              f"the engine did not resolve for the HIP backend (exit code {rc}): {data.get('notice')!r}")
+          assert data.get("engine", {}).get("version") == version, (
+              f"the resolved engine says {data.get('engine')!r}, not {version}")
+          print("component inventory OK")
+          PY
+
+      - name: In-image smoke test (strata-dsv41 loads and reports itself)
+        if: ${{ inputs.include_dsv41 }}
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint /bin/sh "$IMAGE:$IMAGE_TAG" -c '
+            set -e
+            found=""
+            for d in /opt/strata/components/engine/*/; do
+              if [ -x "$d/strata-dsv41" ]; then
+                "$d/strata-dsv41" --version
+                found=1
+              fi
+            done
+            [ -n "$found" ] || { echo "no strata-dsv41 in the image" >&2; exit 1; }
+          '
+
+      - name: Record the entrypoint fork drift (re-apply the fork on every image bump)
+        if: ${{ always() }}
+        run: |
+          {
+            echo "### entrypoint fork"
+            echo ""
+            echo "deploy/strata/entrypoint-local.sh is upstream's /opt/strata/entrypoint.sh plus three changes"
+            echo "(--no-api-key when no key is set, no false \"made one\" warning, the pack chat-template swap)."
+            echo "The diff below is expected to be non-empty; if upstream changed anything beyond those three,"
+            echo "re-apply the fork before the first start."
+            echo '```diff'
+            diff -u strata/docker/entrypoint.sh deploy/strata/entrypoint-local.sh | head -200 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Log in to GHCR
+        if: ${{ inputs.push }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push the image
+        if: ${{ inputs.push }}
+        run: |
+          set -euo pipefail
+          docker push "$IMAGE:$IMAGE_TAG"
+          docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$IMAGE_TAG"
+
+      - name: Summary
+        if: ${{ always() }}
+        env:
+          STRATA_REF_INPUT: ${{ inputs.strata_ref }}
+          ENGINE_RELEASE_INPUT: ${{ inputs.engine_release }}
+          THEROCK_PIN_INPUT: ${{ inputs.therock_pin }}
+          PUSHED: ${{ inputs.push }}
+        run: |
+          {
+            echo "### Strata image"
+            echo ""
+            echo "- image: \`${IMAGE}:${IMAGE_TAG:-?}\` (version label \`${IMAGE_VERSION:-?}\`, pushed: ${PUSHED})"
+            echo "- Strata sources \`${STRATA_REF_INPUT}\` (${STRATA_COMMIT:-?})"
+            echo "- release \`${ENGINE_RELEASE_INPUT}\`: engine package ${PKG_VERSION:-?}, manifest sha256 \`${ENGINE_MANIFEST_SHA:-?}\`"
+            echo "- TheRock ROCm \`${THEROCK_PIN_INPUT}\`; llama.cpp \`${LLAMA_PIN:-not fetched}\`"
+            if [ -n "${DSV41_VERSION:-}" ]; then
+              echo "- strata-dsv41 (our gfx110x build): \`${DSV41_VERSION}\`, sha256 \`${DSV41_SHA256:-?}\`"
+              echo "- image delta vs upstream: the released package + this one file beside \`strata\` (nothing else)"
+            else
+              echo "- strata-dsv41: not included"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

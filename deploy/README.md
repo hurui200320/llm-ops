@@ -14,8 +14,9 @@ Running on fedora-tuf, which has two AMD 7900XTX.
 + `/mnt/unenc-xfs/models`: copy the archive/LLM content from NAS
 + `/mnt/unenc-xfs/llm-ops`: git clone of this repo
 
-The Strata deployment (second backend, upstream image `ghcr.io/niko1221/strata`) is documented in
-[strata/README.md](strata/README.md).
+The Strata deployment (second backend; the lanes run upstream's `ghcr.io/niko1221/strata:0.2.3-rocm-gfx110x`, and
+[.github/workflows/strata-image.yml](../.github/workflows/strata-image.yml) builds a 0.2.4 image with a DeepSeek engine
+for the RX 7900 pair) is documented in [strata/README.md](strata/README.md).
 
 To download llama-swap (download to /mnt/unenc-xfs/llama-swap):
 
