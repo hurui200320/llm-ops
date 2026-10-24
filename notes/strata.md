@@ -1,9 +1,11 @@
 # Strata on fedora-tuf
 
 Strata (upstream [`Niko1221/Strata`](https://github.com/Niko1221/Strata)) serves Qwen3.8 Flash-Next
-(125B-class MoE, IQ3_S GGUF) on the 2× RX 7900 XTX pair. It runs from upstream's official image,
-Docker-only, behind the host llama-swap; the host needs only the `amdgpu` kernel driver — no ROCm,
-no compiler.
+(125B-class MoE, IQ3_S GGUF) on the 2× RX 7900 XTX pair. It runs Docker-only from
+[our pinned build](../deploy/strata/README.md) of upstream's 0.2.4.2 Terminal around the
+signed-feed 0.1.48 engine package (upstream has published no 0.2.4.x image), behind the host
+llama-swap; the host needs only the `amdgpu` kernel driver — no ROCm, no compiler. The image adds
+one file these lanes never invoke: the gfx110x `strata-dsv41` (DeepSeek) build.
 
 Two lanes share the pair through a llama.cpp-style layer split, each in its own container and its
 own `/data` tree:
@@ -17,26 +19,28 @@ Both use 262144-token context, F16 KV, `PARALLEL=1`, a 28 GiB locked resident bu
 layer split across the cards. The containers are keyless on the default Docker bridge with only
 `127.0.0.1:${PORT}` published; clients and the browser UI reach them through llama-swap on `:8080`.
 
-Both lanes serve through llama-swap (one loaded at a time) on image 0.2.3 (engine 0.1.48),
-deployed 2026-10-23 (commit `cae796b`); the lane tuning is from 2026-10-22 and carried over
-unchanged. 0.2.3 spot-check (vanilla, through llama-swap): 60 % pp/tg 2077/66.0, 85 % 2132/63.3
-(0.2.2: 2017/67.4 and 2174/66.5 — within noise). The full runbook is
-[`deploy/strata/README.md`](../deploy/strata/README.md); speed and quality measurements are in
-[`notes/qwen3.8/Flash-Next.md`](qwen3.8/Flash-Next.md).
+Both lanes serve through llama-swap (one loaded at a time) on image 0.2.4.2 (Terminal 0.2.4.2 /
+Control 0.1.49.2, engine 0.1.48), switched from 0.2.3 on 2026-10-24; the lane tuning is from
+2026-10-22 and carried over unchanged. 0.2.4.2 spot-check: to be recorded by the deploy smoke
+(0.2.3 reference, vanilla, through llama-swap: 60 % pp/tg 2077/66.0, 85 % 2132/63.3). The full
+runbook is [`deploy/strata/README.md`](../deploy/strata/README.md); speed and quality measurements
+are in [`notes/qwen3.8/Flash-Next.md`](qwen3.8/Flash-Next.md).
 
 ## Pins
 
 | What | Value |
 | --- | --- |
-| Image | `ghcr.io/niko1221/strata:0.2.3-rocm-gfx110x`, digest `sha256:4dd91b54cdf64870b837d00fb031c9b0531d6ea6a9b6fdf72d506912d3029109`, 1,847,098,151 B |
-| Terminal | tag `v0.2.3`, commit `5c8dd322528cc84f68f461ad54a506b9da8fa8d4`; `strata 0.2.3 (build 0.1.48; python 3.12.15)` |
-| Engine | `strata-engine-0.1.48-linux-x86_64-hip-rx7900`, 242,858,823 B, sha256 `13bcf38c…`, manifest `build_id 6f8800aefe27+rocm`, variant `rx7900`, 581 files (`engine-component.json` sha256 `59a2ac74…`, byte-identical to the image) |
-| hipBLASLt table | packaged `tuning/gfx1100-hipblaslt-100200.txt`, sha256 `1bb8cd2e…`, version `100200` (unchanged from 0.2.2, verified 2026-10-23) |
+| Image | `ghcr.io/hurui200320/llm-ops-strata:0.2.4.2-rocm-gfx110x`, digest `sha256:c67827ee283e5e90be31e6c01925727256a26e76aa5b6ee15f57762fa29cf3bc`, 1,466,884,951 B (`docker inspect .Size`); public GHCR package (no login) |
+| Terminal | tag `v0.2.4.2`, commit `dfa3f4025c9f1bc4af8cee201b20a2d223061813`; `strata 0.2.4.2 (build 0.1.49.2; python 3.12.15)` |
+| Engine | `strata-engine-0.1.48-linux-x86_64-hip-rx7900` from the `v0.2.4` release's signed feed (the 0.2.3 file re-attached), 242,858,823 B, asset sha256 `13bcf38c…`, manifest `build_id 6f8800aefe27+rocm`, variant `rx7900`, 580 listed files (582 on disk = 580 + `engine-component.json` + our `strata-dsv41`); `engine-component.json` sha256 `59a2ac74…` and `BUILD.json` `7108976a…`, byte-identical to 0.2.3 |
+| `strata-dsv41` | our gfx110x build from the same `v0.2.4.2` tag, `strata-dsv41 0.1.49.2 build dfa3f4025`, sha256 `53af2567…`; beside `strata` in the engine folder, not in the manifest by design; unused by these lanes |
+| hipBLASLt table | packaged `tuning/gfx1100-hipblaslt-100200.txt`, sha256 `1bb8cd2e…`, version `100200` (unchanged from 0.2.2/0.2.3, verified 2026-10-24) |
 
-The image is upstream's published package (public, no login). We do not build or patch images
-locally; a new upstream image is deployed as a new pin. The engine folder inside the image is
-`/opt/strata/components/engine/0.1.48-linux-x86_64-hip-rx7900` (upstream drops the
-`strata-engine-` prefix); reference it as `component:strata-engine`, never by path.
+The image is our own build of upstream's Terminal (`strata-image.yml`, run 40100350366): the
+released engine package plus the one `strata-dsv41` file, so every other byte is upstream's
+(public GHCR package, no login). The 0.2.3 image stays pulled for rollback. The engine folder
+inside the image is `/opt/strata/components/engine/0.1.48-linux-x86_64-hip-rx7900` (upstream drops
+the `strata-engine-` prefix); reference it as `component:strata-engine`, never by path.
 
 ## Host and data layout
 
@@ -112,7 +116,7 @@ docker run -d --name strata-init --init --rm \
   -e MODEL=IQ3_S -e CONTEXT=256k -e GPUS=0,1 -e PARALLEL=1 \
   -e MODEL_PATH=/models/strata/ISTA-DASLab-Flash-Next \
   -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=768 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1" \
-  ghcr.io/niko1221/strata:0.2.3-rocm-gfx110x
+  ghcr.io/hurui200320/llm-ops-strata:0.2.4.2-rocm-gfx110x
 docker logs -f strata-init
 ```
 
@@ -127,12 +131,13 @@ next start puts the repo template in place (see the chat-template bullet).
   launch by **`kv=fp16` in `STRATA_SET`**, which replaces the installed `--kv int8` in the engine
   argv. Do not pass `KV=fp16` — `strata launch` forwards it to setup, which exits 6, and
   `desc_matches()` repeats the failure on every start.
-- 0.2.3's first start drops the 0.2.2 install record (it names the 0.1.47 engine/vision paths),
-  re-runs setup once and reuses the existing pack and MTP. No repack and no engine/mmproj
-  download. Both lanes go through this; the SC117 setup selects its own mmproj from the model
-  folder. A warm first start took ~40 s in the 2026-10-23 smoke (≈30 s of it the model load);
-  the same smoke verified chat, a declared-tool call, `max_tokens:-1` and 640×360 vision, and a
-  warm second start needed no setup pass (stop 2.4 s, exit 0, VRAM freed).
+- 0.2.4.2 keeps 0.2.3's install record (same 0.1.48 engine/vision paths and settings), so its
+  first start is expected to go straight to serving: no setup pass, no repack, no download.
+  (0.2.3's first start dropped the 0.2.2 record, re-ran setup once and reused the existing pack
+  and MTP; a warm first start took ~40 s in the 2026-10-23 smoke, ≈30 s of it the model load.
+  The same smoke verified chat, a declared-tool call, `max_tokens:-1` and 640×360 vision, and a
+  warm second start needed no setup pass: stop 2.4 s, exit 0, VRAM freed.) The deploy smoke
+  records 0.2.4.2's result.
 - Chat template: Strata has no `--chat-template-file` flag. Setup extracts the template at pack time
   into `<pack>/tokenizer/chat_template.jinja`, the server reads it per start, and an override is a
   file swap in the pack (it survives re-installs). Both lanes therefore run the repo's
@@ -200,15 +205,17 @@ supersedes `STRATA_SPLIT_OVERLAP` and is incompatible with engine batch slots, w
   frees VRAM via `strata launch --stop`; `docker stop -t 120` is sized for that.
 - **Upgrades**: pull and pin the new image, back up `install/strata-iq3_s.json` and
   `config/strata/launch-presets/docker.json`, make sure no Strata model is loaded, re-diff the
-  entrypoint fork, then let llama-swap reload or start the vanilla lane first. The 0.2.2→0.2.3
-  pack and MTP are compatible without a repack.
-- **0.2.3.1 is a Control-only hotfix and has no docker image (as of 2026-10-23).** The 0.2.3 image
-  bundles Control 0.1.48; 0.2.3.1's Control 0.1.48.1 fixes `BUILD.json` archs parsing on the
-  Windows NVIDIA package (#3810) and an AMD engine-recognition check on the Windows HIP path. The
-  container runs setup with `STRATA_CONTROL_INSTALL=1` and resolves the engine through
-  `strata_control/engine_component.py`, so neither fix is on this lane's path, and the 0.1.48
-  engine packages are identical in both releases. If upstream publishes `0.2.3.1-rocm-gfx110x`,
-  prefer it — a drop-in tag change.
+  entrypoint fork, then let llama-swap reload or start the vanilla lane first. 0.2.3→0.2.4.2
+  keeps the engine bytes, pack, MTP and install record: no repack and no setup pass expected.
+- **The 0.2.4.x line is Terminal/Control only (the app stays 0.2.3) and has no upstream docker
+  image as of 2026-10-24.** 0.2.4/0.2.4.1/0.2.4.2 add DeepSeek V4.1-Flash on a separate
+  `strata-dsv41` engine (Control 0.1.49/0.1.49.1/0.1.49.2) and change nothing on these lanes'
+  serve/launch/entrypoint path: everything new is gated on `arch`/`family` `deepseek41`, and the
+  Qwen engine packages are the 0.2.3 files, byte for byte. 0.2.4.1 fixes a missing-bundle bug in
+  the 0.2.4 Terminal (DeepSeek setup only); 0.2.4.2 is the tag our image is built from.
+  Upstream's docker workflow is manual and has not run since 0.2.3, and its gfx110x images will
+  never carry a DeepSeek engine (the feed ships `strata-dsv41` for cuda13 and hip-rx9070 only),
+  hence our own image — see Pins and [`deploy/strata/README.md`](../deploy/strata/README.md).
 - **Vision token cap (0.2.3).** The server and the reader clamp image tokens by default when
   `vision.max_tokens` is absent (CPU reader 300, GPU reader 1024; #3690). The lane's install record
   carries the reader settings setup wrote; the 2026-10-23 smoke verified a 640×360 picture.

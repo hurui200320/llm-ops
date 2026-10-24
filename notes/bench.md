@@ -3,6 +3,7 @@
 Date: 2026 Sep 20
 llama.cpp (docker): `version: 0.4.1-dev (build 11096, commit c550d2f60)`
 Strata docker: `ghcr.io/niko1221/strata:0.2.3-rocm-gfx110x`
+Strata docker (current, from 2026-10-24): `ghcr.io/hurui200320/llm-ops-strata:0.2.4.2-rocm-gfx110x` (same 0.1.48 engine bytes)
 
 ## Synbad
 
