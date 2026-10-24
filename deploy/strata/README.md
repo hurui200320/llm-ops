@@ -20,7 +20,7 @@ packages for cuda13 and hip-rx9070 only. See "Building the 0.2.4.x image" and th
 
 | What | Value |
 | --- | --- |
-| Image | `ghcr.io/hurui200320/llm-ops-strata:0.2.4.2-rocm-gfx110x`, digest `sha256:c67827ee283e5e90be31e6c01925727256a26e76aa5b6ee15f57762fa29cf3bc` (pulled 2026-10-24, CI run 40100350366), `1,466,884,951 B` by `docker inspect .Size`, `amd64/linux`, version label `0.2.4.2`; public package, pulls need no login |
+| Image | `ghcr.io/hurui200320/llm-ops-strata:0.2.4.2-rocm-gfx110x`, digest `sha256:c67827ee283e5e90be31e6c01925727256a26e76aa5b6ee15f57762fa29cf3bc` (pulled 2026-10-24, CI run 40100350366), `1,889,591,459 B` on fedora-tuf by `docker inspect .Size` (the dev box reports 1,466,884,951 B for the same digest), `amd64/linux`, version label `0.2.4.2`; public package, pulls need no login |
 | Terminal | upstream tag `v0.2.4.2`, commit `dfa3f4025c9f1bc4af8cee201b20a2d223061813`; `strata --version` = `strata 0.2.4.2 (build 0.1.49.2; python 3.12.15 at /opt/strata/terminal/python/bin/python3)`; image entrypoint sha256 `7c74cfd3…` (byte-identical to the `v0.2.3` and `v0.2.2` checkouts — the fork's base) |
 | Engine package | `strata-engine-0.1.48-linux-x86_64-hip-rx7900` from the `v0.2.4` release (the `v0.2.3` file re-attached: 242,858,823 bytes, asset sha256 `13bcf38c3ebef5261e7a99c6ce67b66a16e2c6a518586d7e96672c0f72178cfa`), manifest `build_id 6f8800aefe27+rocm`, variant `rx7900` — **byte-identical** to the package in the 0.2.3 image: `engine-component.json` sha256 `59a2ac74297b1714314cd30c93008aae4f661e9311b1cd654443e9111b81259b`, `BUILD.json` sha256 `7108976aa906243c2dfaf9d69d0645741cbc11df30a38e377e70ecf6cad564a2`. 580 files listed in the manifest; 582 on disk = 580 + `engine-component.json` + our `strata-dsv41` |
 | `strata-dsv41` (added file) | our gfx1100/1101/1102 build from the same `v0.2.4.2` tag (TheRock `7.10.0a20251120`; llama.cpp `3cf03257f219afbe7334045ff7c6a06ac68c627d`), placed beside `strata` in the engine folder — the shape of upstream's DSV41=1 rx9070 package. `strata-dsv41 0.1.49.2 build dfa3f4025`, sha256 `53af25677999b847fd7c1e99d72beb54c85955e588301a1b734087430992e9aa`; **not listed in `engine-component.json` by design** (the Terminal accepts binaries beside the engine and the image build `ldd`-checks it). The Qwen lanes never invoke it |
@@ -30,11 +30,14 @@ packages for cuda13 and hip-rx9070 only. See "Building the 0.2.4.x image" and th
 The image was verified in CI (run 40100350366, which also smoke-tests it in-image) and locally on 2026-10-24 against
 the pushed digest: Terminal and component inventory (`strata components engine --backend hip --full` → usable, no
 problems, every listed file hashed), `strata-dsv41 --version`, and the entrypoint fork diff (upstream base
-byte-identical to `v0.2.3`; exactly the three fork changes, nothing else). Runtime verification on fedora-tuf is
-recorded in [notes/strata.md](../../notes/strata.md).
+byte-identical to `v0.2.3`; exactly the three fork changes, nothing else). Runtime verification on fedora-tuf followed
+the same day: no setup pass on either lane (`Strata-data/` stayed at 50 files; `mtp/tensors/verified.json` not
+re-stamped), the full keyless smoke passed on both lanes (chat, `get_weather` tool call, `max_tokens:-1`, 640×360
+vision, `:npt`), the engine landmarks matched 0.2.3, `docker stop -t 120` took 3.8 s, and pp/tg stayed within noise.
+Details: [notes/strata.md](../../notes/strata.md).
 
-0.2.4.2 keeps the 0.2.3 engine, pack, MTP and install record, so its first start is expected to go
-straight to serving — no setup pass, no repack. For reference, the 0.2.3 first start was verified
+0.2.4.2 kept the 0.2.3 engine, pack, MTP and install record: both lanes went straight to serving on
+2026-10-24 — no setup pass, no repack. For reference, the 0.2.3 first start was verified
 on fedora-tuf (2026-10-23) on a reflinked throwaway copy of the vanilla data tree: the entrypoint
 drops the 0.2.2 install record (it names the 0.1.47 `strata-vision-hip`),
 setup re-runs once with **no repack** (50 files in `Strata-data/` before and after; only

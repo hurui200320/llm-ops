@@ -232,3 +232,33 @@ gfx1151-only). Treat the tg delta as run-to-run noise unless it repeats.
 SC117 swapped in cleanly through llama-swap (~50 s cold, own mmproj), answered a chat, a
 `get_weather` tool call and a 640×360 picture ("Blue"); its engine argv shows engine 0.1.48, the
 same split/knobs and hipBLASLt tuning.
+
+
+# 20261024 0.2.4.2 upgrade spot-check (engine 0.1.48, own image)
+
+Same runner and lane settings as the 20261023 spot-check (`bench/speed/run_longctx.py --ctx
+262144 --out-pct 1 --in-pcts 60,85`, 2 reps), through llama-swap, on our own build
+`ghcr.io/hurui200320/llm-ops-strata:0.2.4.2-rocm-gfx110x` (Terminal 0.2.4.2 / Control 0.1.49.2;
+the engine is the signed-feed 0.1.48 rx7900 package, byte-identical to 0.2.3, plus our gfx110x
+`strata-dsv41` file which these lanes never invoke). Unlike 0.2.3, the first start kept the
+install record: no setup pass, `Strata-data/` stayed at 50 files and `mtp/tensors/verified.json`
+was not re-stamped.
+
+Vanilla lane (`qwen3.8-flash-next-iq3s`):
+
+| Level | 0.2.4.2 pp / tg | accept | 0.2.3 pp / tg | accept |
+|---|---|---|---|---|
+| 60 % (157K) | 2100.5 / 64.05 | 0.654 | 2077.3 / 65.95 | 0.654 |
+| 85 % (223K) | 2172.4 / 64.00 | 0.673 | 2132.5 / 63.30 | 0.670 |
+
+Latency: 60 % 116.7 / 114.2 s; 85 % 143.3 / 142.4 s. Rep peaks: 60 % pp 2136 / tg 64.4; 85 %
+pp 2175 / tg 64.2. `cache_n` 0 on every rep (cold prefill).
+
+Verdict: pp +1.1 %/+1.9 % and tg −2.9 %/+1.1 % against 0.2.3 — within noise. The engine bytes,
+hipBLASLt table and lane settings are unchanged, so any difference is run-to-run; no action.
+
+Both lanes served through llama-swap on 2026-10-24: keyless chat, `get_weather{"city":"Paris"}`,
+`max_tokens:-1`, 640×360 vision ("Red") and the `:npt` alias all answered; SC117 swapped in with
+its own mmproj; engine landmarks matched 0.2.3 (22.37 GiB resident, lend 3591, 31.3 GiB GPU
+caches, 0.0 GiB file tier, `prefill gemm: hipBLASLt tuning enabled (26 rows, gfx1100, version
+100200)`). `docker stop -t 120` took 3.8 s with the VRAM freed.

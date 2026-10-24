@@ -481,8 +481,9 @@ models:
   #   around the same signed-feed 0.1.48 engine package — manifest, BUILD.json
   #   and hipBLASLt table byte-identical to 0.2.3 — plus strata-dsv41 beside
   #   the engine (never invoked by this lane). The install record still names
-  #   the same engine paths, so the first start should go straight to serving
-  #   (no setup pass, no repack). Deploy smoke and spot-check: notes/strata.md.
+  #   the same engine paths, so the first start goes straight to serving
+  #   (no setup pass, no repack, verified 2026-10-24). Deploy smoke and
+  #   spot-check: notes/strata.md.
   "qwen3.8-flash-next-iq3s":
     name: "Qwen3.8 Flash-Next IQ3_S"
     description: "262144 ctx, F16 KV, Strata layer split over 2x7900XTX, fully resident @28 GiB"

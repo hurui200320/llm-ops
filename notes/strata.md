@@ -20,17 +20,17 @@ layer split across the cards. The containers are keyless on the default Docker b
 `127.0.0.1:${PORT}` published; clients and the browser UI reach them through llama-swap on `:8080`.
 
 Both lanes serve through llama-swap (one loaded at a time) on image 0.2.4.2 (Terminal 0.2.4.2 /
-Control 0.1.49.2, engine 0.1.48), switched from 0.2.3 on 2026-10-24; the lane tuning is from
-2026-10-22 and carried over unchanged. 0.2.4.2 spot-check: to be recorded by the deploy smoke
-(0.2.3 reference, vanilla, through llama-swap: 60 % pp/tg 2077/66.0, 85 % 2132/63.3). The full
-runbook is [`deploy/strata/README.md`](../deploy/strata/README.md); speed and quality measurements
-are in [`notes/qwen3.8/Flash-Next.md`](qwen3.8/Flash-Next.md).
+Control 0.1.49.2, engine 0.1.48), switched from 0.2.3 on 2026-10-24 (commit `4c3106e`); the lane
+tuning is from 2026-10-22 and carried over unchanged. 0.2.4.2 spot-check (vanilla, through
+llama-swap): 60 % pp/tg 2100.5/64.05, 85 % 2172.4/64.00 (0.2.3: 2077.3/65.95 and 2132.5/63.30 —
+within noise). The full runbook is [`deploy/strata/README.md`](../deploy/strata/README.md); speed
+and quality measurements are in [`notes/qwen3.8/Flash-Next.md`](qwen3.8/Flash-Next.md).
 
 ## Pins
 
 | What | Value |
 | --- | --- |
-| Image | `ghcr.io/hurui200320/llm-ops-strata:0.2.4.2-rocm-gfx110x`, digest `sha256:c67827ee283e5e90be31e6c01925727256a26e76aa5b6ee15f57762fa29cf3bc`, 1,466,884,951 B (`docker inspect .Size`); public GHCR package (no login) |
+| Image | `ghcr.io/hurui200320/llm-ops-strata:0.2.4.2-rocm-gfx110x`, digest `sha256:c67827ee283e5e90be31e6c01925727256a26e76aa5b6ee15f57762fa29cf3bc`, 1,889,591,459 B on fedora-tuf (`docker inspect .Size`; the dev box reports 1,466,884,951 B for the same digest — storage driver); public GHCR package (no login) |
 | Terminal | tag `v0.2.4.2`, commit `dfa3f4025c9f1bc4af8cee201b20a2d223061813`; `strata 0.2.4.2 (build 0.1.49.2; python 3.12.15)` |
 | Engine | `strata-engine-0.1.48-linux-x86_64-hip-rx7900` from the `v0.2.4` release's signed feed (the 0.2.3 file re-attached), 242,858,823 B, asset sha256 `13bcf38c…`, manifest `build_id 6f8800aefe27+rocm`, variant `rx7900`, 580 listed files (582 on disk = 580 + `engine-component.json` + our `strata-dsv41`); `engine-component.json` sha256 `59a2ac74…` and `BUILD.json` `7108976a…`, byte-identical to 0.2.3 |
 | `strata-dsv41` | our gfx110x build from the same `v0.2.4.2` tag, `strata-dsv41 0.1.49.2 build dfa3f4025`, sha256 `53af2567…`; beside `strata` in the engine folder, not in the manifest by design; unused by these lanes |
@@ -136,8 +136,10 @@ next start puts the repo template in place (see the chat-template bullet).
   (0.2.3's first start dropped the 0.2.2 record, re-ran setup once and reused the existing pack
   and MTP; a warm first start took ~40 s in the 2026-10-23 smoke, ≈30 s of it the model load.
   The same smoke verified chat, a declared-tool call, `max_tokens:-1` and 640×360 vision, and a
-  warm second start needed no setup pass: stop 2.4 s, exit 0, VRAM freed.) The deploy smoke
-  records 0.2.4.2's result.
+  warm second start needed no setup pass: stop 2.4 s, exit 0, VRAM freed.) The 2026-10-24 deploy
+  confirmed it: no setup pass (`Strata-data/` stayed at 50 files and `mtp/tensors/verified.json`
+  was not re-stamped), both lanes green through llama-swap, `docker stop -t 120` 3.8 s with the
+  VRAM freed.
 - Chat template: Strata has no `--chat-template-file` flag. Setup extracts the template at pack time
   into `<pack>/tokenizer/chat_template.jinja`, the server reads it per start, and an override is a
   file swap in the pack (it survives re-installs). Both lanes therefore run the repo's
