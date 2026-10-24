@@ -18,7 +18,17 @@
 #      the pack and the server reads it per start, so a file swap is the only
 #      override. This keeps the repo's templates/ checkout the source of truth;
 #      an upstream Qwen template update needs no GGUF re-download or repack.
-# The script below is upstream v0.2.4.2 apart from the three changes above and the
+#   4. Export STRATA_DSV41_EXE for the DeepSeek engine when it is unset: our image
+#      carries the gfx110x strata-dsv41 build BESIDE `strata` inside the engine
+#      package folder (/opt/strata/components/engine/<package>/), the shape an
+#      upstream DSV41=1 rx9070 package has. That shape is auto-found only by a
+#      desktop install (ROOT/engine is the package folder there); in this image
+#      ROOT/engine does not exist and engine-dsv41/ is a data-tree store, so
+#      setup's dsv41_exe() and the launch's dsv41_engine_found() find nothing
+#      (verified in-image 2026-10-25). Both honour STRATA_DSV41_EXE, so resolve
+#      it from the installed package; an explicit -e still wins. Inert for the
+#      Flash-Next lanes (every dsv41 path is gated on arch/family deepseek41).
+# The script below is upstream v0.2.4.2 apart from the four changes above and the
 # comment updates that describe them. A key given through API_KEY / API_KEY_FILE
 # still wins and is used exactly as upstream.
 #
@@ -29,9 +39,9 @@
 #
 # Maintenance: on every image bump, extract the new entrypoint from the image
 #   docker run --rm --entrypoint /bin/sh IMAGE -c 'cat /opt/strata/entrypoint.sh'
-# and diff it against this file; re-apply the three changes above (the key
-# conditional, the final warning, and the pack chat-template swap) and nothing
-# else.
+# and diff it against this file; re-apply the four changes above (the key
+# conditional, the final warning, the pack chat-template swap, and the
+# STRATA_DSV41_EXE export) and nothing else.
 #
 # Upstream text follows.
 #
@@ -75,6 +85,18 @@ say()  { printf '%s\n' "$*"; }
 warn() { printf '[!] %s\n' "$*" >&2; }
 die()  { printf '[X] %s\n' "$*" >&2; exit "${2:-1}"; }
 phase() { printf '%s\n' "$1" > "$PHASE_FILE" 2>/dev/null || true; }
+
+# ---- DeepSeek's engine (fork change 4). Our image is the only gfx110x source of
+# strata-dsv41, placed beside `strata` in the engine package folder; the Terminal
+# never looks there in a container (see the header). Both setup.py's dsv41_exe()
+# and the launch's dsv41_engine_found() honour STRATA_DSV41_EXE, so resolve it
+# from the installed package when no one set it (an explicit -e still wins, and a
+# package without strata-dsv41 leaves it unset for the feed path).
+if [ -z "${STRATA_DSV41_EXE:-}" ]; then
+  for dsv41 in /opt/strata/components/engine/*/strata-dsv41; do
+    [ -x "$dsv41" ] && { export STRATA_DSV41_EXE="$dsv41"; break; }
+  done
+fi
 
 # ---- other commands: `docker run image strata ...`, `docker run image sh`
 if [ "$#" -gt 0 ] && [ "$1" != "run" ] && [ "$1" != "serve" ]; then

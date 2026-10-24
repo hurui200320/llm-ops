@@ -5,26 +5,31 @@ Strata (upstream [`Niko1221/Strata`](https://github.com/Niko1221/Strata)) serves
 [our pinned build](../deploy/strata/README.md) of upstream's 0.2.4.2 Terminal around the
 signed-feed 0.1.48 engine package (upstream has published no 0.2.4.x image), behind the host
 llama-swap; the host needs only the `amdgpu` kernel driver — no ROCm, no compiler. The image adds
-one file these lanes never invoke: the gfx110x `strata-dsv41` (DeepSeek) build.
+one file the two Qwen lanes never invoke but the DeepSeek lane runs: the gfx110x `strata-dsv41`
+build (DeepSeek V4.1-Flash; never executed on gfx1100 hardware before this deploy).
 
-Two lanes share the pair through a llama.cpp-style layer split, each in its own container and its
-own `/data` tree:
+Three lanes share the pair through a llama.cpp-style layer split, each in its own container and its
+own `/data` tree (the DeepSeek lane pairs its two cards with `--tp 2` instead; see its section):
 
 | llama-swap ID | Model | Port | Model folder | Data tree |
 | --- | --- | ---: | --- | --- |
 | `qwen3.8-flash-next-iq3s` | vanilla ISTA-DASLab IQ3_S | 10007 | `/mnt/unenc-xfs/models/strata/ISTA-DASLab-Flash-Next` | `/mnt/unenc-xfs/strata/ISTA-DASLab-Flash-Next` |
 | `qwen3.8-flash-next-sc117-iq3s` | SC117 abliterated IQ3_S | 10008 | `/mnt/unenc-xfs/models/strata/sc117-Flash-Next-uncensored` | `/mnt/unenc-xfs/strata/sc117-Flash-Next-uncensored` |
+| `deepseek-v4.1-flash-2bpw` | ISTA-DASLab DeepSeek-V4.1-Flash IQ2_XXS (2.00 bpw) | 10009 | `/mnt/unenc-xfs/models/strata/ISTA-DASLab-dsv41f1017` | `/mnt/unenc-xfs/strata/ISTA-DASLab-dsv41f1017` |
 
-Both use 262144-token context, F16 KV, `PARALLEL=1`, a 28 GiB locked resident budget, and the same
-layer split across the cards. The containers are keyless on the default Docker bridge with only
-`127.0.0.1:${PORT}` published; clients and the browser UI reach them through llama-swap on `:8080`.
+The two Qwen lanes use 262144-token context, F16 KV, `PARALLEL=1`, a 28 GiB locked resident
+budget, and the same layer split across the cards. All three containers are keyless on the default
+Docker bridge with only `127.0.0.1:${PORT}` published; clients and the browser UI reach them
+through llama-swap on `:8080`.
 
-Both lanes serve through llama-swap (one loaded at a time) on image 0.2.4.2 (Terminal 0.2.4.2 /
-Control 0.1.49.2, engine 0.1.48), switched from 0.2.3 on 2026-10-24 (commit `4c3106e`); the lane
-tuning is from 2026-10-22 and carried over unchanged. 0.2.4.2 spot-check (vanilla, through
+The two Qwen lanes serve through llama-swap (one loaded at a time) on image 0.2.4.2 (Terminal
+0.2.4.2 / Control 0.1.49.2, engine 0.1.48), switched from 0.2.3 on 2026-10-24 (commit `4c3106e`);
+the lane tuning is from 2026-10-22 and carried over unchanged. 0.2.4.2 spot-check (vanilla, through
 llama-swap): 60 % pp/tg 2100.5/64.05, 85 % 2172.4/64.00 (0.2.3: 2077.3/65.95 and 2132.5/63.30 —
 within noise). The full runbook is [`deploy/strata/README.md`](../deploy/strata/README.md); speed
-and quality measurements are in [`notes/qwen3.8/Flash-Next.md`](qwen3.8/Flash-Next.md).
+and quality measurements are in [`notes/qwen3.8/Flash-Next.md`](qwen3.8/Flash-Next.md). The
+DeepSeek lane was added to the config on 2026-10-25; its deploy and first measurements are recorded
+in "DeepSeek-V4.1-Flash lane (dsv41)" below.
 
 ## Pins
 
@@ -33,7 +38,7 @@ and quality measurements are in [`notes/qwen3.8/Flash-Next.md`](qwen3.8/Flash-Ne
 | Image | `ghcr.io/hurui200320/llm-ops-strata:0.2.4.2-rocm-gfx110x`, digest `sha256:c67827ee283e5e90be31e6c01925727256a26e76aa5b6ee15f57762fa29cf3bc`, 1,889,591,459 B on fedora-tuf (`docker inspect .Size`; the dev box reports 1,466,884,951 B for the same digest — storage driver); public GHCR package (no login) |
 | Terminal | tag `v0.2.4.2`, commit `dfa3f4025c9f1bc4af8cee201b20a2d223061813`; `strata 0.2.4.2 (build 0.1.49.2; python 3.12.15)` |
 | Engine | `strata-engine-0.1.48-linux-x86_64-hip-rx7900` from the `v0.2.4` release's signed feed (the 0.2.3 file re-attached), 242,858,823 B, asset sha256 `13bcf38c…`, manifest `build_id 6f8800aefe27+rocm`, variant `rx7900`, 580 listed files (582 on disk = 580 + `engine-component.json` + our `strata-dsv41`); `engine-component.json` sha256 `59a2ac74…` and `BUILD.json` `7108976a…`, byte-identical to 0.2.3 |
-| `strata-dsv41` | our gfx110x build from the same `v0.2.4.2` tag, `strata-dsv41 0.1.49.2 build dfa3f4025`, sha256 `53af2567…`; beside `strata` in the engine folder, not in the manifest by design; unused by these lanes |
+| `strata-dsv41` | our gfx110x build from the same `v0.2.4.2` tag, `strata-dsv41 0.1.49.2 build dfa3f4025`, sha256 `53af2567…`; beside `strata` in the engine folder, not in the manifest by design; **the DeepSeek lane runs it** via `STRATA_DSV41_EXE` (entrypoint fork change 4, verified in-image 2026-10-25); never executed on gfx1100 hardware before that lane's deploy |
 | hipBLASLt table | packaged `tuning/gfx1100-hipblaslt-100200.txt`, sha256 `1bb8cd2e…`, version `100200` (unchanged from 0.2.2/0.2.3, verified 2026-10-24) |
 
 The image is our own build of upstream's Terminal (`strata-image.yml`, run 40100350366): the
@@ -68,6 +73,12 @@ container cap, is the memory control.
     sc117-Flash-Next-uncensored/     SC117 data tree, 7.9 GB
       Strata-data/packs/iq3_s/       built from SC117 shard 1
       Strata-data/mtp/rt/            copy of the vanilla 6.5 GB MTP
+      install/, state/, config/, home/, slots/
+    ISTA-DASLab-dsv41f1017/          DeepSeek data tree (created 2026-10-25)
+      Strata-data/packs/deepseek-v4.1-flash-ist-das-2.00bpw/
+                                     pack + expert-profile.bin after the first setup
+      Strata-data/models/deepseek-v4.1-flash-shared/
+                                     the 5.8 MB Unsloth metadata shard (--engram-meta)
       install/, state/, config/, home/, slots/
   llm-ops/                           host checkout of this repo
     deploy/llama-swap.config.yaml
@@ -142,7 +153,7 @@ next start puts the repo template in place (see the chat-template bullet).
   VRAM freed.
 - Chat template: Strata has no `--chat-template-file` flag. Setup extracts the template at pack time
   into `<pack>/tokenizer/chat_template.jinja`, the server reads it per start, and an override is a
-  file swap in the pack (it survives re-installs). Both lanes therefore run the repo's
+  file swap in the pack (it survives re-installs). The two Qwen lanes therefore run the repo's
   `templates/qwen3.8/Flash-Next-chat-template.jinja`: the entrypoint fork copies it over every pack's
   copy before `strata launch` whenever `CHAT_TEMPLATE_PATH` is set (the macro mounts the repo
   `templates/` at `/templates:ro` and sets it to `/templates/qwen3.8/Flash-Next-chat-template.jinja`).
@@ -152,8 +163,10 @@ next start puts the repo template in place (see the chat-template bullet).
 ## llama-swap wiring
 
 [`deploy/llama-swap.config.yaml`](../deploy/llama-swap.config.yaml) defines the shared macro
-**`docker-server-strata-rocm`** and appends the two models at the end of `models:` (`${PORT}` is
-assigned in config order, hence 10007/10008). Host llama-swap runs with `-watch-config`, so entry
+**`docker-server-strata-rocm`** and appends the three models at the end of `models:` (`${PORT}` is
+assigned in config order, hence 10007/10008/10009). `CHAT_TEMPLATE_PATH` is per model entry, not in
+the macro: each lane names its own template (the two Qwen lanes
+`/templates/qwen3.8/Flash-Next-chat-template.jinja`, the DeepSeek lane its own). Host llama-swap runs with `-watch-config`, so entry
 changes are picked up live; no environment variable is needed to load a lane.
 
 - Container shape: `--name ${MODEL_ID} --init --rm`, `-p 127.0.0.1:${PORT}:${PORT}`,
@@ -162,24 +175,28 @@ changes are picked up live; no environment variable is needed to load a lane.
   --security-opt seccomp=unconfined`, `--ulimit memlock=-1:-1 --shm-size 2g
   --stop-timeout 120`.
 - Env: `PORT`, `STRATA_HIPBLASLT_TABLE=on`, `MODEL=IQ3_S`, `CONTEXT=256k`, `GPUS=0,1`,
-  `PARALLEL=1`, `MODEL_PATH`, and the lane's `STRATA_SET`. `PRESET` is unset.
+  `PARALLEL=1`, `MODEL_PATH`, `CHAT_TEMPLATE_PATH` (the Qwen template), and the lane's
+  `STRATA_SET`. `PRESET` is unset.
 - Mounts: the entrypoint fork read-only at `/entry-local.sh`, `/mnt/unenc-xfs/models:/models:z`,
-  the repo's `templates/` at `/templates:ro` (Strata never reads it; the fork copies
-  `qwen3.8/Flash-Next-chat-template.jinja` out of it), and the lane's data tree at `/data`. No named
-  volumes, no `--memory` cap, no `--network host`.
+  the repo's `templates/` at `/templates:ro` (Strata never reads it; the fork copies the lane's
+  `CHAT_TEMPLATE_PATH` out of it), and the lane's data tree at `/data`. No named volumes, no
+  `--memory` cap, no `--network host`.
 - Per-model knobs: `cmdStop: docker stop -t 120 ${MODEL_ID}`; `checkEndpoint: /health`;
   `healthCheckTimeout: 600` (cold start 1–3 min, about 30 s warm, and it bounds the graceful stop);
   `concurrencyLimit: 20` (llama-swap queue depth; the engine still has one slot).
   `capabilities` is declared rather than probed because Strata's `/v1/models` omits `owned_by`.
   The `:npt` alias uses `chat_template_kwargs.preserve_thinking: false`.
-- Fork: `deploy/strata/entrypoint-local.sh` is upstream's entrypoint plus three changes — pass
-  `--no-api-key` when no key is set, suppress upstream's false "Strata made one" warning, and replace
-  each pack's `tokenizer/chat_template.jinja` with `CHAT_TEMPLATE_PATH` when it is set. `launch`
-  stores no key, so llama-swap keeps `apiKeys: []`; the LAN reaches Strata only through
-  the swap, and `/upstream/<model>/` UIs work. Re-diff the fork on every image bump; a missing bind
-  source becomes a root-owned directory and kills the container.
+- Fork: `deploy/strata/entrypoint-local.sh` is upstream's entrypoint plus four changes — pass
+  `--no-api-key` when no key is set, suppress upstream's false "Strata made one" warning, replace
+  each pack's `tokenizer/chat_template.jinja` with `CHAT_TEMPLATE_PATH` when it is set, and export
+  `STRATA_DSV41_EXE` from `/opt/strata/components/engine/*/strata-dsv41` when unset (the DeepSeek
+  engine, which this image's Terminal never finds on its own; see the DeepSeek section). `launch`
+  stores no key, so llama-swap keeps `apiKeys: []`; the LAN reaches Strata only through the swap,
+  and `/upstream/<model>/` UIs work. Re-diff the fork on every image bump; a missing bind source
+  becomes a root-owned directory and kills the container.
 
-Current `STRATA_SET` (identical on both lanes):
+Current `STRATA_SET` (identical on the two Qwen lanes; the DeepSeek lane passes only
+`ssd-cache=40` — see its section):
 
 ```
 kv=fp16
@@ -244,7 +261,7 @@ supersedes `STRATA_SPLIT_OVERLAP` and is incompatible with engine batch slots, w
   newline). Verify with
   `printf '%s  %s\n' "$(cat f.gguf.sha256)" f.gguf | sha256sum -c -`. Setup pins no hashes for
   the ISTA files; the sidecar pass is the integrity gate.
-- **Chat template**: both lanes run the repo's `templates/qwen3.8/Flash-Next-chat-template.jinja`
+- **Chat template**: the two Qwen lanes run the repo's `templates/qwen3.8/Flash-Next-chat-template.jinja`
   (byte-identical to HF `Qwen/Qwen3.8-Flash-Next` main on 2026-10-24, 8,952 B), not the one embedded
   in the GGUFs. Strata reads the pack's `tokenizer/chat_template.jinja` at every
   start and has no template flag; the fork swaps the file before `strata launch` (see "Init / first
@@ -256,3 +273,109 @@ supersedes `STRATA_SPLIT_OVERLAP` and is incompatible with engine batch slots, w
   (`get_weather{"city":"Paris"}`) and the `:npt` alias all answered through llama-swap.
 - **API key**: the swap lanes are keyless and have no `/data/state/api-key`. A manual run with
   `API_KEY` set still creates and uses a key.
+
+## DeepSeek-V4.1-Flash lane (dsv41)
+
+Added 2026-10-25; **the deploy and the first measurements are pending** (the lane entry and the
+entrypoint fork are in the repo; the host checkout must be updated, then the init run follows). It
+serves the IST-DASLab **2.00 bpw** set (IQ2_XXS) of DeepSeek-V4.1-Flash (1017B-parameter MoE, 40
+layers × 384 experts, top-6) on the image's own `strata-dsv41` engine.
+
+### Model files and pins
+
+| File | Size (B) | sha256 (sidecar, matches upstream's pin) |
+| --- | ---: | --- |
+| `DeepSeek-V4.1-Flash-1017-GSQ-RCO-IQ2_XXS-0000{1..4}-of-00004.gguf` (shards) | 39,075,714,624 / 39,388,449,504 / 39,246,891,616 / 20,527,837,312 | `d46efb67…` / `cec1b2c3…` / `9d9c2140…` / `9b790a22…` |
+| `DeepSeek-V4.1-Flash-Engram-IQ4_NL.gguf` (the n-gram table; read from NVMe, never held in RAM) | 110,595,290,816 | `eb19f30d…` |
+| `dspark-DeepSeek-V4.1-Flash-1017-Q8_0.gguf` (DSpark drafter) | 7,976,914,240 | `6ba6ac1b…` |
+| `mmproj-BF16.gguf` (packed; pictures unused in this engine version) | 972,208,288 | `9a1ef7c4…` |
+| `DeepSeek-V4.1-Flash-1017-UD-Q8_K_XL-00001-of-00009.gguf` (**not on disk**) | 5,780,589 | `cc15d470…` — `--engram-meta` only; setup downloads it once into `Strata-data/models/deepseek-v4.1-flash-shared/` |
+
+All seven present files were checked against upstream's `setup.py` pins on 2026-10-25 (sha256 plus
+the exact pinned sizes; the shards sum to the pinned 138,238,893,056 B set). 2.00 bpw is 138 GB of
+model + 111 GB table + 8 GB drafter = 257 GB decimal. The table and the drafter are shared by every
+IST-DAS set (one copy serves 1.75/2.00/2.25).
+
+### Engine and the docker discovery gap
+
+`strata-dsv41` is our gfx110x build from the same `v0.2.4.2` tag (`0.1.49.2 build dfa3f4025`,
+sha256 `53af2567…`), placed beside `strata` in the engine package folder — the shape an upstream
+`DSV41=1` rx9070 package has (see Pins). That shape is auto-found only by a desktop install
+(`ROOT/engine` *is* the package folder there). **In this image it is not found**: the Terminal's
+launch runs setup with `STRATA_CONTROL_INSTALL=1` / `STRATA_INSTALL_DIR=/data/install`, so
+`dsv41_exe()` looks in `/data/install/engine-dsv41/` and `/opt/strata/terminal/engine/`, and the
+launch's `dsv41_engine_found()` probes only `engine-dsv41/` stores — verified in-image 2026-10-25.
+Without a fix, first setup stops at "DeepSeek's engine is not available for this computer yet"
+(the signed feed ships `strata-dsv41` for cuda13 and hip-rx9070 only).
+
+Fix: **entrypoint fork change 4** exports `STRATA_DSV41_EXE` from
+`/opt/strata/components/engine/*/strata-dsv41` when it is unset (an explicit `-e` still wins; inert
+for the Qwen lanes, whose configs are not `arch: deepseek41`). Verified in-image 2026-10-25: with
+the fork, `strata launch ... --plan` reports `DeepSeek engine: installed, 0.1.48` and setup-side
+`dsv41_exe()` returns the binary; without it the plan warns that setup would have to download the
+engine. `strata-dsv41 --version` runs in the image, but the binary had **never executed a kernel on
+gfx1100 hardware** before this lane — setup's 16-token smoke is that test.
+
+### Memory plan and the RAM budget
+
+`strata launch ... --plan --gpu 0,1` (2026-10-25, the real pair):
+
+- 5,202 of 15,360 experts (45 GB) in VRAM, the other 10,158 (87 GB) on the CPU lane; `--tp 2`
+  (two cards share each layer's matrices; upstream measured ~2× prompt speed vs a plain split on
+  two cards).
+- RAM class "tight" on the 63 GB host: the engine keeps the hot experts in its RAM store and reads
+  the rest from the NVMe per token.
+- Setup writes `--dspark auto --dspark-conf 0.65` (ISTA recipe) and the fit plan `--tp 2 --gpus 0,1`;
+  the hot-expert profile is the shipped `data/dsv41/profile-2.00.bin` copied into the pack as
+  `expert-profile.bin`.
+
+**RAM budget**: the store auto-sizes to available RAM − 12 GB, capped at 48 GB (≈48 GB here), which
+would leave too little for dev work on this box. The Qwen lanes' analogue (`resident-budget-gib=28`)
+is a Flash-Next setting that setup warns about and DeepSeek ignores; the DeepSeek knob is
+**`--ssd-cache` in decimal GB** (engine: `budget_bytes = N × 1e9`). The lane passes
+`STRATA_SET="ssd-cache=40"` → a 40 GB store cap, leaving about 20 GiB of the 62 GiB plus reclaimable
+page cache. It is a launch setting: change the number and restart the lane, no re-setup.
+`--ssd-cache 0` turns the store off (every CPU expert read from the SSD per token — do not).
+
+### Context, KV, parallel, vision
+
+- **Context 262144 (256k)**: `--context 256k` → `--max-context 262144`. Upstream checked the engine
+  at 4K/8K only; setup warns "longer is kept as you chose, but untested" and keeps it. Fallback
+  ladder: 128k, then 64k (the engine default is 8192).
+- **No KV setting exists**: `strata-dsv41` has no `--kv` flag — its cache is its own representation
+  (~17 MB per 6.5K tokens, ≈0.7 GB at 256k). `kv=fp16` in `STRATA_SET` would append `--kv fp16` to
+  the engine argv and kill it; `KV=`/`resident-budget-gib` are Flash-Next settings that setup
+  rejects for deepseek41.
+- `--parallel` and `--vision` are ignored with a warning in this engine version: one request at a
+  time, text only. The lane declares `capabilities: in: [text]` and passes neither.
+- Thinking is on per the template; `reasoning_effort: "none"` or
+  `chat_template_kwargs.enable_thinking: false` turns it off. No `:npt` alias yet (that keyword is
+  `preserve_thinking`, a Qwen-template thing).
+
+### Init / first start
+
+The first start does the setup work — run it outside llama-swap (same pattern as the Qwen lanes):
+
+1. one-time SHA-256 pass over the ~257 GB of present files (several minutes on the NVMe);
+2. the 5.8 MB Unsloth metadata shard download;
+3. pack build (`Strata-data/packs/deepseek-v4.1-flash-ist-das-2.00bpw/`: tensor map, hash tables,
+   tokenizer, the GGUF's own chat template) + `expert-profile.bin`; a few MB to ~6 GB of disk;
+4. `strata-dsv41 --pack-info` (every file present), then the 16-token smoke whose answer must name
+   Paris — the first kernel run on gfx1100 (allowed up to 5400 s; the cold load reads the experts).
+
+The full init command is in [`deploy/strata/README.md`](../deploy/strata/README.md) ("DeepSeek (dsv41)
+lane"): the Qwen init with the DeepSeek values — `MODEL=IST-DAS-2.00bpw`, `FAMILY=deepseek41`,
+`GPUS=0,1`, `CONTEXT=256k`, no `PARALLEL`, no `KV`, no tuning `STRATA_SET`,
+`CHAT_TEMPLATE_PATH=/templates/deepseek/v4.1-flash-1017-chat-template.jinja`, and
+`/mnt/unenc-xfs/strata/ISTA-DASLab-dsv41f1017` at `/data`. Then stop the container and let
+llama-swap start the lane. Later starts take a few minutes (the CPU lane's experts are read first),
+hence the lane's 1200 s health timeout.
+
+### Pending (next session)
+
+- Init run, smoke, and a declared tool call through llama-swap.
+- Warm/cold restart timing and RAM settling against the 40 GB store cap.
+- 60 %/85 % pp/tg with `bench/speed/run_longctx.py --model deepseek-v4.1-flash-2bpw --ctx 262144`
+  (first pass `--in-pcts 20,60,85 --reps 1`; the full default run is hours at these speeds).
+- Optional afterwards: `TUNE=quick` (dsv41's own tuner, 5–10 min) and `ssd-cache`/`dspark-block`
+  variations.

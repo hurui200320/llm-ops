@@ -169,8 +169,11 @@ macros:
   # Chat template: Strata has no --chat-template-file; it reads the template that
   # setup extracted into <pack>/tokenizer/chat_template.jinja at every start. The
   # fork replaces that copy with the repo's templates/ checkout (mounted at
-  # /templates, like the llama.cpp lanes) when CHAT_TEMPLATE_PATH is set, so Qwen
-  # template updates arrive with a git pull + lane restart, no GGUF re-download.
+  # /templates, like the llama.cpp lanes) when CHAT_TEMPLATE_PATH is set, so the
+  # template is per-lane state: each model entry sets its own (a Qwen template
+  # update arrives with a git pull + lane restart, no GGUF re-download). It is not
+  # in this macro because the DeepSeek lane needs a different file and duplicate
+  # `-e` flags must not decide which one wins.
   "docker-server-strata-rocm": >
     docker run --name ${MODEL_ID} --init --rm
       -p 127.0.0.1:${PORT}:${PORT}
@@ -181,7 +184,6 @@ macros:
       --ulimit memlock=-1:-1 --shm-size 2g --stop-timeout 120
       -e PORT=${PORT}
       -e STRATA_HIPBLASLT_TABLE=on
-      -e CHAT_TEMPLATE_PATH=/templates/qwen3.8/Flash-Next-chat-template.jinja
       -v /mnt/unenc-xfs/llm-ops/deploy/strata/entrypoint-local.sh:/entry-local.sh:ro
       -v /mnt/unenc-xfs/llm-ops/templates:/templates:ro
       -v /mnt/unenc-xfs/models:/models:z
@@ -495,6 +497,7 @@ models:
         -e GPUS=0,1
         -e PARALLEL=1
         -e MODEL_PATH=/models/strata/ISTA-DASLab-Flash-Next
+        -e CHAT_TEMPLATE_PATH=/templates/qwen3.8/Flash-Next-chat-template.jinja
         -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=768 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1"
         ghcr.io/hurui200320/llm-ops-strata:0.2.4.2-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
@@ -559,6 +562,7 @@ models:
         -e GPUS=0,1
         -e PARALLEL=1
         -e MODEL_PATH=/models/strata/sc117-Flash-Next-uncensored
+        -e CHAT_TEMPLATE_PATH=/templates/qwen3.8/Flash-Next-chat-template.jinja
         -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=768 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1"
         ghcr.io/hurui200320/llm-ops-strata:0.2.4.2-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
@@ -582,6 +586,71 @@ models:
       connect: 30
       keepalive: 30
       # pp may take a long time so we don't set a timeout here
+      responseHeader: 0
+      tlsHandshake: 10
+      idleConn: 90
+
+
+  # DeepSeek-V4.1-Flash (GGUF arch deepseek41) on its own engine, strata-dsv41.
+  # Currently vision is not wired in this engine version.
+  # RAM budget:  ssd-cache (similar to qwen's resident-budget-gib) 40 GB, leaving
+  # about 20 GiB of the 62 GiB plus reclaimable page cache.
+  # Do not pass KV=, PARALLEL, VISION: DeepSeek's kv cache format is its own,
+  # and --parallel/--vision are ignored with a warning by this engine version.
+  # Context: 256k (262144). Upstream checked the engine at 4K and 8K only; setup
+  # warns "longer is kept as you chose, but untested" and keeps it — this lane is
+  # the test. Fallback ladder: 128k, then 64k (change CONTEXT; the install record
+  # is remade but the pack, table and drafter are reused).
+  # Engine: the image's own gfx110x strata-dsv41 build (0.1.49.2 build
+  # dfa3f4025), placed beside `strata` in the engine package folder.
+  # The Terminal in this image does NOT auto find and load, so deploy/strata/entrypoint-local.sh
+  # (fork change 4) exports STRATA_DSV41_EXE from it; without that, first setup stops
+  # at "DeepSeek's engine is not available for this computer yet". 
+  # No tuning keys beyond ssd-cache: setup writes --dspark auto and --dspark-conf
+  # 0.65 (ISTA recipe), the fit plan writes --tp 2 and --gpus. The macro's
+  # STRATA_HIPBLASLT_TABLE=on is inert here (src/dsv41 has no hipBLASLt path); it
+  # only prints the table line once at start.
+  # First start does the setup work — one-time SHA-256 pass over the ~257 GB of
+  # files, the 5.8 MB Unsloth metadata shard (`--engram-meta`), the pack +
+  # hot-expert profile, and the smoke — so run it outside llama-swap first
+  # (notes/strata.md).
+  # Later starts take a few minutes (the CPU experts are read in first), hence the
+  # 1200 s health timeout, larger than the Qwen lanes' 600.
+  "deepseek-v4.1-flash-2bpw":
+    name: "DeepSeek V4.1-Flash IST-DAS 2.00 bpw"
+    description: "262144 ctx, dsv41 engine over 2x7900XTX, 45 GB experts in VRAM, 40 GB RAM store"
+    cmd: |
+      ${docker-server-strata-rocm}
+        -v /mnt/unenc-xfs/strata/ISTA-DASLab-dsv41f1017:/data
+        -e MODEL=IST-DAS-2.00bpw
+        -e FAMILY=deepseek41
+        -e CONTEXT=256k
+        -e GPUS=0,1
+        -e MODEL_PATH=/models/strata/ISTA-DASLab-dsv41f1017
+        -e CHAT_TEMPLATE_PATH=/templates/deepseek/v4.1-flash-1017-chat-template.jinja
+        -e STRATA_SET="ssd-cache=40"
+        ghcr.io/hurui200320/llm-ops-strata:0.2.4.2-rocm-gfx110x
+    cmdStop: docker stop -t 120 ${MODEL_ID}
+    proxy: http://127.0.0.1:${PORT}
+    checkEndpoint: /health
+    # Cold start is "a few minutes" (the CPU lane's experts are read first);
+    # llama-swap also bounds the graceful stop by this value, so -t 120 fits.
+    healthCheckTimeout: 1200
+    concurrencyLimit: 20
+    # Declared, not probed: Strata's /v1/models omits `owned_by` (same as the Qwen
+    # lanes). Text only — the engine ignores --vision in this version. Tools on:
+    # the server translates DeepSeek's DSML into OpenAI tool_calls and Anthropic
+    # tool_use.
+    capabilities:
+      in: [text]
+      out: [text]
+      tools: true
+      context: 262144
+      disableAuto: true
+    timeouts:
+      connect: 30
+      keepalive: 30
+      # pp/tg are slow on this model (experts read from RAM/SSD); no header timeout
       responseHeader: 0
       tlsHandshake: 10
       idleConn: 90
