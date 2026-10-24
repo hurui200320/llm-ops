@@ -24,6 +24,8 @@ entries=(
     "qwen3.8/27B-chat-template.jinja|https://huggingface.co/Qwen/Qwen3.8-27B/resolve/main/chat_template.jinja"
     "qwen3.8/Flash-Next-chat-template.jinja|https://huggingface.co/Qwen/Qwen3.8-Flash-Next/resolve/main/chat_template.jinja"
     "openjev/chat-template.jinja|https://huggingface.co/openjev/openjev/resolve/main/chat_template.jinja"
+    # ds v41f 1017 use py script, so we use unsloth's port of chat template
+    "deepseek/v4.1-flash-1017-chat-template.jinja|https://huggingface.co/unsloth/DeepSeek-V4.1-Flash-1017/resolve/main/chat_template.jinja"
 )
 
 curl_args=(-fsSL --retry 3 --connect-timeout 15 --max-time 120)
