@@ -198,7 +198,7 @@ changes are picked up live; no environment variable is needed to load a lane.
   becomes a root-owned directory and kills the container.
 
 Current `STRATA_SET` (identical on the two Qwen lanes; the DeepSeek lane passes only
-`ssd-cache=40` — see its section):
+`ssd-cache=36 reserve-mib=896` — see its section and [`notes/deepseek/v41f1017.md`](deepseek/v41f1017.md)):
 
 ```
 kv=fp16
@@ -331,13 +331,17 @@ gfx1100 hardware** before this lane — setup's 16-token smoke is that test.
   the hot-expert profile is the shipped `data/dsv41/profile-2.00.bin` copied into the pack as
   `expert-profile.bin`.
 
-**RAM budget**: the store auto-sizes to available RAM − 12 GB, capped at 48 GB (≈48 GB here), which
-would leave too little for dev work on this box. The Qwen lanes' analogue (`resident-budget-gib=28`)
-is a Flash-Next setting that setup warns about and DeepSeek ignores; the DeepSeek knob is
-**`--ssd-cache` in decimal GB** (engine: `budget_bytes = N × 1e9`). The lane passes
-`STRATA_SET="ssd-cache=40"` → a 40 GB store cap, leaving about 20 GiB of the 62 GiB plus reclaimable
-page cache. It is a launch setting: change the number and restart the lane, no re-setup.
-`--ssd-cache 0` turns the store off (every CPU expert read from the SSD per token — do not).
+**RAM budget and VRAM reserve**: the store auto-sizes to available RAM − 12 GB, capped at 48 GB
+(≈48 GB here), which would leave too little for dev work on this box. The Qwen lanes' analogue
+(`resident-budget-gib=28`) is a Flash-Next setting that setup warns about and DeepSeek ignores; the
+DeepSeek knob is **`--ssd-cache` in decimal GB** (engine: `budget_bytes = N × 1e9`). The lane passes
+`STRATA_SET="ssd-cache=36 reserve-mib=896"` → a 36 GB store cap, leaving about 24 GiB of the 62 GiB
+plus reclaimable page cache. 36 vs 40 measured neutral (pp -0.5 %, tg -5.9 % at 85 %, inside noise;
+swap <1 GiB across a 40 + 85 % pass). `--reserve-mib` is the VRAM side and is a **plan-time** input,
+not a free-VRAM floor: measured free during a run is `reserve − ~530 MiB` on the monitor card (CUDA0)
+and `reserve − ~330 MiB` on CUDA1, so 896 leaves ~360 MiB on CUDA0 (600 left ~60). Both are launch
+settings: change them and restart the lane, no re-setup. `--ssd-cache 0` turns the store off (every
+CPU expert read from the SSD per token — do not).
 
 ### Context, KV, parallel, vision
 
@@ -433,5 +437,6 @@ the comparison with the Qwen lane are in [`notes/deepseek/v41f1017.md`](deepseek
 
 ### Pending
 
-- Optional: a full standard curve (60 %/85 % tg, out 10 %, reps 2) when hours are available, and
-  `TUNE=quick` (dsv41's own tuner, 5–10 min) plus `ssd-cache`/`dspark-block` variations.
+- Optional: a full standard curve (60 %/85 % tg, out 10 %, reps 2) when hours are available. The
+  dsv41 tuner's arms (DSpark forced on, draft block 3, SMT thread counts) were covered by hand on
+  2026-10-25 and rejected/neutral — see [`notes/deepseek/v41f1017.md`](deepseek/v41f1017.md).

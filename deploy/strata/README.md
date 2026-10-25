@@ -267,10 +267,27 @@ engine. Same container shape as the Qwen lanes (entrypoint fork, keyless bridge,
   change 4 exports `STRATA_DSV41_EXE=/opt/strata/components/engine/<package>/strata-dsv41` when it
   is unset; setup's `dsv41_exe()` and the launch's `dsv41_engine_found()` both honour it. Without
   it, first setup stops at "DeepSeek's engine is not available for this computer yet".
-- **RAM budget.** `STRATA_SET="ssd-cache=40"` → a 40 GB (decimal) RAM store for the hot CPU-lane
-  experts. Unset, the engine auto-sizes to available RAM − 12 GB, capped at 48 GB — about 48 GB
-  here, which would crowd out dev work on the 62 GiB box. The Qwen lanes' `resident-budget-gib` is
-  a Flash-Next setting that DeepSeek ignores (setup warns about it); `--ssd-cache` is the knob.
+- **RAM budget and VRAM reserve.** `STRATA_SET="ssd-cache=36 reserve-mib=896"` → a 36 GB (decimal)
+  RAM store for the hot CPU-lane experts, and 896 MiB per GPU kept out of the expert cache at load.
+  40 GB measured neutral vs 36 (pp -0.5 %, tg -5.9 % at 85 %, inside noise) and swap stayed under
+  1 GiB across a 40 + 85 % longctx pass; 36 leaves ~24 GiB for dev work. `reserve-mib` is a plan-time
+  input, not a free-VRAM floor: measured free during runs is ~896-530 = ~360 MiB on the monitor card
+  (CUDA0) and ~566 MiB on CUDA1; 600 left only ~60 MiB on CUDA0 mid-prefill. Unset, the store
+  auto-sizes to available RAM − 12 GB, capped at 48 GB. The Qwen lanes' `resident-budget-gib` is a
+  Flash-Next setting that DeepSeek ignores (setup warns about it); `--ssd-cache` is the knob.
+- **Only dsv41 settings work here.** `STRATA_SET` lowercase keys become engine argv flags and
+  `strata-dsv41` exits 2 on an unknown one, so the Qwen keys (`kv=`, `vram-reserve-mib=`,
+  `vram-reserve-later-mib=`, `conversation-cache-mib/slots=`, `resident-budget-gib=`,
+  `prompt-cache-spread=`, `pipeline-windows=`, `layer-split=`, `trim-stage-weights=`,
+  `spec-min-p=`) crash-loop the lane; `layer-split=` is even parsed and ignored. A manual split is
+  `DS4_SPLIT=a,b` (env). `dspark=on` / `threads=on` are stripped to a bare flag by the launch and eat
+  the next option — use `dspark=1` / `threads=1`.
+- **Speed (2026-10-25, cold longctx direct on the lane).** 40 % pp/tg 364.8 / 19.3, 85 % 354.7 / 19.8
+  (baseline 354.8 / 19.8 and 352.3 / 20.4). pp is flat across context and GPU-bound: the CPU lane does
+  ~0 % of the experts during prefill, so the CPU knobs only matter for decode. Auto split,
+  `prefill-chunk` 8192 and threads off measured best; chunk 16384 costs tg, `DS4_SPLIT=26,14` costs
+  pp, and DSpark forced on costs tg. Arms, rejects and the method:
+  [notes/deepseek/v41f1017.md](../../notes/deepseek/v41f1017.md).
 - **No KV, parallel or vision.** The engine has its own cache format (no `--kv` flag at all);
   `--parallel` and `--vision` are ignored with a warning in this version. Do not pass `KV=`,
   `PARALLEL` or `VISION`; the lane declares text-only `capabilities`.
@@ -303,7 +320,7 @@ engine. Same container shape as the Qwen lanes (entrypoint fork, keyless bridge,
     -v /mnt/unenc-xfs/models:/models:z \
     -e MODEL=IST-DAS-2.00bpw -e FAMILY=deepseek41 -e CONTEXT=256k -e GPUS=0,1 \
     -e MODEL_PATH=/models/strata/ISTA-DASLab-dsv41f1017 \
-    -e STRATA_SET="ssd-cache=40" \
+    -e STRATA_SET="ssd-cache=36 reserve-mib=896" \
     ghcr.io/hurui200320/llm-ops-strata:0.2.4.2-rocm-gfx110x
   docker logs -f strata-init-ds
   ```

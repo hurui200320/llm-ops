@@ -593,8 +593,19 @@ models:
 
   # DeepSeek-V4.1-Flash (GGUF arch deepseek41) on its own engine, strata-dsv41.
   # Currently vision is not wired in this engine version.
-  # RAM budget:  ssd-cache (similar to qwen's resident-budget-gib) 40 GB, leaving
-  # about 20 GiB of the 62 GiB plus reclaimable page cache.
+  # RAM budget:  ssd-cache (similar to qwen's resident-budget-gib) 36 GB, leaving
+  # about 24 GiB of the 62 GiB plus reclaimable page cache. 40 GB measured neutral
+  # (pp -0.5 %, tg -5.9 % at 85 %, inside noise) and swap stayed under 1 GiB across
+  # a 40 + 85 % longctx pass; 36 is the dev-work choice.
+  # VRAM: reserve-mib 896 is a plan-time input, not a free-VRAM floor. Measured free
+  # during runs is reserve minus ~530 MiB on the monitor card (CUDA0) and minus
+  # ~330 MiB on CUDA1: 896 keeps ~360 MiB free on CUDA0 while prefilling (the
+  # 300-400 MiB target); 600 left ~60 MiB. See notes/deepseek/v41f1017.md.
+  # Only dsv41 flags work here: the Qwen keys (kv, vram-reserve-mib,
+  # vram-reserve-later-mib, conversation-cache-mib/slots, resident-budget-gib,
+  # prompt-cache-spread, pipeline-windows, layer-split=, trim-stage-weights,
+  # spec-min-p) are unknown to strata-dsv41 and exit 2 (crash loop). layer-split=
+  # is even parsed and ignored; a manual split is DS4_SPLIT=a,b (env).
   # Do not pass KV=, PARALLEL, VISION: DeepSeek's kv cache format is its own,
   # and --parallel/--vision are ignored with a warning by this engine version.
   # Context: 256k (262144). Upstream checked the engine at 4K and 8K only; setup
@@ -606,10 +617,15 @@ models:
   # The Terminal in this image does NOT auto find and load, so deploy/strata/entrypoint-local.sh
   # (fork change 4) exports STRATA_DSV41_EXE from it; without that, first setup stops
   # at "DeepSeek's engine is not available for this computer yet". 
-  # No tuning keys beyond ssd-cache: setup writes --dspark auto and --dspark-conf
-  # 0.65 (ISTA recipe), the fit plan writes --tp 2 and --gpus. The macro's
-  # STRATA_HIPBLASLT_TABLE=on is inert here (src/dsv41 has no hipBLASLt path); it
-  # only prints the table line once at start.
+  # Tuning (2026-10-25, measured direct): ssd-cache 36 + reserve-mib 896, everything
+  # else default. setup writes --dspark auto and --dspark-conf 0.65 (ISTA recipe),
+  # the fit plan writes --tp 2 and --gpus. Keep dspark auto: forced on it loses
+  # 6-11 % tg (its ~7 GB displace model experts) despite 77-78 % draft acceptance.
+  # prefill-chunk 16384 loses 8 % tg; DS4_SPLIT=26,14 loses 18 % pp; threads is
+  # neutral. pp is GPU-bound at ~350-365 t/s (flat at 40/85 % ctx), tg ~19-20.
+  # The macro's STRATA_HIPBLASLT_TABLE=on is inert here (src/dsv41 has no hipBLASLt
+  # path); it only prints the table line once at start. Rejected arms and the
+  # measurement method: notes/deepseek/v41f1017.md.
   # First start does the setup work — one-time SHA-256 pass over the ~257 GB of
   # files, the 5.8 MB Unsloth metadata shard (`--engram-meta`), the pack +
   # hot-expert profile, and the smoke — so run it outside llama-swap first
@@ -632,7 +648,7 @@ models:
         -e GPUS=0,1
         -e MODEL_PATH=/models/strata/ISTA-DASLab-dsv41f1017
         -e CHAT_TEMPLATE_PATH=/templates/deepseek/v4.1-flash-1017-chat-template.jinja
-        -e STRATA_SET="ssd-cache=40"
+        -e STRATA_SET="ssd-cache=36 reserve-mib=896"
         ghcr.io/hurui200320/llm-ops-strata:0.2.4.2-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
