@@ -27,6 +27,18 @@ docker run --rm llm-ops-toolbox:local sh -c 'for cmd in check_updates verify_che
 
 - DO NOT touch git after making changes. User should review the change and manually stage the changes.
 
+## Single source of truth
+
+Write facts to **one** canonical place and link to them from everywhere else. Never duplicate benchmark numbers, version/digest tables, tuning logs, or architectural rationale across multiple files.
+
+- **`notes/` is the primary source of truth**:
+  - **Model-specific tuning, speed runs, and parameter rationale**: `notes/<model-family>/<model>.md`
+  - **Cross-model benchmark results and evaluations**: `notes/bench.md`
+  - **Engine/infrastructure research, version pins, and verification records**: `notes/<topic>.md` (e.g., `notes/strata.md`, `notes/rccl.md`, `notes/model-loading.md`)
+- **Keep other docs focused on their role**:
+  - `deploy/` READMEs and config comments should stay strictly operational (how to build, configure, and run), linking to `notes/` for historical context, digest inventories, benchmark numbers, and why specific flags were chosen.
+  - When a fact changes (e.g., an image upgrade or a new tuning result), update the single canonical section in `notes/` rather than copying the new values into multiple documents.
+
 ## bench/
 
 `bench/` holds the personal model-benchmark pipeline (speed, tool calling, reasoning, coding, RP). It is NOT part of the toolbox image and the `scripts/` quality gate does not apply to it, but keep its Python scripts standard-library-only anyway.
