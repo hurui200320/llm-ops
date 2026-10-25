@@ -3,9 +3,9 @@ name: strata-image
 # Builds a Strata (AMD HIP, RDNA 3: gfx1100 / gfx1101 / gfx1102) image for the llm-ops lanes and pushes it to GHCR.
 #
 # Upstream builds these images from signed release engine packages with docker/build.sh (nothing is compiled), but
-# as of 0.2.4.2 it has published no 0.2.4.x image yet — and its gfx110x images will never carry a DeepSeek engine: the
-# signed feed has strata-dsv41 packages for cuda13 and hip-rx9070 only, so an RX 7900 can never self-install one. This
-# workflow therefore:
+# since 0.2.5 it ships one engine-less installer per OS and has published no Docker image at all after 0.2.3 — and its
+# gfx110x images will never carry a DeepSeek engine: the signed feed has strata-dsv41 packages for cuda13 and hip-rx9070
+# only, so an RX 7900 can never self-install one. This workflow therefore:
 #
 #   1. fetches the released qwen engine package through upstream's own docker/fetch-engines.py — the signed feed,
 #      the archive's SHA-256, the manifest hash, the package signature and every file are checked there — so the
@@ -16,7 +16,7 @@ name: strata-image
 #   3. puts strata-dsv41 beside `strata` in that package folder — the shape upstream's rx9070 package ships (its
 #      build sets DSV41=1) — and builds the image with upstream's docker/build.sh.
 #
-# The result differs from an upstream 0.2.4.2-rocm-gfx110x image by exactly one added file (strata-dsv41, our build):
+# The result differs from an upstream 0.2.5-rocm-gfx110x image by exactly one added file (strata-dsv41, our build):
 # every other byte is the released package, and the Terminal is built from the same tag, as upstream does. The
 # Dockerfile's verify stage re-checks the package (every listed file, binary_deps on every ELF, ldd in the image), so
 # a dsv41 binary that needs a library the package does not bundle stops the build instead of failing at run time.
@@ -54,9 +54,9 @@ env:
   IMAGE: ghcr.io/hurui200320/llm-ops-strata
   STRATA_REPO: Niko1221/Strata
   # Terminal sources, the Dockerfile and the dsv41 sources (deploy/strata/build-dsv41.sh's flags are its tag's).
-  STRATA_REF: v0.2.4.2
-  # The release that carries the signed feed and the qwen engine packages (no 0.2.4.1/0.2.4.2 release exists).
-  ENGINE_RELEASE: v0.2.4
+  STRATA_REF: v0.2.5
+  # The release that carries the signed feed and the Qwen engine packages (the 0.2.4.x tags had no release of their own).
+  ENGINE_RELEASE: v0.2.5
   # TheRock ROCm wheels (gfx110X-dgpu index) of the ROCm line the released package was built with.
   THEROCK_PIN: "7.10.0a20251120"
   # hipBLASLt version the package's gfx1100 tuning table must match (BUILD.json hipblaslt_version).

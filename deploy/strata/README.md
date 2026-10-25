@@ -1,21 +1,22 @@
 # Strata (AMD / HIP) deployment
 
-The Strata image the lanes run is **our own build**, `ghcr.io/hurui200320/llm-ops-strata:0.2.4.2-rocm-gfx110x`,
+The Strata image the lanes run is **our own build**, `ghcr.io/hurui200320/llm-ops-strata:0.2.5-rocm-gfx110x`,
 made by [`.github/workflows/strata-image.yml`](../../.github/workflows/strata-image.yml). It carries upstream's
-Terminal 0.2.4.2 (serve + the GGUF preparation tools and the `strata` CLI), upstream's signed-feed 0.1.48 Qwen engine
-package (byte-identical to the 0.2.3 one), both picture readers (CPU and GPU) and the ROCm runtime for the whole RDNA 3
+Terminal 0.2.5 (serve + the GGUF preparation tools and the `strata` CLI), upstream's signed-feed 0.1.50 Qwen engine
+package, both picture readers (CPU and GPU) and the ROCm runtime for the whole RDNA 3
 dGPU family (gfx1100 = RX 7900 XTX/XT, gfx1101 = RX 7800/7700 XT, gfx1102 = RX 7600), plus one added file: the
 gfx110x `strata-dsv41` build (DeepSeek V4.1-Flash; run by the `deepseek-v4.1-flash-2bpw` lane — see
 [notes/strata.md](../../notes/strata.md) — and never by the Qwen lanes). The host needs only the `amdgpu`
 kernel driver: no ROCm, no compiler.
 
 Upstream's own images come from [docs/DOCKER.md](https://github.com/Niko1221/Strata/blob/main/docs/DOCKER.md) and the
-signed release engine packages since 0.2.1. Our first `strata-image.yml` build was retired on 2026-10-20 after a
+signed release engine packages since 0.2.1. Since 0.2.5 upstream ships one engine-less installer per OS and has
+published no Docker image after 0.2.3. Our first `strata-image.yml` build was retired on 2026-10-20 after a
 per-file comparison showed the images functionally equivalent — engine byte-identical, terminal differing only by the
 Windows long-path hotfix that landed after upstream's build (record: [notes/strata.md](../../notes/strata.md)). It is
-back for 0.2.4.x for two reasons: upstream has published no 0.2.4.x image (its workflow is manual; last run 2026-10-23,
-for 0.2.3), and no upstream image can carry a DeepSeek engine on an RX 7900 — the signed feed has `strata-dsv41`
-packages for cuda13 and hip-rx9070 only. See "Building the 0.2.4.x image" and the pins below.
+back since 0.2.4 for two reasons: upstream publishes no images, and no upstream image can carry a DeepSeek engine on
+an RX 7900 — the signed feed has `strata-dsv41` packages for cuda13 and hip-rx9070 only. See "Building the 0.2.5
+image" and the pins below.
 
 ## Pins (image `0.2.4.2-rocm-gfx110x`)
 

@@ -486,6 +486,12 @@ models:
   #   the same engine paths, so the first start goes straight to serving
   #   (no setup pass, no repack, verified 2026-10-24). Deploy smoke and
   #   spot-check: notes/strata.md.
+  # 2026-10-25 0.2.5 (own image): Terminal/Control 0.2.5/0.1.50 around the new
+  #   0.1.50 rx7900 engine package (manifest 43746aaf..., hipBLASLt table
+  #   re-tuned, same version 100200) plus our strata-dsv41 beside it. The engine
+  #   folder version changes, so the 0.2.4.2 record is dropped and setup re-runs
+  #   once on the first start (no repack, no download; the fork re-swaps the
+  #   template on the next start). Deploy record: notes/strata.md.
   "qwen3.8-flash-next-iq3s":
     name: "Qwen3.8 Flash-Next IQ3_S"
     description: "262144 ctx, F16 KV, Strata layer split over 2x7900XTX, fully resident @28 GiB"
@@ -499,7 +505,7 @@ models:
         -e MODEL_PATH=/models/strata/ISTA-DASLab-Flash-Next
         -e CHAT_TEMPLATE_PATH=/templates/qwen3.8/Flash-Next-chat-template.jinja
         -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=768 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1"
-        ghcr.io/hurui200320/llm-ops-strata:0.2.4.2-rocm-gfx110x
+        ghcr.io/hurui200320/llm-ops-strata:0.2.5-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
@@ -548,6 +554,9 @@ models:
   # The pack and MTP are reused. Never pass KV=, never pass --slot-save-path.
   # 2026-10-24 0.2.4.2 (own image): the 0.2.3 record and preset are reused as
   # they are (same engine, pack and mmproj): no setup pass or repack expected.
+  # 2026-10-25 0.2.5 (own image): same flow as vanilla — engine 0.1.50 changes
+  # the engine folder, so the first start re-runs setup once (no repack, no
+  # download; the lane's own mmproj is reused). Deploy record: notes/strata.md.
   # The model is abliterated with no reliable guardrails (TC-60 class): vanilla stays the
   # default for untrusted input, and no sensitive or unsandboxed tools on
   # this lane until a safety/quality review clears it.
@@ -564,7 +573,7 @@ models:
         -e MODEL_PATH=/models/strata/sc117-Flash-Next-uncensored
         -e CHAT_TEMPLATE_PATH=/templates/qwen3.8/Flash-Next-chat-template.jinja
         -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=768 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1"
-        ghcr.io/hurui200320/llm-ops-strata:0.2.4.2-rocm-gfx110x
+        ghcr.io/hurui200320/llm-ops-strata:0.2.5-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
@@ -609,8 +618,8 @@ models:
   # warns "longer is kept as you chose, but untested" and keeps it — this lane is
   # the test. Fallback ladder: 128k, then 64k (change CONTEXT; the install record
   # is remade but the pack, table and drafter are reused).
-  # Engine: the image's own gfx110x strata-dsv41 build (0.1.49.2 build
-  # dfa3f4025), placed beside `strata` in the engine package folder.
+  # Engine: the image's own gfx110x strata-dsv41 build (0.1.50 build fa663fab),
+  # placed beside `strata` in the engine package folder.
   # The Terminal in this image does NOT auto find and load, so deploy/strata/entrypoint-local.sh
   # (fork change 4) exports STRATA_DSV41_EXE from it; without that, first setup stops
   # at "DeepSeek's engine is not available for this computer yet". 
@@ -619,6 +628,12 @@ models:
   # --dspark auto and --dspark-conf 0.65 (ISTA recipe), the fit plan writes --tp 2
   # and --gpus. The macro's STRATA_HIPBLASLT_TABLE=on is inert here (src/dsv41 has
   # no hipBLASLt path); it only prints the table line once at start.
+  # 2026-10-25 0.2.5: engine 0.1.50 keeps 6 experts per word by default here
+  # (--experts/--speed is the 16 GiB-or-shared-RAM rule; 2x24 GiB stays full
+  # quality), makes the prompt path length-based and deterministic, and warms
+  # the chunked prefill pass after ready. The gfx11 WMMA prompt kernels are
+  # opt-in here (STRATA_DS4_HIPK=1; on by default only on Strix Halo) and are
+  # being measured before they go into this entry.
   # First start does the setup work — one-time SHA-256 pass over the ~257 GB of
   # files, the 5.8 MB Unsloth metadata shard (`--engram-meta`), the pack +
   # hot-expert profile, and the smoke — so run it outside llama-swap first
@@ -642,7 +657,7 @@ models:
         -e MODEL_PATH=/models/strata/ISTA-DASLab-dsv41f1017
         -e CHAT_TEMPLATE_PATH=/templates/deepseek/v4.1-flash-1017-chat-template.jinja
         -e STRATA_SET="ssd-cache=36 reserve-mib=896"
-        ghcr.io/hurui200320/llm-ops-strata:0.2.4.2-rocm-gfx110x
+        ghcr.io/hurui200320/llm-ops-strata:0.2.5-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
