@@ -632,8 +632,10 @@ models:
   # (--experts/--speed is the 16 GiB-or-shared-RAM rule; 2x24 GiB stays full
   # quality), makes the prompt path length-based and deterministic, and warms
   # the chunked prefill pass after ready. The gfx11 WMMA prompt kernels are
-  # opt-in here (STRATA_DS4_HIPK=1; on by default only on Strix Halo) and are
-  # being measured before they go into this entry.
+  # opt-in here (on by default only on Strix Halo): STRATA_DS4_HIPK=1 measured
+  # +18.7% pp at 51K tokens (341.9 -> 405.8 t/s, 2 reps each, same answers,
+  # decode within noise) and is enabled on the lane. Details:
+  # notes/deepseek/v41f1017.md.
   # First start does the setup work — one-time SHA-256 pass over the ~257 GB of
   # files, the 5.8 MB Unsloth metadata shard (`--engram-meta`), the pack +
   # hot-expert profile, and the smoke — so run it outside llama-swap first
@@ -657,6 +659,7 @@ models:
         -e MODEL_PATH=/models/strata/ISTA-DASLab-dsv41f1017
         -e CHAT_TEMPLATE_PATH=/templates/deepseek/v4.1-flash-1017-chat-template.jinja
         -e STRATA_SET="ssd-cache=36 reserve-mib=896"
+        -e STRATA_DS4_HIPK=1
         ghcr.io/hurui200320/llm-ops-strata:0.2.5-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}

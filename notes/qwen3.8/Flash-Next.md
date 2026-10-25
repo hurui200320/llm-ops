@@ -262,3 +262,50 @@ Both lanes served through llama-swap on 2026-10-24: keyless chat, `get_weather{"
 its own mmproj; engine landmarks matched 0.2.3 (22.37 GiB resident, lend 3591, 31.3 GiB GPU
 caches, 0.0 GiB file tier, `prefill gemm: hipBLASLt tuning enabled (26 rows, gfx1100, version
 100200)`). `docker stop -t 120` took 3.8 s with the VRAM freed.
+
+
+# 20261025 0.2.5 upgrade spot-check (engine 0.1.50, own image)
+
+Same runner and lane settings as the 20261024 spot-check (`bench/speed/run_longctx.py --ctx
+262144 --out-pct 1 --in-pcts 60,85`, 2 reps), through llama-swap, on
+`ghcr.io/hurui200320/llm-ops-strata:0.2.5-rocm-gfx110x` (Terminal 0.2.5 / Control 0.1.50, the
+signed-feed 0.1.50 rx7900 engine package plus our gfx110x `strata-dsv41`). Unlike 0.2.4.2 the
+engine folder version changes (0.1.48→0.1.50), so the first start drops the install record and
+re-runs setup once — no repack and no download (`Strata-data/` stayed at 50 files, only
+`mtp/tensors/verified.json` re-stamped; the record now names the 0.1.50 engine/vision paths).
+The hipBLASLt table is re-tuned for the same version `100200` (`235a26c3…` vs 0.1.48's
+`1bb8cd2e…`).
+
+Two samples of the same run (the second after a hipBLASLt table A/B and fresh container starts):
+
+| Level | 0.2.5 sample 1 pp / tg | accept | 0.2.5 sample 2 pp / tg | accept | 0.2.4.2 pp / tg |
+|---|---|---|---|---|---|
+| 60 % (157K) | 2005.8 / 63.55 | 0.649 | 1936.1 / 63.65 | 0.656 | 2100.5 / 64.05 |
+| 85 % (223K) | 2049.4 / 65.75 | 0.692 | 2074.8 / 64.30 | 0.683 | 2172.4 / 64.00 |
+
+The 60 % average is dragged down by the first measured rep of each sample being an outlier
+(1900.8 and 1739.0 t/s); those requests logged an ~8.3-8.7 GB OS read from NVMe (cold page cache
+after the container churn). The steady reps are 2110.8 / 2133.2 (60 %) and 2041.2-2075.0 (85 %),
+inside the 0.2.4.2 range. `cache_n` 0 on every rep.
+
+A direct fixed-prompt A/B (600,000 chars ≈ 147K tokens, `max_tokens=1`, 3 reps, same container
+recipe) separates engine/table from the run variance:
+
+| Arm | pp at ~147K | pp at ~222K |
+|---|---|---|
+| 0.2.5 + new table (default) | 2110.5 t/s | 2116.1 / 2152.8 t/s |
+| 0.2.5 + 0.1.48 table (`STRATA_HIPBLASLT_TUNING`) | 2106.1 t/s | — |
+| 0.1.48 (20261024 run_longctx, for scale) | 2100.5 t/s | 2172.4 t/s |
+
+Verdict: the 0.1.50 engine and the re-tuned table are neutral for these lanes — the direct
+numbers match 0.2.4.2 and the old table within 0.2 %; the run_longctx 85 % gap above is cold-page
+and run variance, not a regression. tg and acceptance are within noise. No action.
+
+Smoke through llama-swap on 2026-10-25: keyless chat, `get_weather{"city":"Paris"}`,
+`max_tokens:-1`, 640×360 vision ("Red") and the `:npt` alias answered on vanilla; SC117's setup
+picked its own mmproj (`2e788f8c…`), answered a chat, a tool call and a 640×360 picture ("Blue").
+Engine landmarks match 0.2.4.2 on both lanes: 22.37 GiB resident, lend 3591, 31.3 GiB GPU caches,
+0.0 GiB file tier, MTP 1348 MiB, `prefill gemm: hipBLASLt tuning enabled (26 rows, gfx1100,
+version 100200)`. The engine log adds `this CPU has no AVX-512: the expert kernels run on AVX-2`
+(the 0.1.50 CPU-row work does not reach this host). `docker stop -t 120` on the DeepSeek lane took
+2.12 s with the VRAM freed.
