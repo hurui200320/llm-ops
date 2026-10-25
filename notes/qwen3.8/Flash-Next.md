@@ -1,75 +1,56 @@
+Current Qwen lane settings, deploy record and upgrade mechanics:
+[`notes/strata.md`](../strata.md). This note is the model and tuning history.
+
 # 20261019 First try
 
-Normally I won't run Qwen 3.8 Flash Next on my setup: it would be a low quant plus CPU offload,
-so slow. Laguna S 2.1 already showed how a bad baseline looks. But
-https://github.com/niko1221/strata does exactly one thing — run Qwen3.8 Flash Next — and instead
-of llama.cpp's per-layer split it allocates **per expert** across VRAM / locked RAM / SSD, which
-should beat llama-server on this rig. Going with IQ3_S + 256K context + GPU vision.
+Normally I won't run Qwen 3.8 Flash Next on my setup: it would be a low quant plus CPU offload, so
+slow. Laguna S 2.1 already showed how a bad baseline looks. But
+https://github.com/niko1221/strata does exactly one thing — run Qwen3.8 Flash Next — and instead of
+llama.cpp's per-layer split it allocates **per expert** across VRAM / locked RAM / SSD, which should
+beat llama-server on this rig. Going with IQ3_S + 256K context + GPU vision.
 
 # 20261020 Plain llama.cpp baseline (the number Strata had to beat)
 
-Vision on GPU, single 256K slot, IQ3_S, f16 KV, `--flash-attn on`, `-b 2048 -ub 512`, `--cache-ram 0`,
-default 8 threads. Layer split: `-ngl 99` + expert layers to CPU with one comma-separated `-ot`,
-31 of 48 expert layers on GPU; the 26.8 GiB PLE sits on CPU via mmap. CPU-resident weights:
-≈16.6-17.6 GiB experts + 26.8 GiB PLE per lane.
+Vision on GPU, single 256K slot, IQ3_S, f16 KV, `--flash-attn on`, `-b 2048 -ub 512`,
+`--cache-ram 0`, default 8 threads. Layer split: `-ngl 99` + expert layers to CPU with one
+comma-separated `-ot`, 31 of 48 expert layers on GPU; the 26.8 GiB PLE sits on CPU via mmap.
+CPU-resident weights: ≈16.6-17.6 GiB experts + 26.8 GiB PLE per lane.
 
 + 20 %: pp 424.5 / 412.7, tg 16.6 / 16.7 t/s
 + 60 %: pp 338.6 / 331.4, tg 14.3 / 14.4 t/s
 + 85 %: pp 298.6 / 294.7, tg 13.3 / 13.3 t/s
 
-MTP: a no on this rig. The 4.1 GB MTP doesn't fit VRAM without evicting 4 target expert
-layers, and even then it is slower than no-MTP at every level (accept 0.44-0.50); on CPU the
-draft more than halves decode (tg 6.5 at 20 %).
+MTP: a no on this rig. The 4.1 GB MTP doesn't fit VRAM without evicting 4 target expert layers, and
+even then it is slower than no-MTP at every level (accept 0.44-0.50); on CPU the draft more than
+halves decode (tg 6.5 at 20 %).
 
-CPU threads: keep the default 8 (the P-cores). 12 threads is ~1-2.5 % slower on prefill,
-14 ~18 % slower; decode unaffected.
+CPU threads: keep the default 8 (the P-cores). 12 threads is ~1-2.5 % slower on prefill, 14 ~18 %
+slower; decode unaffected.
 
 # 20261020 Strata longctx (IQ3_S, 256K, F16 KV)
 
-Same machine and same workload shape, through Strata instead of `llama-server`.
-Gotcha now baked into `bench/speed/run_longctx.py`: Strata ignores `cache_prompt: false`,
-so the runner prepends a per-request nonce to force cold prefills.
+Same machine and workload shape, through Strata instead of `llama-server`. Gotcha now baked into
+`bench/speed/run_longctx.py`: Strata ignores `cache_prompt: false`, so the runner prepends a
+per-request nonce to force cold prefills.
 
 + 20 % (52K):  pp 1502.2, tg 52.8
 + 60 % (157K): pp 1628.8, tg 49.3
 + 85 % (223K): pp 1574.1, tg 47.9
 
-Against the llama.cpp baseline: pp **3.5x / 4.8x / 5.3x**, tg **3.2x / 3.4x / 3.6x**. 
-Draft acceptance 0.50-0.58.
+Against the llama.cpp baseline: pp **3.5x / 4.8x / 5.3x**, tg **3.2x / 3.4x / 3.6x**. Draft
+acceptance 0.50-0.58.
 
-# 20261020 Strata quality gate (IQ3_S, 256K, F16 KV)
+# 20261020 Quality gate (IQ3_S, 256K, F16 KV)
 
-Same production lane as above.
-Purpose: decide whether the fast IQ3_S is actually usable, not just fast.
+Initial gate on the production lane: tool calling 88/100 (122/138; failures TC-03 and TC-68, with
+partials around the markdown/JSON reflex in TC-65/66/67/69), reasoning 10/10 (the first model here
+to clear both `aime26-15` and `zebra-6x6-01`; ~300k completion tokens in ~89 min wall, 56.8 t/s
+average decode), and agentic coding 19/20. The quant is not dumb; the only clearly weak axis was
+post-tool structured output (50 %). Caveat: the two hard AIME passes were at the wall (~90k tokens /
+~27 min against the 30-min timeout), so this is a strong signal, not a stable rate.
 
-Tool calling: score 88 (122/138)
-
-+ Fails: TC-03 (implicit contact lookup → email chain, `wrong_args`) and TC-68 (schema-violation
-  resistance; final output not valid JSON). Partials cluster around the same markdown/JSON reflex
-  (TC-65/66/67/69) and injection scenarios that were refused but quoted the attacker text back.
-+ Read: parsing/selection/chaining solid — the failures are model habits, not the serving stack.
-  Against `notes/bench.md`: sits in the 85-95 pack; excluding the four scenarios the earlier
-  models could not run (TC-65/66/67/69), 118/130 ≈ 90.8 — roughly Qwen 27B / Ornith class.
-
-Reasoning gate: 10/10
-
-+ First model recorded here to clear **both** anchors: `aime26-15` (0/8 for everything before)
-  and `zebra-6x6-01`; all six zebras exact (100 % cells). 10/10, 0 errors, avg decode 56.8 t/s,
-  ~300k completion tokens in ~89 min wall.
-+ Caveat: the two hard AIME passes are **at the wall** — ~90k tokens / ~27 min against the 30-min
-  timeout, ~2 min of margin. One run, default sampling: strong signal, not a stable rate.
-
-Agentic coding: 19/20 resolved
-
-+ Java 8/8, JS/TS 7/8, C++ 4/4; 20/20 submitted (best recorded — previous best 19/20)
-+ Agent loop 2:23:07, grading 13:33
-+ Only `axios__axios-6539` unresolved: a real code failure (bare `TypeError: Invalid URL` in the SSRF regression),
-  not a grading technicality.
-+ Beats the previous best (15/20, Qwen uncensored) and solved `three-25687` and `vue-11739`,
-  which none of the seven earlier models did.
-
-Verdict: The quant is not dumb. All tests at or above the best models in `notes/bench.md`;
-the only clearly weak axis is post-tool structured output (50 % category).
+The later full runs supersede this gate; all current cross-model results and per-scenario detail are
+in [`notes/bench.md`](../bench.md). This note keeps the tuning and upgrade history.
 
 # 20261022 Strata pp/tg tuning (0.2.2 / engine 0.1.47)
 
@@ -81,13 +62,14 @@ because the expert/cache placement changed; the answers do not degrade).
 The built-in `TUNE=quick` was not used: on this machine class its only restart arms are
 `kv-resident 65536` and `prefill auto:32768`, and it has no split-geometry arms.
 `bench/speed/run_longctx.py --ctx 262144 --out-pct 1` (cold prefills via the per-request nonce),
-2 reps unless marked 1. A direct server has no `/tokenize`, so the runner sizes each level with
-a calibration request: that is an extra cold prefill and is **not** part of the measured rep.
+2 reps unless marked 1. A direct server has no `/tokenize`, so the runner sizes each level with a
+calibration request: that is an extra cold prefill and is **not** part of the measured rep.
 
 Baseline (0.2.2, 2 reps):
 + 20 % pp/tg 1430.8 / 52.3
 + 60 % pp/tg 1674.9 / 48.6
 + 85 % pp/tg 1668.6 / 47.7
+
 Acceptance 0.53; auto K=23 (layers 0-22 / 23-47), 8097 + 6849 cache slots, 25.4 GiB RAM copy,
 lend 3611/3611, file tier 0.0. The 20 % pp point is noisy (reps 1280/1581); 60/85 are the reliable
 pp points.
@@ -101,43 +83,22 @@ Final settings (added to the lane's `STRATA_SET`; `STRATA_SPLIT_OVERLAP=1` remov
 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1
 ```
 
-+ `pipeline-windows=2`: at 60% ctx, pp -2.2% but tg +26.6%
-  + 20% pp/tg 1514.4 / 61.15
-  + 60% pp/tg 1638.8 / 61.45
+| Step | 20 % pp/tg | 60 % pp/tg | 85 % pp/tg | Note |
+| --- | --- | --- | --- | --- |
+| baseline | 1430.8 / 52.3 | 1674.9 / 48.6 | 1668.6 / 47.7 | auto K=23 |
+| `+ pipeline-windows=2` | 1514.4 / 61.15 | 1638.8 / 61.45 | — | pp -2.2 %, tg +26.6 % at 60 % |
+| `+ layer-split=26` | — | 1866.2 / 62.7 | — | both improve |
+| `+ spec-min-p=0.7` | — | 1977.6 / 66.0 | 1864.0 / 62.6 | acceptance 0.57 → 0.68 |
+| `+ STRATA_SCORES_THREAD=1` | — | 1986.3 / 64.05 | 2088.1 / 63.65 | pp slightly improves |
+| `+ trim-stage-weights=on` | — | 2017.1 / 67.35 | 2173.9 / 66.5 | pp slightly improves, tg in margin |
 
-+ above + `layer-split=26`: both pp and tg improves
-  + 60% pp/tg 1866.2 / 62.7
+Final vs baseline: 20 % pp +23.8 %, tg +26.3 %; 60 % pp +20.4 %, tg +38.7 %; 85 % pp +30.3 %,
+tg +39.6 %. Average request latency: 60 % 147.4 s → 116.6 s; 85 % 187.5 s → 141.3 s.
 
-+ above + `spec-min-p=0.7`: both pp and tg improves; acceptance 0.57→0.68
-  + 60% pp/tg 1977.6 / 66.0
-  + 85% pp/tg 1864.0 / 62.6
-
-+ above + `STRATA_SCORES_THREAD=1`:pp slightly improves
-  + 60% pp/tg 1986.3 / 64.05
-  + 85% pp/tg 2088.1 / 63.65
-
-+ above + `trim-stage-weights=on`:pp slightly improves, tg in margin
-  + 60% pp/tg 2017.1 / 67.35
-  + 85% pp/tg 2173.9 / 66.5
-
-
-Final vs baseline: 
-  + 20% pp +23.8%, tg +26.3%
-  + 60% pp +20.4%, tg +38.7%
-  + 85% pp +30.3%, tg +39.6%
-
-Average request latency:
- + 60% 147.4s to 116.6s
- + 85% 187.5s to 141.3s
-
-The `trim-stage-weights` moves experts from RAM to VRAM: 
-  + GPU caches 31.3 GiB (vs 27.8)
-  + RAM copy   22.4 GiB (vs 25.9),
-  + lend 3591/3591, file tier still 0.0
-
-Layout: layers 0-25 on CUDA0 (x16), 26-47 on CUDA1 (x4), 8452 + 7972 slots.
-The `pipeline-windows=2` keeps 272-284 MiB of CUDA0 out of the expert cache;
-that is included in the numbers.
+`trim-stage-weights` moves experts from RAM to VRAM: GPU caches 31.3 GiB (vs 27.8), RAM copy
+22.4 GiB (vs 25.9), lend 3591/3591, file tier still 0.0. Layout: layers 0-25 on CUDA0 (x16),
+26-47 on CUDA1 (x4), 8452 + 7972 slots. `pipeline-windows=2` keeps 272-284 MiB of CUDA0 out of the
+expert cache; that is included in the numbers.
 
 ## Rejected (do not repeat)
 
@@ -152,27 +113,25 @@ that is included in the numbers.
 | `STRATA_SH_STREAM=1` (on scores+trim) | 1983.8 / 60.2 | tg −10.6 % at 60 % vs the final; the identity output is fine but it does not pay on gfx1100 here |
 | `prefill-pipe=1` (on the final) | 2042.8 / 62.8 (1 rep) | 85 % 2150.0 / 64.2; pp +1.3 % / −1.1 %, tg −6.8 % / −3.5 % vs the final; no win, so no b/a sweep |
 
-
 # 20261022 PARALLEL quick test (can the lane serve 2-4 requests at once?)
 
-Question: agentic tooling (OpenCode subagents) can issue several requests at once; today
-llama-swap queues them on the engine's single slot. Does Strata's `PARALLEL=N` (engine
-`--batch N`, batch slots) pay for itself at 262144 ctx / F16 KV? Priority: speed
-("serve more requests but keep decent speed"); 256K per request is a hard requirement.
+Question: agentic tooling (OpenCode subagents) can issue several requests at once; today llama-swap
+queues them on the engine's single slot. Does Strata's `PARALLEL=N` (engine `--batch N`, batch slots)
+pay for itself at 262144 ctx / F16 KV? Priority: speed ("serve more requests but keep decent speed");
+256K per request is a hard requirement.
 
 ## Engine facts (measured from the start log; they replace the plan's estimates)
 
-+ `PARALLEL=2` → engine `--batch 2` and **`--pipeline-windows 2 is off: not with --batch
-  slots`** — the tuning's biggest decode win is structurally incompatible with any batch
-  slot count, so single-stream is capped at ≈ 67.35 / 1.266 ≈ 53 tg before anything else.
-+ Each slot carves **one extra full-262144 F16 session per stage**: `2 slot sessions on
-  CUDA0 (3.32 GiB each)`, same on CUDA1 — `--batch 2: the slot sessions take 6.64 GiB of
-  VRAM on CUDA0 that the expert cache would otherwise hold`. The slots are carved
-  **before** the expert cache is sized: CUDA0 8450 → 4936 slots (15.31 → 8.95 GiB),
-  CUDA1 7972 → 4736 (15.96 → 9.50 GiB), i.e. −41 % / −40 %; the RAM copy grew
-  22.37 → 28.00 GiB to compensate.
-+ Batch windows decode **without MTP drafts** by default (the c=2 rows report draft 0 /
-  accepted 0): each concurrent slot also loses the speculative-decoding multiplier.
++ `PARALLEL=2` → engine `--batch 2` and **`--pipeline-windows 2 is off: not with --batch slots`** —
+  the tuning's biggest decode win is structurally incompatible with any batch slot count, so
+  single-stream is capped at ≈ 67.35 / 1.266 ≈ 53 tg before anything else.
++ Each slot carves **one extra full-262144 F16 session per stage**: `2 slot sessions on CUDA0
+  (3.32 GiB each)`, same on CUDA1 — `--batch 2: the slot sessions take 6.64 GiB of VRAM on CUDA0
+  that the expert cache would otherwise hold`. The slots are carved **before** the expert cache is
+  sized: CUDA0 8450 → 4936 slots (15.31 → 8.95 GiB), CUDA1 7972 → 4736 (15.96 → 9.50 GiB), i.e.
+  −41 % / −40 %; the RAM copy grew 22.37 → 28.00 GiB to compensate.
++ Batch windows decode **without MTP drafts** by default (the c=2 rows report draft 0 / accepted 0):
+  each concurrent slot also loses the speculative-decoding multiplier.
 
 ## Numbers (60 % of 262144 ctx, out 2621, 1 rep, direct containers)
 
@@ -185,127 +144,68 @@ llama-swap queues them on the engine's single slot. Does Strata's `PARALLEL=N` (
 + parallel=2 and 2 req
   + req1 pp/tg/TTFT: 1732.7 / 29.2 / 90.7
   + req2 pp/tg/TTFT: 1706.6 / 42.4 / 91.6
-  + Total time: 253.7s
+  + Total time: 253.7 s
 
-When only have 1 req, tg speed too slow. A lone request on the PARALLEL=2 lane loses **38 %** tg speed,
-16 % pp speed and +19 % TTFT, paid 24/7 whether or not anyone uses the second slot. The loss is pipeline-off
-plus the −41 % expert cache; without drafts the pipeline ceiling alone would have been ~53 tg.
+A lone request on the PARALLEL=2 lane loses **38 %** tg, 16 % pp and +19 % TTFT, paid 24/7 whether
+or not anyone uses the second slot. The loss is pipeline-off plus the −41 % expert cache; without
+drafts the pipeline ceiling alone would have been ~53 tg.
 
-Concurrency does not win on its own terms either: two simultaneous requests on the PARALLEL=2 lane produced 
-20.7 out-tok/s aggregate over their wall time, below the PARALLEL=1 lane serving one request end-to-end (22.7 t/s)
-and two sequential PARALLEL=1 reps (~231 s) would finish both requests faster than serving them concurrently on
-PARALLEL=2 (253.7 s). Per-request tg 29.2 / 42.4 vs 63.9 queued.
+Concurrency does not win on its own terms either: two simultaneous requests on the PARALLEL=2 lane
+produced 20.7 out-tok/s aggregate over their wall time, below the PARALLEL=1 lane serving one
+request end-to-end (22.7 t/s); two sequential PARALLEL=1 reps (~231 s) would finish both requests
+faster than serving them concurrently on PARALLEL=2 (253.7 s). Per-request tg 29.2 / 42.4 vs 63.9
+queued.
 
-Verdict: Keep `PARALLEL=1` on both lanes. Queue subagents on the single slot (llama-swap's `concurrencyLimit: 20`
-already does); prefix caching plus the 4 conversation-parking slots make queueing cheap for agent turns (turn
-increments reuse parked prefixes). The accepted cost is head-of-line blocking: a 100-200K-token compaction stalls
-the queue for its ~1-4 min prefill, but still better than halving everyone's speed.
+Verdict: Keep `PARALLEL=1` on both lanes. Queue subagents on the single slot (llama-swap's
+`concurrencyLimit: 20` already does); prefix caching plus the 4 conversation-parking slots make
+queueing cheap for agent turns (turn increments reuse parked prefixes). The accepted cost is
+head-of-line blocking: a 100-200K-token compaction stalls the queue for its ~1-4 min prefill, but
+still better than halving everyone's speed.
 
-Revisit only if Strata ships `--batch` + `--pipeline-windows` compatibility, or a KV-streaming mode that keeps the
-expert cache intact while slots exist (that would fix the eviction but not the 53 tg pipeline ceiling), or the workload
-truly needs 2+ simultaneous long decodes.
+Revisit only if Strata ships `--batch` + `--pipeline-windows` compatibility, or a KV-streaming mode
+that keeps the expert cache intact while slots exist (that would fix the eviction but not the 53 tg
+pipeline ceiling), or the workload truly needs 2+ simultaneous long decodes.
 
+# Upgrade history (0.2.3 → 0.2.5)
 
-# 20261023 0.2.3 upgrade spot-check (engine 0.1.48)
+Setup/deploy mechanics are in [`notes/strata.md`](../strata.md); this table keeps the lane-level
+verification. Numbers are `run_longctx.py --ctx 262144 --out-pct 1 --in-pcts 60,85`, 2 reps, through
+llama-swap, vanilla lane unless noted.
 
-Same runner and lane settings as the 20261022 tuning (`bench/speed/run_longctx.py --ctx 262144
---out-pct 1`, 2 reps), on the upgraded image `ghcr.io/niko1221/strata:0.2.3-rocm-gfx110x` /
-engine 0.1.48. This run went through llama-swap; the 20261022 numbers were measured directly on
-the lane. The first start per lane dropped the 0.2.2 install record and re-ran setup once; no
-repack and no engine/mmproj download; the hipBLASLt table is unchanged (`gfx1100-hipblaslt-100200.txt`,
-version `100200`).
+| Image / engine | 60 % pp / tg (accept) | 85 % pp / tg (accept) | First start |
+| --- | --- | --- | --- |
+| 0.2.3 upstream / 0.1.48 | 2077.3 / 65.95 (0.654) | 2132.5 / 63.30 (0.670) | record dropped; setup once; no repack/download |
+| 0.2.4.2 own / 0.1.48 | 2100.5 / 64.05 (0.654) | 2172.4 / 64.00 (0.673) | record kept; straight to serving |
+| 0.2.5 own / 0.1.50, sample 1 | 2005.8 / 63.55 (0.649) | 2049.4 / 65.75 (0.692) | record dropped; setup once; no repack/download; hipBLASLt table re-tuned |
+| 0.2.5 own / 0.1.50, sample 2 | 1936.1 / 63.65 (0.656) | 2074.8 / 64.30 (0.683) | — |
 
-Vanilla lane (`qwen3.8-flash-next-iq3s`):
+0.2.3 was within ±2 % pp and −2 %/−5 % tg of the 0.2.2 tuning — **no RX 7000 regression from the
+0.1.48 rebuild** (upstream claims none; the Strix Halo changes are gfx1151-only), so treat the tg
+delta as run-to-run noise unless it repeats. 0.2.4.2 was +1.1 %/+1.9 % pp and −2.9 %/+1.1 % tg
+against 0.2.3 — both noise, no action.
 
-| Level | 0.2.3 pp / tg | accept | 0.2.2 final pp / tg | accept |
-|---|---|---|---|---|
-| 60 % (157K) | 2077.3 / 65.95 | 0.654 | 2017.1 / 67.35 | 0.68 |
-| 85 % (223K) | 2132.5 / 63.30 | 0.670 | 2173.9 / 66.5 | — |
-
-Latency: 60 % 117.3 / 113.0 s; 85 % 147.2 / 143.2 s (0.2.2: 116.6 / 141.3 s). Rep peaks: 60 %
-pp 2135 / tg 66.2; 85 % pp 2180 / tg 64.6. `cache_n` 0 on every rep (cold prefill).
-
-Verdict: pp within ±2 % and tg within −2 %/−5 % of the 0.2.2 tuning; acceptance 0.65-0.67 vs 0.68.
-No RX 7000 regression from the 0.1.48 rebuild (upstream claims none; the Strix Halo changes are
-gfx1151-only). Treat the tg delta as run-to-run noise unless it repeats.
-
-SC117 swapped in cleanly through llama-swap (~50 s cold, own mmproj), answered a chat, a
-`get_weather` tool call and a 640×360 picture ("Blue"); its engine argv shows engine 0.1.48, the
-same split/knobs and hipBLASLt tuning.
-
-
-# 20261024 0.2.4.2 upgrade spot-check (engine 0.1.48, own image)
-
-Same runner and lane settings as the 20261023 spot-check (`bench/speed/run_longctx.py --ctx
-262144 --out-pct 1 --in-pcts 60,85`, 2 reps), through llama-swap, on our own build
-`ghcr.io/hurui200320/llm-ops-strata:0.2.4.2-rocm-gfx110x` (Terminal 0.2.4.2 / Control 0.1.49.2;
-the engine is the signed-feed 0.1.48 rx7900 package, byte-identical to 0.2.3, plus our gfx110x
-`strata-dsv41` file which these lanes never invoke). Unlike 0.2.3, the first start kept the
-install record: no setup pass, `Strata-data/` stayed at 50 files and `mtp/tensors/verified.json`
-was not re-stamped.
-
-Vanilla lane (`qwen3.8-flash-next-iq3s`):
-
-| Level | 0.2.4.2 pp / tg | accept | 0.2.3 pp / tg | accept |
-|---|---|---|---|---|
-| 60 % (157K) | 2100.5 / 64.05 | 0.654 | 2077.3 / 65.95 | 0.654 |
-| 85 % (223K) | 2172.4 / 64.00 | 0.673 | 2132.5 / 63.30 | 0.670 |
-
-Latency: 60 % 116.7 / 114.2 s; 85 % 143.3 / 142.4 s. Rep peaks: 60 % pp 2136 / tg 64.4; 85 %
-pp 2175 / tg 64.2. `cache_n` 0 on every rep (cold prefill).
-
-Verdict: pp +1.1 %/+1.9 % and tg −2.9 %/+1.1 % against 0.2.3 — within noise. The engine bytes,
-hipBLASLt table and lane settings are unchanged, so any difference is run-to-run; no action.
-
-Both lanes served through llama-swap on 2026-10-24: keyless chat, `get_weather{"city":"Paris"}`,
-`max_tokens:-1`, 640×360 vision ("Red") and the `:npt` alias all answered; SC117 swapped in with
-its own mmproj; engine landmarks matched 0.2.3 (22.37 GiB resident, lend 3591, 31.3 GiB GPU
-caches, 0.0 GiB file tier, `prefill gemm: hipBLASLt tuning enabled (26 rows, gfx1100, version
-100200)`). `docker stop -t 120` took 3.8 s with the VRAM freed.
-
-
-# 20261025 0.2.5 upgrade spot-check (engine 0.1.50, own image)
-
-Same runner and lane settings as the 20261024 spot-check (`bench/speed/run_longctx.py --ctx
-262144 --out-pct 1 --in-pcts 60,85`, 2 reps), through llama-swap, on
-`ghcr.io/hurui200320/llm-ops-strata:0.2.5-rocm-gfx110x` (Terminal 0.2.5 / Control 0.1.50, the
-signed-feed 0.1.50 rx7900 engine package plus our gfx110x `strata-dsv41`). Unlike 0.2.4.2 the
-engine folder version changes (0.1.48→0.1.50), so the first start drops the install record and
-re-runs setup once — no repack and no download (`Strata-data/` stayed at 50 files, only
-`mtp/tensors/verified.json` re-stamped; the record now names the 0.1.50 engine/vision paths).
-The hipBLASLt table is re-tuned for the same version `100200` (`235a26c3…` vs 0.1.48's
-`1bb8cd2e…`).
-
-Two samples of the same run (the second after a hipBLASLt table A/B and fresh container starts):
-
-| Level | 0.2.5 sample 1 pp / tg | accept | 0.2.5 sample 2 pp / tg | accept | 0.2.4.2 pp / tg |
-|---|---|---|---|---|---|
-| 60 % (157K) | 2005.8 / 63.55 | 0.649 | 1936.1 / 63.65 | 0.656 | 2100.5 / 64.05 |
-| 85 % (223K) | 2049.4 / 65.75 | 0.692 | 2074.8 / 64.30 | 0.683 | 2172.4 / 64.00 |
-
-The 60 % average is dragged down by the first measured rep of each sample being an outlier
-(1900.8 and 1739.0 t/s); those requests logged an ~8.3-8.7 GB OS read from NVMe (cold page cache
-after the container churn). The steady reps are 2110.8 / 2133.2 (60 %) and 2041.2-2075.0 (85 %),
-inside the 0.2.4.2 range. `cache_n` 0 on every rep.
+The 0.2.5 60 % average is dragged down by the first measured rep of each sample (1900.8 and
+1739.0 t/s); those requests logged an ~8.3-8.7 GB OS read from NVMe (cold page cache after the
+container churn). The steady reps are 2110.8 / 2133.2 (60 %) and 2041.2-2075.0 (85 %), inside the
+0.2.4.2 range. `cache_n` 0 on every rep.
 
 A direct fixed-prompt A/B (600,000 chars ≈ 147K tokens, `max_tokens=1`, 3 reps, same container
-recipe) separates engine/table from the run variance:
+recipe) separates engine/table from run variance:
 
 | Arm | pp at ~147K | pp at ~222K |
-|---|---|---|
+| --- | --- | --- |
 | 0.2.5 + new table (default) | 2110.5 t/s | 2116.1 / 2152.8 t/s |
 | 0.2.5 + 0.1.48 table (`STRATA_HIPBLASLT_TUNING`) | 2106.1 t/s | — |
 | 0.1.48 (20261024 run_longctx, for scale) | 2100.5 t/s | 2172.4 t/s |
 
-Verdict: the 0.1.50 engine and the re-tuned table are neutral for these lanes — the direct
-numbers match 0.2.4.2 and the old table within 0.2 %; the run_longctx 85 % gap above is cold-page
-and run variance, not a regression. tg and acceptance are within noise. No action.
+Verdict: the 0.1.50 engine and the re-tuned table are neutral for these lanes — the direct numbers
+match 0.2.4.2 and the old table within 0.2 %; the run_longctx 85 % gap above is cold-page and run
+variance, not a regression. tg and acceptance are within noise. No action.
 
-Smoke through llama-swap on 2026-10-25: keyless chat, `get_weather{"city":"Paris"}`,
-`max_tokens:-1`, 640×360 vision ("Red") and the `:npt` alias answered on vanilla; SC117's setup
-picked its own mmproj (`2e788f8c…`), answered a chat, a tool call and a 640×360 picture ("Blue").
-Engine landmarks match 0.2.4.2 on both lanes: 22.37 GiB resident, lend 3591, 31.3 GiB GPU caches,
-0.0 GiB file tier, MTP 1348 MiB, `prefill gemm: hipBLASLt tuning enabled (26 rows, gfx1100,
-version 100200)`. The engine log adds `this CPU has no AVX-512: the expert kernels run on AVX-2`
-(the 0.1.50 CPU-row work does not reach this host). `docker stop -t 120` on the DeepSeek lane took
-2.12 s with the VRAM freed.
+Smoke through llama-swap on 2026-10-25: keyless chat, `get_weather{"city":"Paris"}`, `max_tokens:-1`,
+640×360 vision ("Red") and the `:npt` alias answered on vanilla; SC117's setup picked its own mmproj
+(`2e788f8c…`), answered a chat, a tool call and a 640×360 picture ("Blue"). Engine landmarks match
+0.2.4.2 on both lanes: 22.37 GiB resident, lend 3591, 31.3 GiB GPU caches, 0.0 GiB file tier, MTP
+1348 MiB, `prefill gemm: hipBLASLt tuning enabled (26 rows, gfx1100, version 100200)`. The engine log
+adds `this CPU has no AVX-512: the expert kernels run on AVX-2` (the 0.1.50 CPU-row work does not
+reach this host).

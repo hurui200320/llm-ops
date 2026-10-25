@@ -458,26 +458,21 @@ models:
   # MTP are reused (no repack). Terminal 0.2.3 bundles the pre-hotfix Control
   # 0.1.48: the two 0.2.3.1 fixes are off this container's CONTROL setup path,
   # and the 0.1.48 hip-rx7900 package is the same one 0.2.3.1 ships.
-  # 2026-10-23 0.2.3 spot-check (0.1.48, identical settings, through llama-swap):
-  #   60% pp 2077 / tg 66.0, 85% pp 2132 / tg 63.3 (0.2.2: 2017/67.4, 2174/66.5);
-  #   within noise — no RX 7000 regression from the 0.1.48 rebuild.
   # 2026-10-22 pp/tg tuning (0.2.2 / 0.1.47, vanilla IQ3_S, measured direct):
   #   pipeline-windows=2 + layer-split=26 + trim-stage-weights + spec-min-p=0.7
-  #   + STRATA_SCORES_THREAD=1. 60%: pp 1675 -> 2017, tg 48.6 -> 67.4;
-  #   85%: pp 1669 -> 2174, tg 47.7 -> 66.5. STRATA_SPLIT_OVERLAP is gone:
-  #   pipeline-windows supersedes it (the engine log says so). Details and the
-  #   rejected arms: notes/qwen3.8/Flash-Next.md, "20261022 Strata pp/tg tuning".
+  #   + STRATA_SCORES_THREAD=1. STRATA_SPLIT_OVERLAP is gone: pipeline-windows
+  #   supersedes it (the engine log says so). Tuning numbers, the 0.2.3/0.2.4.2
+  #   spot-checks and the rejected arms: notes/qwen3.8/Flash-Next.md.
   # Do not pass KV= (any value makes `strata launch` re-run setup, which rejects
   # fp16): F16 KV is `kv=fp16` inside STRATA_SET, applied to the engine argv.
   # Do not pass --slot-save-path: session files are refused on a layer split.
   # Cold start 1-3 min (30 s on a warm page cache), hence the per-model timeout;
   # PARALLEL=1 matches the engine's single slot (concurrencyLimit below is the
   # swap's queue depth). PARALLEL>1 was measured 2026-10-22 and rejected: each
-  # batch slot carves one extra full-256K F16 session per card (3.32 GiB each)
-  # out of the expert cache and disables pipeline-windows; a lone request then
-  # decodes 38% slower at 60%, and two concurrent requests finish later than
-  # queueing both on this single slot — see notes/qwen3.8/Flash-Next.md
-  # ("PARALLEL quick test"). Notes: notes/strata.md.
+  # batch slot carves one extra full-256K F16 session per card out of the expert
+  # cache and disables pipeline-windows; concurrency loses to queueing on this
+  # single slot — see notes/qwen3.8/Flash-Next.md ("PARALLEL quick test").
+  # Notes: notes/strata.md.
   # 2026-10-24 0.2.4.2 (own image, ghcr.io/hurui200320/llm-ops-strata; upstream
   #   has published no 0.2.4.x image): Terminal 0.2.4.2 / Control 0.1.49.2
   #   around the same signed-feed 0.1.48 engine package — manifest, BUILD.json
@@ -487,8 +482,8 @@ models:
   #   (no setup pass, no repack, verified 2026-10-24). Deploy smoke and
   #   spot-check: notes/strata.md.
   # 2026-10-25 0.2.5 (own image): Terminal/Control 0.2.5/0.1.50 around the new
-  #   0.1.50 rx7900 engine package (manifest 43746aaf..., hipBLASLt table
-  #   re-tuned, same version 100200) plus our strata-dsv41 beside it. The engine
+  #   0.1.50 rx7900 engine package (hipBLASLt table re-tuned, same version
+  #   100200) plus our strata-dsv41 beside it. The engine
   #   folder version changes, so the 0.2.4.2 record is dropped and setup re-runs
   #   once on the first start (no repack, no download; the fork re-swaps the
   #   template on the next start). Deploy record: notes/strata.md.
@@ -632,10 +627,8 @@ models:
   # (--experts/--speed is the 16 GiB-or-shared-RAM rule; 2x24 GiB stays full
   # quality), makes the prompt path length-based and deterministic, and warms
   # the chunked prefill pass after ready. The gfx11 WMMA prompt kernels are
-  # opt-in here (on by default only on Strix Halo): STRATA_DS4_HIPK=1 measured
-  # +18.7% pp at 51K tokens (341.9 -> 405.8 t/s, 2 reps each, same answers,
-  # decode within noise) and is enabled on the lane. Details:
-  # notes/deepseek/v41f1017.md.
+  # opt-in here (on by default only on Strix Halo): STRATA_DS4_HIPK=1 is enabled
+  # on the lane; the measured pp gain and A/B are in notes/deepseek/v41f1017.md.
   # First start does the setup work — one-time SHA-256 pass over the ~257 GB of
   # files, the 5.8 MB Unsloth metadata shard (`--engram-meta`), the pack +
   # hot-expert profile, and the smoke — so run it outside llama-swap first
