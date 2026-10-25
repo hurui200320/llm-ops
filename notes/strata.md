@@ -198,7 +198,8 @@ changes are picked up live; no environment variable is needed to load a lane.
   becomes a root-owned directory and kills the container.
 
 Current `STRATA_SET` (identical on the two Qwen lanes; the DeepSeek lane passes only
-`ssd-cache=36 reserve-mib=896` — see its section and [`notes/deepseek/v41f1017.md`](deepseek/v41f1017.md)):
+`ssd-cache=36 reserve-mib=896` — see its section and
+[`notes/deepseek/v41f1017.md`](deepseek/v41f1017.md)):
 
 ```
 kv=fp16
@@ -335,13 +336,13 @@ gfx1100 hardware** before this lane — setup's 16-token smoke is that test.
 (≈48 GB here), which would leave too little for dev work on this box. The Qwen lanes' analogue
 (`resident-budget-gib=28`) is a Flash-Next setting that setup warns about and DeepSeek ignores; the
 DeepSeek knob is **`--ssd-cache` in decimal GB** (engine: `budget_bytes = N × 1e9`). The lane passes
-`STRATA_SET="ssd-cache=36 reserve-mib=896"` → a 36 GB store cap, leaving about 24 GiB of the 62 GiB
-plus reclaimable page cache. 36 vs 40 measured neutral (pp -0.5 %, tg -5.9 % at 85 %, inside noise;
-swap <1 GiB across a 40 + 85 % pass). `--reserve-mib` is the VRAM side and is a **plan-time** input,
-not a free-VRAM floor: measured free during a run is `reserve − ~530 MiB` on the monitor card (CUDA0)
-and `reserve − ~330 MiB` on CUDA1, so 896 leaves ~360 MiB on CUDA0 (600 left ~60). Both are launch
-settings: change them and restart the lane, no re-setup. `--ssd-cache 0` turns the store off (every
-CPU expert read from the SSD per token — do not).
+`STRATA_SET="ssd-cache=36 reserve-mib=896"` → a 36 GB store cap, leaving about 24 GiB
+of the 62 GiB plus reclaimable page cache, with the engine's automatic layer split. Why these
+values and the measurements behind them: [`notes/deepseek/v41f1017.md`](deepseek/v41f1017.md).
+`--reserve-mib` is the VRAM side and is a **plan-time** input, not a free-VRAM floor (the note has
+the measured free-VRAM curve). All are launch settings: change them and restart the lane, no
+re-setup. `--ssd-cache 0` turns the store off (every CPU expert read from the SSD per token — do
+not).
 
 ### Context, KV, parallel, vision
 
