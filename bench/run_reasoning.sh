@@ -31,6 +31,11 @@
 #   LLAMA_SWAP_URL  llama-swap root URL (default http://10.233.1.16:8080; the
 #                   /v1 suffix the Python expects is appended here)
 #   MAX_TOKENS      passed as --max-tokens (default 131072)
+#   REQUEST_TIMEOUT per-request timeout in seconds, passed as --timeout
+#                   (default 1800 = 30 min per request). With the single
+#                   60s-wait retry a problem can burn up to 2x this plus
+#                   60s of wall time on a single slot; raise it for slower
+#                   models instead of editing the Python default.
 #   SKIP_IDS        comma-separated problem ids excluded from runs. Default
 #                   selects the 10-problem gate out of the 43 on disk (12
 #                   light + 15 AIME + 16 zebra). The frozen manifest and the
@@ -48,6 +53,7 @@ FRONTIER="$SCRIPT_DIR/.cache/reasoning/frontier.jsonl"
 LLAMA_SWAP_URL="${LLAMA_SWAP_URL:-http://10.233.1.16:8080}"
 API_KEY="${API_KEY:-${STRATA_KEY:-}}"
 MAX_TOKENS="${MAX_TOKENS:-131072}"
+REQUEST_TIMEOUT="${REQUEST_TIMEOUT:-1800}"
 SKIP_IDS="${SKIP_IDS:-l01,l02,l03,l04,l05,l06,l07,l08,l09,l10,l11,aime26-01,aime26-02,aime26-03,aime26-04,aime26-05,aime26-06,aime26-07,aime26-08,aime26-09,aime26-12,aime26-13,aime26-14,zebra-3x4-01,zebra-3x4-02,zebra-4x4-01,zebra-4x4-02,zebra-4x4-03,zebra-4x4-04,zebra-4x4-05,zebra-4x5-01,zebra-4x5-02,zebra-4x5-03}"
 BASE_URL="$LLAMA_SWAP_URL/v1"
 STAMP="$(date +%Y%m%d-%H%M%S)"
@@ -125,13 +131,13 @@ for model in "${MODELS[@]}"; do
     JSON="$RESULTS_DIR/$model-$STAMP.json"
     LOG="$RESULTS_DIR/$model-$STAMP.log"
     RUN_START=$SECONDS
-    echo "${CYAN}  max-tokens=$MAX_TOKENS, results in $JSON, logging to $LOG${RESET}"
+    echo "${CYAN}  max-tokens=$MAX_TOKENS, timeout=${REQUEST_TIMEOUT}s, results in $JSON, logging to $LOG${RESET}"
     # pipefail makes the pipeline status the python script's, not tee's; the
     # summary JSON is still written when some requests fail, only the exit
     # status is non-zero
     if python3 "$PY" --base-url "$BASE_URL" --model "$model" "${KEY_ARGS[@]}" \
         --problems "${PROBLEM_ARGS[@]}" "${SKIP_ARGS[@]}" \
-        --max-tokens "$MAX_TOKENS" --out "$JSON" 2>&1 | tee "$LOG"; then
+        --max-tokens "$MAX_TOKENS" --timeout "$REQUEST_TIMEOUT" --out "$JSON" 2>&1 | tee "$LOG"; then
         echo "${CYAN}  done in $((SECONDS - RUN_START))s${RESET}"
     else
         echo "warning: model $model FAILED, log: $LOG" >&2
