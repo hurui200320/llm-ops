@@ -177,9 +177,18 @@ history and rejects: [`notes/qwen3.8/Flash-Next.md`](qwen3.8/Flash-Next.md).
 - **Upgrades**: pull and pin the new image, back up `install/strata-iq3_s.json` and
   `config/strata/launch-presets/docker.json`, make sure no Strata model is loaded, re-diff the
   entrypoint fork, then let llama-swap reload or start the vanilla lane first. See "Upgrade history".
-- **Vision token cap**: the server and the reader clamp image tokens by default when
-  `vision.max_tokens` is absent (CPU reader 300, GPU reader 1024; #3690). The lane's install record
-  carries the reader settings setup wrote; the 2026-10-23 smoke verified a 640×360 picture.
+- **Vision token budget 1024–8192**: both Qwen lanes set `VISION_TOKENS=8192
+  VISION_MIN_TOKENS=1024`; entrypoint fork change 5 writes them into the run settings' `vision`
+  section (`max_tokens`/`min_tokens`) before the server starts, and the server passes them to the
+  GPU reader as `--max-tokens`/`--min-tokens`. Without the keys setup's default stays (GPU reader
+  1024, CPU 300) and the server clamps a keyless config the same way (#3690: one picture became
+  93,700 image tokens); setup has no per-launch option and `strata launch --set` reaches the engine
+  only. The reader sizes a picture into the budget at one token per 1024 px (patch 16 · merge 2,
+  32-px aligned): 640×480 = 300, 1080p ≈ 2025, 4K ≈ 8100; `min_tokens` scales smaller pictures up
+  (Qwen-VL grounding wants ≥ 1024). A picture that still comes out over max + 12.5 % is refused by
+  the reader, not silently sent. Same 1024–8192 as the 27B llama.cpp lanes; the write was checked
+  against copies of both live records on 2026-10-27 (idempotent, setup's `indent=1` shape). The
+  2026-10-23 smoke verified a 640×360 picture.
 - **Never** pass `KV=`; use `kv=` inside `STRATA_SET`. Since 0.2.5, setup accepts `fp16`, but `KV=fp16`
   re-runs setup once and rewrites the record. `desc_matches()` compares the KV choice with the
   installed config, so the lanes stay installed with int8 and `kv=fp16` appends `--kv fp16` to the

@@ -209,3 +209,12 @@ Smoke through llama-swap on 2026-10-25: keyless chat, `get_weather{"city":"Paris
 1348 MiB, `prefill gemm: hipBLASLt tuning enabled (26 rows, gfx1100, version 100200)`. The engine log
 adds `this CPU has no AVX-512: the expert kernels run on AVX-2` (the 0.1.50 CPU-row work does not
 reach this host).
+
+# 20261027 Vision budget 1024-8192 (declarative)
+
+Both lanes now read pictures at up to 8192 image tokens, with small ones scaled up to 1024
+(`--max-tokens 8192 --min-tokens 1024`; setup's default was 1024 max, no floor) — the same range as
+the Qwen3.8 27B llama.cpp lanes. The budget is set per lane in llama-swap
+(`VISION_TOKENS`/`VISION_MIN_TOKENS`) and written into the run settings by entrypoint fork change 5,
+so no hand-edited config is involved. Mechanism, token math and verification:
+[`notes/strata.md`](../strata.md).

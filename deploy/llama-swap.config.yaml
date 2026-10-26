@@ -450,10 +450,12 @@ models:
       idleConn: 90
 
 
-  # Qwen3.8 Flash-Next IQ3_S on Strata
+  # Qwen3.8 Flash-Next IQ3_S on Strata.
+  # Picture reader budget (entrypoint fork change 5): 8192 image tokens at most,
+  # 1024 at least — one token per 1024 px, so a 4K picture fits. See notes/strata.md.
   "qwen3.8-flash-next-iq3s":
     name: "Qwen3.8 Flash-Next IQ3_S"
-    description: "262144 ctx, F16 KV, Strata layer split over 2x7900XTX, fully resident @28 GiB"
+    description: "262144 ctx, F16 KV, Strata layer split over 2x7900XTX, fully resident @28 GiB; image 1024-8192 tok"
     cmd: |
       ${docker-server-strata-rocm}
         -v /mnt/unenc-xfs/strata/ISTA-DASLab-Flash-Next:/data
@@ -463,6 +465,8 @@ models:
         -e PARALLEL=1
         -e MODEL_PATH=/models/strata/ISTA-DASLab-Flash-Next
         -e CHAT_TEMPLATE_PATH=/templates/qwen3.8/Flash-Next-chat-template.jinja
+        -e VISION_TOKENS=8192
+        -e VISION_MIN_TOKENS=1024
         -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=768 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1"
         ghcr.io/hurui200320/llm-ops-strata:0.2.6-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
@@ -503,9 +507,10 @@ models:
 
 
   # SC117 abliterated (uncensored) transplant of the same ISTA GSQ-RCO IQ3_S.
+  # Same picture-reader budget as the vanilla lane (VISION_TOKENS/MIN_TOKENS).
   "qwen3.8-flash-next-sc117-iq3s":
     name: "Qwen3.8 Flash-Next SC117 IQ3_S (abliterated)"
-    description: "262144 ctx, F16 KV, Strata layer split over 2x7900XTX, uncensored"
+    description: "262144 ctx, F16 KV, Strata layer split over 2x7900XTX, uncensored; image 1024-8192 tok"
     cmd: |
       ${docker-server-strata-rocm}
         -v /mnt/unenc-xfs/strata/sc117-Flash-Next-uncensored:/data
@@ -515,6 +520,8 @@ models:
         -e PARALLEL=1
         -e MODEL_PATH=/models/strata/sc117-Flash-Next-uncensored
         -e CHAT_TEMPLATE_PATH=/templates/qwen3.8/Flash-Next-chat-template.jinja
+        -e VISION_TOKENS=8192
+        -e VISION_MIN_TOKENS=1024
         -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=768 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1"
         ghcr.io/hurui200320/llm-ops-strata:0.2.6-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}

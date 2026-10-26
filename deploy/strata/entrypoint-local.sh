@@ -28,7 +28,15 @@
 #      (verified in-image 2026-10-25). Both honour STRATA_DSV41_EXE, so resolve
 #      it from the installed package; an explicit -e still wins. Inert for the
 #      Flash-Next lanes (every dsv41 path is gated on arch/family deepseek41).
-# The script below is upstream v0.2.4.2 apart from the four changes above and the
+#   5. When VISION_TOKENS / VISION_MIN_TOKENS are set, write them into every run
+#      config that reads pictures (its "vision" section's max_tokens / min_tokens)
+#      before the server starts. Setup writes a budget at install time (GPU reader
+#      1024, CPU reader 300) and has no per-launch option for it; the server passes
+#      it to the picture reader as --max-tokens / --min-tokens at every start.
+#      Patching the config keeps the repo the source of truth and survives the
+#      config being written again (setup keeps the value: max_tokens for the same
+#      reader device, min_tokens as a key setup does not write).
+# The script below is upstream v0.2.4.2 apart from the five changes above and the
 # comment updates that describe them. A key given through API_KEY / API_KEY_FILE
 # still wins and is used exactly as upstream.
 #
@@ -39,9 +47,9 @@
 #
 # Maintenance: on every image bump, extract the new entrypoint from the image
 #   docker run --rm --entrypoint /bin/sh IMAGE -c 'cat /opt/strata/entrypoint.sh'
-# and diff it against this file; re-apply the four changes above (the key
-# conditional, the final warning, the pack chat-template swap, and the
-# STRATA_DSV41_EXE export) and nothing else.
+# and diff it against this file; re-apply the five changes above (the key
+# conditional, the final warning, the pack chat-template swap, the
+# STRATA_DSV41_EXE export, and the picture-reader token budget) and nothing else.
 #
 # Upstream text follows.
 #
@@ -68,6 +76,10 @@
 #                 without a key (one warning) and does not write /data/state/api-key. Set one to use a key as upstream does.
 #   CHAT_TEMPLATE_PATH   a chat_template.jinja to copy over every pack's extracted template before the server starts (Strata
 #                 has no template flag; the pack's tokenizer/chat_template.jinja is what it reads). Fork change 3.
+#   VISION_TOKENS / VISION_MIN_TOKENS   the picture reader's token budget, written into every run config that reads
+#                 pictures (its "vision" section's max_tokens / min_tokens) before the server starts: at most / at least
+#                 that many image tokens per picture, 0 = no limit. Setup's default without them: 1024 on the GPU
+#                 reader, 300 on the CPU reader. Fork change 5.
 #   PRESET        preset name in /data (default "docker"). Settings above are saved into it; with no settings given a saved preset is reused.
 #   STRATA_SET    advanced engine settings, space separated KEY=VALUE (like `strata launch --set`)
 set -u
@@ -257,6 +269,52 @@ if [ -n "${CHAT_TEMPLATE_PATH:-}" ]; then
   # A fresh tree has no pack yet: setup runs inside `strata launch`, after this swap, and writes the GGUF's own
   # template. The next start replaces it, because by then the pack exists. Same after a repack (pack format bump).
   [ -n "$packs" ] || warn "CHAT_TEMPLATE_PATH is set, but no pack has a tokenizer/chat_template.jinja yet: setup writes the GGUF's own template this start; the override is applied on the next start."
+fi
+
+# ---- picture-reader token budget (fork change 5). Setup writes the reader's budget into the run config's "vision"
+# section at install time (VISION: GPU reader 1024, CPU reader 300) and the server passes it to the reader as
+# --max-tokens at every start. There is no per-launch option: `strata launch --set` reaches the engine only, and setup's
+# own --vision-tokens is not reachable through `strata launch`. With VISION_TOKENS / VISION_MIN_TOKENS set, write them
+# into every run config that has a "vision" section, so the repo (not a hand edit) decides the budget. Setup keeps the
+# value when it writes the config again (max_tokens: same reader device; min_tokens: a key setup does not write), and a
+# config this image has to make from nothing serves setup's default once, like the template above.
+if [ -n "${VISION_TOKENS:-}" ] || [ -n "${VISION_MIN_TOKENS:-}" ]; then
+  for vname in VISION_TOKENS VISION_MIN_TOKENS; do
+    eval "v=\${$vname:-}"
+    [ -n "$v" ] || continue
+    case "$v" in *[!0-9]*) die "$vname=$v is not a whole number of image tokens (0 = no limit). Nothing was started." 2 ;; esac
+  done
+  seen=""
+  for c in /data/install/strata-*.json; do
+    [ -f "$c" ] || continue
+    seen=1
+    changed=$("$PYBIN" -c '
+import json, os, sys
+path, mx, mn = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(path, encoding="utf-8-sig") as f:
+    cfg = json.load(f)
+vision = cfg.get("vision")
+if not isinstance(vision, dict):
+    sys.exit(0)                                   # text only: nothing to cap
+before = dict(vision)
+what = []
+if mx:
+    vision["max_tokens"] = int(mx)
+    what.append("max_tokens=" + mx)
+if mn:
+    vision["min_tokens"] = int(mn)
+    what.append("min_tokens=" + mn)
+if vision == before:
+    sys.exit(0)                                   # already the wanted budget: leave the file untouched
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(cfg, f, indent=1)                   # setup write_config format
+os.replace(tmp, path)
+print(os.path.basename(path) + ": " + ", ".join(what))
+' "$c" "${VISION_TOKENS:-}" "${VISION_MIN_TOKENS:-}" 2>/dev/null)
+    [ -n "$changed" ] && say "Vision budget: $changed."
+  done
+  [ -n "$seen" ] || warn "VISION_TOKENS/VISION_MIN_TOKENS is set, but this data tree has no run settings yet: setup writes its default this start; the budget is applied on the next start."
 fi
 [ -n "${MODEL:-}" ]       && { set -- "$@" --model "$MODEL"; have=1; }
 [ -n "${FAMILY:-}" ]      && { set -- "$@" --family "$FAMILY"; have=1; }

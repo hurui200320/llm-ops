@@ -75,6 +75,7 @@ docker run -d --name strata-init --init --rm \
   -e MODEL_PATH=/models/strata/ISTA-DASLab-Flash-Next \
   -e STRATA_HIPBLASLT_TABLE=on \
   -e CHAT_TEMPLATE_PATH=/templates/qwen3.8/Flash-Next-chat-template.jinja \
+  -e VISION_TOKENS=8192 -e VISION_MIN_TOKENS=1024 \
   -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=768 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1" \
   ghcr.io/hurui200320/llm-ops-strata:0.2.6-rocm-gfx110x
 docker logs -f strata-init    # 0.2.6 keeps the install records (the 0.1.50 engine package and its folder are unchanged): a manual init pass is only needed after a settings change
@@ -189,8 +190,9 @@ with the macro **`docker-server-strata-rocm`** and the models appended at the en
 vanilla **`qwen3.8-flash-next-iq3s`**, SC117 **`qwen3.8-flash-next-sc117-iq3s`** and DeepSeek
 **`deepseek-v4.1-flash-2bpw`**. `${PORT}` is assigned in **model-ID order** (llama-swap sorts the
 IDs, not the file): the DeepSeek lane is 10001 and the two Qwen lanes are 10008/10009; those
-per-lane ports are internal to the proxy (clients use `:8080`). `CHAT_TEMPLATE_PATH` is per model
-entry, not in the macro (each lane names its own template). Implementation record and current pins:
+per-lane ports are internal to the proxy (clients use `:8080`). `CHAT_TEMPLATE_PATH` and the picture
+budget `VISION_TOKENS`/`VISION_MIN_TOKENS` are per model entry, not in the macro (each lane names its
+own template and budget). Implementation record and current pins:
 [notes/strata.md](../../notes/strata.md).
 
 - **No memory cap.** Upstream advises none and the entrypoint warns on `memory.max`; the engine
@@ -205,8 +207,9 @@ entry, not in the macro (each lane names its own template). Implementation recor
 - **Keyless, on a Docker bridge.** Strata 0.2.6 still makes the API key optional; upstream's entrypoint
   still hardcodes `--access lan` (0.0.0.0). This lane runs on the default Docker bridge with
   [entrypoint-local.sh](entrypoint-local.sh), a fork of upstream's entrypoint that passes
-  `--no-api-key` when no key is set, suppresses upstream's false "Strata made one" warning, and
-  installs `CHAT_TEMPLATE_PATH` over every pack's chat template. Docker
+  `--no-api-key` when no key is set, suppresses upstream's false "Strata made one" warning,
+  installs `CHAT_TEMPLATE_PATH` over every pack's chat template, and writes the picture-reader
+  token budget (`VISION_TOKENS`/`VISION_MIN_TOKENS`) into the run settings. Docker
   publishes only `127.0.0.1:${PORT}` (`-p 127.0.0.1:${PORT}:${PORT}`) on the host, where llama-swap
   proxies; there is no `--network host`. `launch` stores no key, so llama-swap stays `apiKeys: []`
   and clients send no header; the LAN reaches Strata only through llama-swap. The browser UI works
@@ -215,10 +218,10 @@ entry, not in the macro (each lane names its own template). Implementation recor
 - **Re-diff the entrypoint fork on every image bump.** Extract the new
   `/opt/strata/entrypoint.sh` from the image
   (`docker run --rm --entrypoint /bin/sh IMAGE -c 'cat /opt/strata/entrypoint.sh'`) and compare it
-  with `entrypoint-local.sh`; re-apply the four changes (the `--no-api-key` conditional, the final
-  keyless warning, the pack chat-template swap, and the `STRATA_DSV41_EXE` export for the DeepSeek
-  engine) and nothing else. 0.2.6's `docker/entrypoint.sh` is byte-identical to 0.2.5's, so the diff
-  is expected to be exactly those four changes. The fork must exist in the fedora-tuf checkout before the first start
+  with `entrypoint-local.sh`; re-apply the five changes (the `--no-api-key` conditional, the final
+  keyless warning, the pack chat-template swap, the `STRATA_DSV41_EXE` export for the DeepSeek
+  engine, and the picture-reader token budget) and nothing else. 0.2.6's `docker/entrypoint.sh` is byte-identical to 0.2.5's, so the diff
+  is expected to be exactly those five changes. The fork must exist in the fedora-tuf checkout before the first start
   (mode 755): a missing bind source is created by Docker as a root-owned directory and the
   container dies on `--entrypoint`.
 - **Preset/key state.** Each lane's `docker` preset is `"access": "lan"`, `"no_key": true`,
@@ -358,6 +361,30 @@ verify a short chat, a declared tool call and the `:npt` alias (its
 `chat_template_kwargs.preserve_thinking` must still be honoured); on the DeepSeek lane, verify a
 short chat and a tool call through llama-swap. Record the result in
 [notes/strata.md](../../notes/strata.md).
+
+## Vision token budget
+
+Setup writes the picture reader's budget into the lane's run settings (`/data/install/strata-<tag>.json`,
+the `"vision"` section: `max_tokens`, and `min_tokens` as a key setup does not write) and the server
+passes it to the reader as `--max-tokens` / `--min-tokens` at every start. Setup's defaults are 1024
+(GPU reader) and 300 (CPU reader); there is no per-launch option (`strata launch --set` reaches the
+engine only). Each Qwen model entry therefore sets `VISION_TOKENS` / `VISION_MIN_TOKENS`, and
+entrypoint fork change 5 writes them into every run config that has a `"vision"` section before the
+server starts:
+
+- Both lanes run `VISION_TOKENS=8192 VISION_MIN_TOKENS=1024`: at most 8192 image tokens per picture,
+  smaller ones scaled up to 1024. The reader sizes a picture into that budget at one token per
+  1024 px, so 8192 ≈ an 8.4 MP picture (a 4K screenshot fits) — the same 1024-8192 the Qwen3.8 27B
+  llama.cpp lanes use. Background and token math: [notes/strata.md](../../notes/strata.md).
+- A config this image has to make from nothing (first install, an engine-folder change, a changed
+  `GPUS`) serves setup's default once; the next start applies the budget. Setup keeps the value when
+  it writes the config again (same reader device for `max_tokens`; `min_tokens` is carried over), so
+  no manual edit is needed and the repo stays the source of truth.
+- Verification: the start log prints `Vision budget: strata-<tag>.json: max_tokens=…, min_tokens=…`
+  when it changes anything, and the reader process carries
+  `--max-tokens 8192 --min-tokens 1024`. A bigger budget costs encoder VRAM and time per encode (the
+  reader's warm-up runs at 4096 tokens with this cap); watch the engine's free-VRAM line after a large
+  picture before raising `vram-reserve-mib`.
 
 ## The hipBLASLt tuning table (packaged since 0.2.1)
 
