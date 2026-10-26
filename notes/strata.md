@@ -3,7 +3,8 @@
 Strata (upstream [`Niko1221/Strata`](https://github.com/Niko1221/Strata)) serves three lanes on the
 2× RX 7900 XTX pair: vanilla and SC117 Qwen3.8 Flash-Next (IQ3_S), and IST-DASLab
 DeepSeek-V4.1-Flash (2.00 bpw). It runs Docker-only from [our pinned build](../deploy/strata/README.md)
-of upstream's 0.2.5 Terminal around the signed-feed 0.1.50 engine, behind the host llama-swap; the
+of upstream's 0.2.6 Terminal around the signed-feed 0.1.50 engine (the 0.2.5 package bytes, re-shipped
+unchanged), behind the host llama-swap; the
 host needs only the `amdgpu` kernel driver — no ROCm, no compiler. The image adds one file the two
 Qwen lanes never invoke but the DeepSeek lane runs: the gfx110x `strata-dsv41` build.
 
@@ -26,15 +27,15 @@ llama-swap on `:8080`, which loads one lane at a time on the shared pair.
 
 | What | Value |
 | --- | --- |
-| Image | `ghcr.io/hurui200320/llm-ops-strata:0.2.5-rocm-gfx110x`, digest `sha256:0bf409c527a5dd9f008d9392ada2457660b3ec2162acf68df6f4822e9b4a092d`, 1,900,632,969 B on fedora-tuf (`docker inspect .Size`; the dev box reports 1,474,728,281 B for the same digest — storage driver); public GHCR package (no login) |
-| Terminal | tag `v0.2.5`, commit `fa663fabc5c2c568d6035b3ae853b38e1762865a`; Terminal/Control `0.2.5`/`0.1.50`; `strata 0.2.5 (build 0.1.50; python 3.12.15)` |
-| Engine | `strata-engine-0.1.50-linux-x86_64-hip-rx7900` from the `v0.2.5` release's signed feed, 243,072,991 B, asset sha256 `84698dbf…`, manifest `build_id 6270e2d9d6bf+rocm`, variant `rx7900`, 580 listed files (582 on disk = 580 + `engine-component.json` + our `strata-dsv41`); `engine-component.json` sha256 `43746aaf…` and `BUILD.json` `4b70ff83…` |
-| `strata-dsv41` | our gfx110x build from the same `v0.2.5` tag, `strata-dsv41 0.1.50 build fa663fabc`, sha256 `3b6aa77f…`; beside `strata` in the engine folder, not in the manifest by design; **the DeepSeek lane runs it** via `STRATA_DSV41_EXE` (entrypoint fork change 4, verified in-image 2026-10-25) |
+| Image | `ghcr.io/hurui200320/llm-ops-strata:0.2.6-rocm-gfx110x`, digest `sha256:TBD` (fill from the Actions run summary), size TBD; public GHCR package (no login) |
+| Terminal | tag `v0.2.6`, commit `4b9e05a2a806a3fe24f7b2560d98626c37dade35`; Terminal/Control `0.2.6`/`0.1.51`; `strata 0.2.6 (build 0.1.51; python 3.12.15)` — the build number is the CMake project version, not the Qwen package's 0.1.50 |
+| Engine | `strata-engine-0.1.50-linux-x86_64-hip-rx7900` from the `v0.2.6` release's signed feed — **the same bytes as 0.2.5** (same asset sha256, manifest and build_id), 243,072,991 B, asset sha256 `84698dbf…`, manifest `build_id 6270e2d9d6bf+rocm`, variant `rx7900`, 580 listed files (582 on disk = 580 + `engine-component.json` + our `strata-dsv41`); `engine-component.json` sha256 `43746aaf…` and `BUILD.json` `4b70ff83…` |
+| `strata-dsv41` | our gfx110x build from the same `v0.2.6` tag, `strata-dsv41 0.1.51 build 4b9e05a2a`, sha256 `TBD` (from the Actions run summary); beside `strata` in the engine folder, not in the manifest by design; **the DeepSeek lane runs it** via `STRATA_DSV41_EXE` (entrypoint fork change 4, verified in-image 2026-10-25) |
 | hipBLASLt table | packaged `tuning/gfx1100-hipblaslt-100200.txt`, sha256 `235a26c3…` (873 B), version `100200`; **re-tuned for 0.1.50** (0.1.48 shipped `1bb8cd2e…`, same version) |
 
-The image is our own build of upstream's Terminal (`strata-image.yml`, run 40188533610): the released
+The image is our own build of upstream's Terminal (`strata-image.yml`, run TBD for 0.2.6): the released
 engine package plus the one `strata-dsv41` file, so every other byte is upstream's — the signed feed
-ships `strata-dsv41` for cuda13 and hip-rx9070 only, hence the gfx110x build. The 0.2.4.2 image stays
+ships `strata-dsv41` for cuda13 and hip-rx9070 only, hence the gfx110x build. The 0.2.5 image stays
 pulled for rollback. The engine folder inside the image is
 `/opt/strata/components/engine/0.1.50-linux-x86_64-hip-rx7900` (upstream drops the `strata-engine-`
 prefix); reference it as `component:strata-engine`, never by path.
@@ -94,6 +95,9 @@ does not hit the proxy's health timeout. The full commands are in
   stayed at 50 files, only `mtp/tensors/verified.json` was re-stamped, and the record was rewritten
   with the 0.1.50 engine/vision paths; the first request through llama-swap answered after 45.8 s
   including setup, load and 8 generated tokens).
+- 0.2.6 keeps the engine package byte-identical (same folder `0.1.50-linux-x86_64-hip-rx7900`), so the
+  0.2.5 records stay valid and **every lane goes straight to serving — no setup pass** (the
+  0.2.3 → 0.2.4.2 pattern; the smoke on the 0.2.6 deploy is what fills the upgrade-history row).
 - Chat template: Strata has no `--chat-template-file` flag. Setup extracts the template at pack time
   into `<pack>/tokenizer/chat_template.jinja`, the server reads it per start, and an override is a
   file swap in the pack (it survives re-installs). The Qwen lanes run the repo's
@@ -176,7 +180,7 @@ history and rejects: [`notes/qwen3.8/Flash-Next.md`](qwen3.8/Flash-Next.md).
 - **Vision token cap**: the server and the reader clamp image tokens by default when
   `vision.max_tokens` is absent (CPU reader 300, GPU reader 1024; #3690). The lane's install record
   carries the reader settings setup wrote; the 2026-10-23 smoke verified a 640×360 picture.
-- **Never** pass `KV=`; use `kv=` inside `STRATA_SET`. 0.2.5's setup accepts `fp16`, but `KV=fp16`
+- **Never** pass `KV=`; use `kv=` inside `STRATA_SET`. Since 0.2.5, setup accepts `fp16`, but `KV=fp16`
   re-runs setup once and rewrites the record. `desc_matches()` compares the KV choice with the
   installed config, so the lanes stay installed with int8 and `kv=fp16` appends `--kv fp16` to the
   engine argv (verified 2026-10-25).
@@ -218,6 +222,16 @@ history and rejects: [`notes/qwen3.8/Flash-Next.md`](qwen3.8/Flash-Next.md).
 | 0.2.2 → 0.2.3 (upstream image) | 0.1.47 → 0.1.48 | record dropped; setup once; no repack/download | within noise; SC117 swapped in with its own mmproj |
 | 0.2.3 → 0.2.4.2 (own image) | 0.1.48 unchanged | record kept; straight to serving (no setup) | within noise (see Flash-Next note) |
 | 0.2.4.2 → 0.2.5 (own image) | 0.1.48 → 0.1.50 | record dropped; setup once; no repack/download; hipBLASLt table re-tuned | neutral; DeepSeek WMMA kernels enabled (see dsv41 note) |
+| 0.2.5 → 0.2.6 (own image) | 0.1.50 unchanged (rx7900 package re-shipped byte-identical; `strata-dsv41` 0.1.50 → 0.1.51) | record kept; straight to serving (no setup) | pending: functional smoke (chat, tool call, `:npt` on the Qwen lanes; store line + chat/tool call on DeepSeek); engine numbers unchanged by construction |
+
+0.2.6 changes: the Qwen engine package is the 0.1.50 bytes from 0.2.5 (the release re-ships them —
+same asset sha256, manifest and build_id), so the two Qwen lanes are Terminal-only. `strata-dsv41`
+moves to 0.1.51: the `--mmap-experts auto` copy-all rule and the Windows commit-room check, neither
+of which can trigger on this host (the CPU lane is 94.9 GB against 62 GiB, and the lane's explicit
+`ssd-cache=36` disables the auto path; see the dsv41 note). The Terminal adds a 400 for an empty
+`messages` list and drops the tok/s figure on one-token replies (API niceties), plus WSL-on-AMD
+warnings (inert here). `docker/entrypoint.sh` and `docker/build.sh` are unchanged, so the entrypoint
+fork re-diff is a no-op and the workflow's nested-tools patch still applies.
 
 0.2.5 engine changes: the Qwen engine adds CPU-row kernels (AVX-2 on this host — no AVX-512) and the
 re-tuned hipBLASLt table; `strata-dsv41` adds `--experts` (6 here), the length-based deterministic
@@ -231,7 +245,7 @@ opt-in gfx11 WMMA kernels. Qwen spot-check numbers, method and the 0.2.5 table A
 Deployed 2026-10-25; the measured speed curve and tuning record are in
 [`notes/deepseek/v41f1017.md`](deepseek/v41f1017.md). It serves the IST-DASLab **2.00 bpw** set
 (IQ2_XXS) of DeepSeek-V4.1-Flash (1017B-parameter MoE, 40 layers × 384 experts, top-6) on the
-image's own `strata-dsv41` engine (0.1.50 since the 0.2.5 image).
+image's own `strata-dsv41` engine (0.1.51 since the 0.2.6 image).
 
 ### Model files and pins
 
@@ -250,7 +264,7 @@ IST-DAS set (one copy serves 1.75/2.00/2.25).
 
 ### Engine and the docker discovery gap
 
-`strata-dsv41` is the image's own gfx110x build (0.1.50; pins above), placed beside `strata` in the
+`strata-dsv41` is the image's own gfx110x build (0.1.51; pins above), placed beside `strata` in the
 engine package folder — the shape an upstream `DSV41=1` rx9070 package has. That shape is auto-found
 only by a desktop install (`ROOT/engine` *is* the package folder there). **In this image it is not
 found**: the Terminal's launch runs setup with
@@ -266,10 +280,13 @@ for the Qwen lanes, whose configs are not `arch: deepseek41`). Verified in-image
 0.1.48 (`strata launch ... --plan` reported `DeepSeek engine: installed, 0.1.48`; without the fork
 the plan warns that setup would have to download the engine). The 0.2.5 lanes resolve it the same
 way: the engine starts from the 0.1.50 package path and the launch's Speed line (`Full quality`) is
-gated on `dsv41_engine_version(exe) >= 0.1.50`, which it reads from the package folder.
+gated on `dsv41_engine_version(exe) >= 0.1.50`, which it reads from the package folder. In 0.2.6 the
+Qwen package folder still says `0.1.50` (its bytes are unchanged), so `dsv41_engine_version()` keeps
+reading 0.1.50 while the rebuilt binary reports 0.1.51 — every `>= 0.1.50` gate still passes.
 `strata-dsv41 --version` runs in the image; the binary had **never executed a kernel on gfx1100
 hardware** before this lane's first deploy (2026-10-25) — setup's 16-token smoke was that test, and
-the 0.1.50 rebuild repeats it on the 0.2.5 setup pass.
+the 0.1.50 rebuild repeated it on the 0.2.5 setup pass (0.2.6 needs no setup pass, so the 0.1.51
+binary's first kernels come from the normal lane start).
 
 ### Memory plan and the RAM budget
 
@@ -385,3 +402,9 @@ brings the gfx11 WMMA prompt kernels. On gfx1100 they are opt-in: the lane sets
 `STRATA_DS4_HIPK=1`; the measured pp gain, same-answer check and A/B are in
 [`notes/deepseek/v41f1017.md`](deepseek/v41f1017.md). The 0.2.4.2 20 % baseline matches the 0.1.50
 baseline, so the engine itself is neutral.
+
+0.2.6 (engine 0.1.51) adds the `--mmap-experts auto` copy-all rule: all CPU-lane experts are copied
+into RAM at load, with no demand store, only when they fit beside 8 GiB (all or none). It can never
+trigger on this host — the CPU lane is 94.9 GB against 62 GiB RAM, and the lane's explicit
+`ssd-cache=36` disables the auto path by itself — so the store line stays `36.0 GB` and every number
+above stands. See [`notes/deepseek/v41f1017.md`](deepseek/v41f1017.md).

@@ -16,7 +16,7 @@ name: strata-image
 #   3. puts strata-dsv41 beside `strata` in that package folder — the shape upstream's rx9070 package ships (its
 #      build sets DSV41=1) — and builds the image with upstream's docker/build.sh.
 #
-# The result differs from an upstream 0.2.5-rocm-gfx110x image by exactly one added file (strata-dsv41, our build):
+# The result differs from an upstream 0.2.6-rocm-gfx110x image by exactly one added file (strata-dsv41, our build):
 # every other byte is the released package, and the Terminal is built from the same tag, as upstream does. The
 # Dockerfile's verify stage re-checks the package (every listed file, binary_deps on every ELF, ldd in the image), so
 # a dsv41 binary that needs a library the package does not bundle stops the build instead of failing at run time.
@@ -54,9 +54,11 @@ env:
   IMAGE: ghcr.io/hurui200320/llm-ops-strata
   STRATA_REPO: Niko1221/Strata
   # Terminal sources, the Dockerfile and the dsv41 sources (deploy/strata/build-dsv41.sh's flags are its tag's).
-  STRATA_REF: v0.2.5
+  STRATA_REF: v0.2.6
   # The release that carries the signed feed and the Qwen engine packages (the 0.2.4.x tags had no release of their own).
-  ENGINE_RELEASE: v0.2.5
+  # v0.2.6 re-ships the 0.1.50 rx7900 package byte-identical to v0.2.5 (same asset sha256, manifest and build_id); only the
+  # Terminal, Control and the DeepSeek engine moved, so the Qwen lanes are a Terminal-only change.
+  ENGINE_RELEASE: v0.2.6
   # TheRock ROCm wheels (gfx110X-dgpu index) of the ROCm line the released package was built with.
   THEROCK_PIN: "7.10.0a20251120"
   # hipBLASLt version the package's gfx1100 tuning table must match (BUILD.json hipblaslt_version).
@@ -345,9 +347,10 @@ jobs:
           {
             echo "### entrypoint fork"
             echo ""
-            echo "deploy/strata/entrypoint-local.sh is upstream's /opt/strata/entrypoint.sh plus three changes"
-            echo "(--no-api-key when no key is set, no false \"made one\" warning, the pack chat-template swap)."
-            echo "The diff below is expected to be non-empty; if upstream changed anything beyond those three,"
+            echo "deploy/strata/entrypoint-local.sh is upstream's /opt/strata/entrypoint.sh plus four changes"
+            echo "(--no-api-key when no key is set, no false \"made one\" warning, the pack chat-template swap,"
+            echo "and the STRATA_DSV41_EXE export for the DeepSeek engine)."
+            echo "The diff below is expected to be non-empty; if upstream changed anything beyond those four,"
             echo "re-apply the fork before the first start."
             echo '```diff'
             diff -u strata/docker/entrypoint.sh deploy/strata/entrypoint-local.sh | head -200 || true
