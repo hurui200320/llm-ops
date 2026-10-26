@@ -40,10 +40,12 @@ Digests, package hashes, the engine-folder path and the hipBLASLt table hash are
 
 The image is smoke-tested in CI (fetch gates, the `strata-dsv41` build, the in-image Terminal and
 component checks) and verified locally against the pushed digest; the run number, digest and package
-hashes are in [notes/strata.md](../../notes/strata.md#pins). Runtime acceptance on fedora-tuf for
-0.2.5: both Qwen lanes served keyless
-chat, `get_weather`, `max_tokens:-1`, 640×360 vision and `:npt` (SC117 with its own mmproj); the
-DeepSeek lane came up on 0.1.50 with `STRATA_DS4_HIPK=1`. Records:
+hashes are in [notes/strata.md](../../notes/strata.md#pins). Runtime acceptance on fedora-tuf, 0.2.6:
+all three lanes kept their install records and served without a setup pass — vanilla and SC117
+answered chat and the declared tool call at 262144 ctx (the vanilla lane through llama-swap too,
+including the `:npt` alias and `/upstream` path), and the DeepSeek lane ran `strata-dsv41` 0.1.51
+with its `36.0 GB` store. The 0.2.5 acceptance (640×360 vision, `max_tokens:-1`, SC117's own mmproj)
+and the per-upgrade records are in
 [notes/strata.md](../../notes/strata.md#upgrade-history) and
 [notes/qwen3.8/Flash-Next.md](../../notes/qwen3.8/Flash-Next.md).
 

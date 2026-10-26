@@ -450,43 +450,7 @@ models:
       idleConn: 90
 
 
-  # Qwen3.8 Flash-Next IQ3_S on Strata (upstream image, HIP engine, layer split
-  # over both 7900XTX). Driven entirely through the entrypoint's env vars; the
-  # preset "docker" holds the same values, so a start is download-free.
-  # 0.2.3 / engine 0.1.48: the first start drops the 0.2.2 install record (it
-  # names the 0.1.47 engine/vision paths) and re-runs setup once; the pack and
-  # MTP are reused (no repack). Terminal 0.2.3 bundles the pre-hotfix Control
-  # 0.1.48: the two 0.2.3.1 fixes are off this container's CONTROL setup path,
-  # and the 0.1.48 hip-rx7900 package is the same one 0.2.3.1 ships.
-  # 2026-10-22 pp/tg tuning (0.2.2 / 0.1.47, vanilla IQ3_S, measured direct):
-  #   pipeline-windows=2 + layer-split=26 + trim-stage-weights + spec-min-p=0.7
-  #   + STRATA_SCORES_THREAD=1. STRATA_SPLIT_OVERLAP is gone: pipeline-windows
-  #   supersedes it (the engine log says so). Tuning numbers, the 0.2.3/0.2.4.2
-  #   spot-checks and the rejected arms: notes/qwen3.8/Flash-Next.md.
-  # Do not pass KV= (any value makes `strata launch` re-run setup, which rejects
-  # fp16): F16 KV is `kv=fp16` inside STRATA_SET, applied to the engine argv.
-  # Do not pass --slot-save-path: session files are refused on a layer split.
-  # Cold start 1-3 min (30 s on a warm page cache), hence the per-model timeout;
-  # PARALLEL=1 matches the engine's single slot (concurrencyLimit below is the
-  # swap's queue depth). PARALLEL>1 was measured 2026-10-22 and rejected: each
-  # batch slot carves one extra full-256K F16 session per card out of the expert
-  # cache and disables pipeline-windows; concurrency loses to queueing on this
-  # single slot — see notes/qwen3.8/Flash-Next.md ("PARALLEL quick test").
-  # Notes: notes/strata.md.
-  # 2026-10-24 0.2.4.2 (own image, ghcr.io/hurui200320/llm-ops-strata; upstream
-  #   has published no 0.2.4.x image): Terminal 0.2.4.2 / Control 0.1.49.2
-  #   around the same signed-feed 0.1.48 engine package — manifest, BUILD.json
-  #   and hipBLASLt table byte-identical to 0.2.3 — plus strata-dsv41 beside
-  #   the engine (never invoked by this lane). The install record still names
-  #   the same engine paths, so the first start goes straight to serving
-  #   (no setup pass, no repack, verified 2026-10-24). Deploy smoke and
-  #   spot-check: notes/strata.md.
-  # 2026-10-25 0.2.5 (own image): Terminal/Control 0.2.5/0.1.50 around the new
-  #   0.1.50 rx7900 engine package (hipBLASLt table re-tuned, same version
-  #   100200) plus our strata-dsv41 beside it. The engine
-  #   folder version changes, so the 0.2.4.2 record is dropped and setup re-runs
-  #   once on the first start (no repack, no download; the fork re-swaps the
-  #   template on the next start). Deploy record: notes/strata.md.
+  # Qwen3.8 Flash-Next IQ3_S on Strata
   "qwen3.8-flash-next-iq3s":
     name: "Qwen3.8 Flash-Next IQ3_S"
     description: "262144 ctx, F16 KV, Strata layer split over 2x7900XTX, fully resident @28 GiB"
@@ -500,7 +464,7 @@ models:
         -e MODEL_PATH=/models/strata/ISTA-DASLab-Flash-Next
         -e CHAT_TEMPLATE_PATH=/templates/qwen3.8/Flash-Next-chat-template.jinja
         -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=768 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1"
-        ghcr.io/hurui200320/llm-ops-strata:0.2.5-rocm-gfx110x
+        ghcr.io/hurui200320/llm-ops-strata:0.2.6-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
@@ -539,22 +503,6 @@ models:
 
 
   # SC117 abliterated (uncensored) transplant of the same ISTA GSQ-RCO IQ3_S.
-  # Exact copy of the vanilla lane above; only the lane's /data tree and
-  # MODEL_PATH differ (it has its own pack: 95 tensors changed type and
-  # 1,214/1,223 offsets moved, so the ISTA pack cannot be reused). PRESET is
-  # unset like vanilla: each lane's tree holds its own "docker" preset.
-  # 0.2.3 / engine 0.1.48: the first start drops the 0.2.2 install record and
-  # re-runs setup once; it picks this lane's own mmproj from the model folder
-  # (907,542,944 B, sha256 2e788f8c..., measured 2026-10-21), not the ISTA pin.
-  # The pack and MTP are reused. Never pass KV=, never pass --slot-save-path.
-  # 2026-10-24 0.2.4.2 (own image): the 0.2.3 record and preset are reused as
-  # they are (same engine, pack and mmproj): no setup pass or repack expected.
-  # 2026-10-25 0.2.5 (own image): same flow as vanilla — engine 0.1.50 changes
-  # the engine folder, so the first start re-runs setup once (no repack, no
-  # download; the lane's own mmproj is reused). Deploy record: notes/strata.md.
-  # The model is abliterated with no reliable guardrails (TC-60 class): vanilla stays the
-  # default for untrusted input, and no sensitive or unsandboxed tools on
-  # this lane until a safety/quality review clears it.
   "qwen3.8-flash-next-sc117-iq3s":
     name: "Qwen3.8 Flash-Next SC117 IQ3_S (abliterated)"
     description: "262144 ctx, F16 KV, Strata layer split over 2x7900XTX, uncensored"
@@ -568,7 +516,7 @@ models:
         -e MODEL_PATH=/models/strata/sc117-Flash-Next-uncensored
         -e CHAT_TEMPLATE_PATH=/templates/qwen3.8/Flash-Next-chat-template.jinja
         -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=768 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1"
-        ghcr.io/hurui200320/llm-ops-strata:0.2.5-rocm-gfx110x
+        ghcr.io/hurui200320/llm-ops-strata:0.2.6-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
@@ -595,50 +543,8 @@ models:
       idleConn: 90
 
 
-  # DeepSeek-V4.1-Flash (GGUF arch deepseek41) on its own engine, strata-dsv41.
+  # DeepSeek-V4.1-Flash 1017 IQ2_XXS, strata
   # Currently vision is not wired in this engine version.
-  # RAM budget:  ssd-cache (similar to qwen's resident-budget-gib) 36 GB, leaving
-  # about 24 GiB of the 62 GiB plus reclaimable page cache for dev work.
-  # VRAM: reserve-mib 896 is a plan-time input, not a free-VRAM floor; the value
-  # keeps the monitor card's headroom during prefills. Both values and the
-  # measurements behind them: notes/deepseek/v41f1017.md.
-  # Only dsv41 flags work here: the Qwen keys (kv, vram-reserve-mib,
-  # vram-reserve-later-mib, conversation-cache-mib/slots, resident-budget-gib,
-  # prompt-cache-spread, pipeline-windows, layer-split=, trim-stage-weights,
-  # spec-min-p) are unknown to strata-dsv41 and exit 2 (crash loop). layer-split=
-  # is even parsed and ignored; a manual split is DS4_SPLIT=a,b (env).
-  # Do not pass KV=, PARALLEL, VISION: DeepSeek's kv cache format is its own,
-  # and --parallel/--vision are ignored with a warning by this engine version.
-  # Context: 256k (262144). Upstream checked the engine at 4K and 8K only; setup
-  # warns "longer is kept as you chose, but untested" and keeps it — this lane is
-  # the test. Fallback ladder: 128k, then 64k (change CONTEXT; the install record
-  # is remade but the pack, table and drafter are reused).
-  # Engine: the image's own gfx110x strata-dsv41 build (0.1.50 build fa663fab),
-  # placed beside `strata` in the engine package folder.
-  # The Terminal in this image does NOT auto find and load, so deploy/strata/entrypoint-local.sh
-  # (fork change 4) exports STRATA_DSV41_EXE from it; without that, first setup stops
-  # at "DeepSeek's engine is not available for this computer yet". 
-  # Tuning: ssd-cache 36 + reserve-mib 896, everything else default, auto layer split
-  # (manual splits cost tg or pp: notes/deepseek/v41f1017.md). setup writes
-  # --dspark auto and --dspark-conf 0.65 (ISTA recipe), the fit plan writes --tp 2
-  # and --gpus. The macro's STRATA_HIPBLASLT_TABLE=on is inert here (src/dsv41 has
-  # no hipBLASLt path); it only prints the table line once at start.
-  # 2026-10-25 0.2.5: engine 0.1.50 keeps 6 experts per word by default here
-  # (--experts/--speed is the 16 GiB-or-shared-RAM rule; 2x24 GiB stays full
-  # quality), makes the prompt path length-based and deterministic, and warms
-  # the chunked prefill pass after ready. The gfx11 WMMA prompt kernels are
-  # opt-in here (on by default only on Strix Halo): STRATA_DS4_HIPK=1 is enabled
-  # on the lane; the measured pp gain and A/B are in notes/deepseek/v41f1017.md.
-  # First start does the setup work — one-time SHA-256 pass over the ~257 GB of
-  # files, the 5.8 MB Unsloth metadata shard (`--engram-meta`), the pack +
-  # hot-expert profile, and the smoke — so run it outside llama-swap first
-  # (notes/strata.md).
-  # Later starts take a few minutes (the CPU experts are read in first), hence the
-  # 1200 s health timeout, larger than the Qwen lanes' 600.
-  # Port: llama-swap expands ${PORT} in model-ID order (sorted, not file order —
-  # measured 2026-10-25), so this ID sorts first: 10001. The two Qwen Strata lanes
-  # are 10008/10009; the per-lane ports are internal to the proxy (:8080 is the
-  # user-facing one).
   "deepseek-v4.1-flash-2bpw":
     name: "DeepSeek V4.1-Flash IST-DAS 2.00 bpw"
     description: "262144 ctx, fixed kv cache quant, no vision yet"
@@ -653,7 +559,7 @@ models:
         -e CHAT_TEMPLATE_PATH=/templates/deepseek/v4.1-flash-1017-chat-template.jinja
         -e STRATA_SET="ssd-cache=36 reserve-mib=896"
         -e STRATA_DS4_HIPK=1
-        ghcr.io/hurui200320/llm-ops-strata:0.2.5-rocm-gfx110x
+        ghcr.io/hurui200320/llm-ops-strata:0.2.6-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health

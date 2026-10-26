@@ -27,13 +27,13 @@ llama-swap on `:8080`, which loads one lane at a time on the shared pair.
 
 | What | Value |
 | --- | --- |
-| Image | `ghcr.io/hurui200320/llm-ops-strata:0.2.6-rocm-gfx110x`, digest `sha256:TBD` (fill from the Actions run summary), size TBD; public GHCR package (no login) |
+| Image | `ghcr.io/hurui200320/llm-ops-strata:0.2.6-rocm-gfx110x`, digest `sha256:46f1ac8203bd5c20bda83a817a10215545cd26d352cccd89dedd9da09315e243`, 1,900,649,052 B on fedora-tuf (`docker inspect .Size`; CI reports 1,474,735,831 B for the same digest — storage driver); public GHCR package (no login) |
 | Terminal | tag `v0.2.6`, commit `4b9e05a2a806a3fe24f7b2560d98626c37dade35`; Terminal/Control `0.2.6`/`0.1.51`; `strata 0.2.6 (build 0.1.51; python 3.12.15)` — the build number is the CMake project version, not the Qwen package's 0.1.50 |
 | Engine | `strata-engine-0.1.50-linux-x86_64-hip-rx7900` from the `v0.2.6` release's signed feed — **the same bytes as 0.2.5** (same asset sha256, manifest and build_id), 243,072,991 B, asset sha256 `84698dbf…`, manifest `build_id 6270e2d9d6bf+rocm`, variant `rx7900`, 580 listed files (582 on disk = 580 + `engine-component.json` + our `strata-dsv41`); `engine-component.json` sha256 `43746aaf…` and `BUILD.json` `4b70ff83…` |
-| `strata-dsv41` | our gfx110x build from the same `v0.2.6` tag, `strata-dsv41 0.1.51 build 4b9e05a2a`, sha256 `TBD` (from the Actions run summary); beside `strata` in the engine folder, not in the manifest by design; **the DeepSeek lane runs it** via `STRATA_DSV41_EXE` (entrypoint fork change 4, verified in-image 2026-10-25) |
+| `strata-dsv41` | our gfx110x build from the same `v0.2.6` tag, `strata-dsv41 0.1.51 build 4b9e05a2a`, sha256 `98243abd…` (CI); beside `strata` in the engine folder, not in the manifest by design; **the DeepSeek lane runs it** via `STRATA_DSV41_EXE` (entrypoint fork change 4, verified in-image 2026-10-25) |
 | hipBLASLt table | packaged `tuning/gfx1100-hipblaslt-100200.txt`, sha256 `235a26c3…` (873 B), version `100200`; **re-tuned for 0.1.50** (0.1.48 shipped `1bb8cd2e…`, same version) |
 
-The image is our own build of upstream's Terminal (`strata-image.yml`, run TBD for 0.2.6): the released
+The image is our own build of upstream's Terminal (`strata-image.yml`, run 40313031068 for 0.2.6): the released
 engine package plus the one `strata-dsv41` file, so every other byte is upstream's — the signed feed
 ships `strata-dsv41` for cuda13 and hip-rx9070 only, hence the gfx110x build. The 0.2.5 image stays
 pulled for rollback. The engine folder inside the image is
@@ -97,7 +97,7 @@ does not hit the proxy's health timeout. The full commands are in
   including setup, load and 8 generated tokens).
 - 0.2.6 keeps the engine package byte-identical (same folder `0.1.50-linux-x86_64-hip-rx7900`), so the
   0.2.5 records stay valid and **every lane goes straight to serving — no setup pass** (the
-  0.2.3 → 0.2.4.2 pattern; the smoke on the 0.2.6 deploy is what fills the upgrade-history row).
+  0.2.3 → 0.2.4.2 pattern; verified on the 2026-10-26 deploy: all three lanes served without one).
 - Chat template: Strata has no `--chat-template-file` flag. Setup extracts the template at pack time
   into `<pack>/tokenizer/chat_template.jinja`, the server reads it per start, and an override is a
   file swap in the pack (it survives re-installs). The Qwen lanes run the repo's
@@ -222,12 +222,12 @@ history and rejects: [`notes/qwen3.8/Flash-Next.md`](qwen3.8/Flash-Next.md).
 | 0.2.2 → 0.2.3 (upstream image) | 0.1.47 → 0.1.48 | record dropped; setup once; no repack/download | within noise; SC117 swapped in with its own mmproj |
 | 0.2.3 → 0.2.4.2 (own image) | 0.1.48 unchanged | record kept; straight to serving (no setup) | within noise (see Flash-Next note) |
 | 0.2.4.2 → 0.2.5 (own image) | 0.1.48 → 0.1.50 | record dropped; setup once; no repack/download; hipBLASLt table re-tuned | neutral; DeepSeek WMMA kernels enabled (see dsv41 note) |
-| 0.2.5 → 0.2.6 (own image) | 0.1.50 unchanged (rx7900 package re-shipped byte-identical; `strata-dsv41` 0.1.50 → 0.1.51) | record kept; straight to serving (no setup) | pending: functional smoke (chat, tool call, `:npt` on the Qwen lanes; store line + chat/tool call on DeepSeek); engine numbers unchanged by construction |
+| 0.2.5 → 0.2.6 (own image) | 0.1.50 unchanged (rx7900 package re-shipped byte-identical; `strata-dsv41` 0.1.50 → 0.1.51) | record kept; straight to serving (no setup) | functional smoke 2026-10-26 (manual containers with the production env + a llama-swap instance on the updated config, real pair): all three lanes kept their records; vanilla + SC117 chat and `get_weather{"city":"Paris"}` at 262144 ctx with the hipBLASLt table active; the `:npt` alias and `/upstream` path through the proxy; DeepSeek ran `strata-dsv41 0.1.51`, store line `36.0 GB`, chat + tool call + `reasoning_effort:none`; stops 2.1–2.3 s, VRAM freed |
 
 0.2.6 changes: the Qwen engine package is the 0.1.50 bytes from 0.2.5 (the release re-ships them —
 same asset sha256, manifest and build_id), so the two Qwen lanes are Terminal-only. `strata-dsv41`
 moves to 0.1.51: the `--mmap-experts auto` copy-all rule and the Windows commit-room check, neither
-of which can trigger on this host (the CPU lane is 94.9 GB against 62 GiB, and the lane's explicit
+of which can trigger on this host (the CPU lane is ~95 GB against 62 GiB, and the lane's explicit
 `ssd-cache=36` disables the auto path; see the dsv41 note). The Terminal adds a 400 for an empty
 `messages` list and drops the tok/s figure on one-token replies (API niceties), plus WSL-on-AMD
 warnings (inert here). `docker/entrypoint.sh` and `docker/build.sh` are unchanged, so the entrypoint
@@ -405,6 +405,6 @@ baseline, so the engine itself is neutral.
 
 0.2.6 (engine 0.1.51) adds the `--mmap-experts auto` copy-all rule: all CPU-lane experts are copied
 into RAM at load, with no demand store, only when they fit beside 8 GiB (all or none). It can never
-trigger on this host — the CPU lane is 94.9 GB against 62 GiB RAM, and the lane's explicit
+trigger on this host — the CPU lane is ~95 GB against 62 GiB RAM, and the lane's explicit
 `ssd-cache=36` disables the auto path by itself — so the store line stays `36.0 GB` and every number
 above stands. See [`notes/deepseek/v41f1017.md`](deepseek/v41f1017.md).
