@@ -186,9 +186,10 @@ history and rejects: [`notes/qwen3.8/Flash-Next.md`](qwen3.8/Flash-Next.md).
   only. The reader sizes a picture into the budget at one token per 1024 px (patch 16 · merge 2,
   32-px aligned): 640×480 = 300, 1080p ≈ 2025, 4K ≈ 8100; `min_tokens` scales smaller pictures up
   (Qwen-VL grounding wants ≥ 1024). A picture that still comes out over max + 12.5 % is refused by
-  the reader, not silently sent. Same 1024–8192 as the 27B llama.cpp lanes; the write was checked
-  against copies of both live records on 2026-10-27 (idempotent, setup's `indent=1` shape). The
-  2026-10-23 smoke verified a 640×360 picture.
+  the reader, not silently sent. Same 1024–8192 as the 27B llama.cpp lanes; verified on SC117
+  2026-10-27 (reader argv, warm-up and a 4K picture: numbers in
+  [`qwen3.8/Flash-Next.md`](qwen3.8/Flash-Next.md)). The 2026-10-23 smoke verified a 640×360
+  picture.
 - **Never** pass `KV=`; use `kv=` inside `STRATA_SET`. Since 0.2.5, setup accepts `fp16`, but `KV=fp16`
   re-runs setup once and rewrites the record. `desc_matches()` compares the KV choice with the
   installed config, so the lanes stay installed with int8 and `kv=fp16` appends `--kv fp16` to the

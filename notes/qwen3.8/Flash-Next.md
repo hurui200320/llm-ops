@@ -216,5 +216,21 @@ Both lanes now read pictures at up to 8192 image tokens, with small ones scaled 
 (`--max-tokens 8192 --min-tokens 1024`; setup's default was 1024 max, no floor) — the same range as
 the Qwen3.8 27B llama.cpp lanes. The budget is set per lane in llama-swap
 (`VISION_TOKENS`/`VISION_MIN_TOKENS`) and written into the run settings by entrypoint fork change 5,
-so no hand-edited config is involved. Mechanism, token math and verification:
-[`notes/strata.md`](../strata.md).
+so no hand-edited config is involved. Mechanism and token math: [`notes/strata.md`](../strata.md).
+
+Verified on SC117 (2026-10-27, llama-swap lane):
+
+- Entrypoint log `Vision budget: strata-iq3_s.json: max_tokens=8192, min_tokens=1024.`; the record
+  carries both keys; the reader runs `strata-vision-hip ... --gpu --max-tokens 8192 --min-tokens 1024`.
+- Reader warm-up (2048×2048) went from 1024 tokens / 0.4 s to **4096 tokens / 3.5 s** — mtmd got the
+  new cap (the warm-up picture is below 8192, so it is not scaled down).
+- A 3840×2160 (8.29 MP) picture became **8160 image tokens** (120×68 at 32 px per side, 1024 px per
+  token) and the request reported `prompt_tokens 8223` (8160 image + 63 text), no refusal. First
+  encode + prefill: 27.3 s wall (engine prefill 8.1 s at 1016 t/s), same picture again: 1.3 s wall,
+  `cached_tokens 8218`.
+- VRAM: the engine shifted residents 22.54 → 23.17 GiB to RAM for the bigger reader warm-up (28 GiB
+  budget unchanged). One soft `only 450 MiB of VRAM free at the start of this request (below 512 MiB)`
+  warning appeared on a ~21k-token text request before any 8K image; decode/json stayed at 70-100 t/s
+  and prefill ~1000 t/s. Cards run near-full by design (expert cache). If it recurs, raise
+  `vram-reserve-mib` 1536 → 1600-2048 in `STRATA_SET` (engine's own suggestion) and re-check.
+
