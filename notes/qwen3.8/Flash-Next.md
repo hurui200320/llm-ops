@@ -234,3 +234,28 @@ Verified on SC117 (2026-10-27, llama-swap lane):
   and prefill ~1000 t/s. Cards run near-full by design (expert cache). If it recurs, raise
   `vram-reserve-mib` 1536 → 1600-2048 in `STRATA_SET` (engine's own suggestion) and re-check.
 
+## 20261028 0.2.7 engine 0.1.52 (staged HC read; KVA rejected; prefill-pipe candidate)
+
+The image moves to Terminal 0.2.7 / engine 0.1.52 — the first Qwen engine byte change since 0.1.50
+(engine folder `0.1.52-linux-x86_64-hip-rx7900`, so the lane re-runs setup once and reuses its pack;
+deployment record: [notes/strata.md](../strata.md#upgrade-history)).
+
+Engine changes that reach gfx1100: only the staged/split hyper-connection read (`STRATA_HC_SPLIT`,
+unset = staged). It is picked by a per-card self-test at every start and used only when exact;
+`STRATA_HC_SPLIT=0` returns the plain read. Watch the start log for the chosen variant line. The rest
+of the 0.2.7 release is CUDA- or gfx12-specific (12 GB route prior, sm_80+ int8 prompt attention,
+layer-major/pipelined CUDA split, the four gfx12 decode switches); the PLE residency auto-rule does
+not admit the 28.8 GB table on this 62 GiB host, so `--ple-io ram` stays out of reach.
+
+Candidates and rejects (parameter rationale for this lane):
+
+- **`STRATA_KVA=1` ("Faster long prompts"): rejected for now.** It reads the last 12 layers of a
+  prompt of 4,096+ tokens approximately (+11 % at 14K, +18 % at 30K on an RTX 5070); upstream keeps
+  it off by default because earlier settings dropped records from long lists and failed agent tasks,
+  and even the shipped setting (layers 36-47 approximate, last 2,048 tokens exact) found 585 of 606
+  facts. Coding and agentic loops are this lane's job: do not enable it without a fact-retrieval and
+  agent-loop A/B that passes cleanly.
+- **`--prefill-pipe` on the two-card layer split: candidate, not yet run.** Upstream measured
+  +15 % at 4K and +23 % at 8K prompts on two RTX A4000; unmeasured on HIP. A/B it after the 0.1.52
+  baseline is recorded (same prompts, rotate the arms).
+

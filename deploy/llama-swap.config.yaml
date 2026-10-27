@@ -468,7 +468,7 @@ models:
         -e VISION_TOKENS=8192
         -e VISION_MIN_TOKENS=1024
         -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1"
-        ghcr.io/hurui200320/llm-ops-strata:0.2.6-rocm-gfx110x
+        ghcr.io/hurui200320/llm-ops-strata:0.2.7-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
@@ -523,7 +523,7 @@ models:
         -e VISION_TOKENS=8192
         -e VISION_MIN_TOKENS=1024
         -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1"
-        ghcr.io/hurui200320/llm-ops-strata:0.2.6-rocm-gfx110x
+        ghcr.io/hurui200320/llm-ops-strata:0.2.7-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
@@ -551,10 +551,15 @@ models:
 
 
   # DeepSeek-V4.1-Flash 1017 IQ2_XXS, strata
-  # Currently vision is not wired in this engine version.
+  # 0.2.7: pictures run inside the engine (its own tower, packed at setup); each
+  # Qwen lane keeps the separate Flash-Next reader with the budget above. The
+  # DeepSeek lane's `image` capability is flipped on after the on-card smoke.
+  # DS4_VISION_TOKENS writes the pack's vision.max_image_tokens: 1140 is the
+  # tower's hard maximum (10,240-patch attention; 42x42 px per token), vs
+  # setup's native 1024. 
   "deepseek-v4.1-flash-2bpw":
     name: "DeepSeek V4.1-Flash IST-DAS 2.00 bpw"
-    description: "262144 ctx, fixed kv cache quant, no vision yet"
+    description: "262144 ctx, fixed kv cache quant, engine's own vision tower (0.2.7; advertised after the vision smoke)"
     cmd: |
       ${docker-server-strata-rocm}
         -v /mnt/unenc-xfs/strata/ISTA-DASLab-dsv41f1017:/data
@@ -566,7 +571,8 @@ models:
         -e CHAT_TEMPLATE_PATH=/templates/deepseek/v4.1-flash-1017-chat-template.jinja
         -e STRATA_SET="ssd-cache=36 reserve-mib=896"
         -e STRATA_DS4_HIPK=1
-        ghcr.io/hurui200320/llm-ops-strata:0.2.6-rocm-gfx110x
+        -e DS4_VISION_TOKENS=1140
+        ghcr.io/hurui200320/llm-ops-strata:0.2.7-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
@@ -575,7 +581,9 @@ models:
     healthCheckTimeout: 1200
     concurrencyLimit: 20
     # Declared, not probed: Strata's /v1/models omits `owned_by` (same as the Qwen
-    # lanes). Text only — the engine ignores --vision in this version. Tools on:
+    # lanes). 0.2.7 gives the engine its own vision tower (setup packs the pinned
+    # mmproj-BF16.gguf): `image` is added to `in:` only after the on-card vision
+    # smoke (never verified on gfx1100 upstream) — see notes/strata.md. Tools on:
     # the server translates DeepSeek's DSML into OpenAI tool_calls and Anthropic
     # tool_use.
     capabilities:

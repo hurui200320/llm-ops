@@ -1,11 +1,12 @@
 #!/bin/sh
 # Fork of upstream's /opt/strata/entrypoint.sh for the llm-ops llama-swap lane.
 #
-# Changes from upstream v0.2.4.2 (image
-# ghcr.io/hurui200320/llm-ops-strata:0.2.4.2-rocm-gfx110x, terminal build 0.1.49.2;
-# re-diffed 2026-10-24, sha256
-# 7c74cfd32155541df6dd1401a44f6f0b07712e4dce3b74eb8b33df162ecf3a43 — the same
-# bytes as v0.2.3 and v0.2.2, so the fork needed no script changes):
+# Changes from upstream v0.2.7 (image
+# ghcr.io/hurui200320/llm-ops-strata:0.2.7-rocm-gfx110x, terminal 0.2.7 / engine
+# 0.1.52; re-diffed 2026-10-27, sha256
+# 10fe9c4f7ac551d5934d9f7aa6363da852f3bd41b5ce7ccbe46e66e9e7fc0226). v0.2.7 adds
+# only legacy_models_guard (#3421) to the v0.2.6 entrypoint (sha256 7c74cfd3…, the
+# same bytes as v0.2.4.2 through v0.2.6), and the fork carries it unchanged:
 #   1. When no API key is given, pass `--no-api-key` to `strata launch` instead of
 #      letting it make one. Strata 0.2.4.2 allows a non-loopback bind without a key
 #      (with one warning), so the server can listen on 0.0.0.0 inside its own
@@ -36,7 +37,16 @@
 #      Patching the config keeps the repo the source of truth and survives the
 #      config being written again (setup keeps the value: max_tokens for the same
 #      reader device, min_tokens as a key setup does not write).
-# The script below is upstream v0.2.4.2 apart from the five changes above and the
+#   6. When DS4_VISION_TOKENS / DS4_VISION_MIN_PIXELS are set, write them into every
+#      DeepSeek pack's ds4.txt (vision.max_image_tokens / vision.min_pixels) before
+#      the server starts. DeepSeek has no separate reader: its engine carries its
+#      own tower whose picture size the server computes from those two pack keys
+#      (one prompt token per 42x42 px cell, span n_h*(n_w+1)+2), and there is no
+#      launch flag or STRATA_SET key for them. The engine refuses to load the tower
+#      above 1140 tokens (10,240 patches in the attention kernel), so a larger value
+#      is clamped with a warning. min_pixels scales small pictures up; unset, the
+#      pack keeps the mmproj's own value.
+# The script below is upstream v0.2.4.2 apart from the six changes above and the
 # comment updates that describe them. A key given through API_KEY / API_KEY_FILE
 # still wins and is used exactly as upstream.
 #
@@ -47,9 +57,10 @@
 #
 # Maintenance: on every image bump, extract the new entrypoint from the image
 #   docker run --rm --entrypoint /bin/sh IMAGE -c 'cat /opt/strata/entrypoint.sh'
-# and diff it against this file; re-apply the five changes above (the key
+# and diff it against this file; re-apply the six changes above (the key
 # conditional, the final warning, the pack chat-template swap, the
-# STRATA_DSV41_EXE export, and the picture-reader token budget) and nothing else.
+# STRATA_DSV41_EXE export, the picture-reader token budget, and the DeepSeek
+# pack picture budget) and nothing else.
 #
 # Upstream text follows.
 #
@@ -64,6 +75,7 @@
 #   MODEL         model size, e.g. IQ3_XXS, Q2_0 (empty: Strata picks one for this card and says so)
 #   FAMILY        model family when a size is offered by several (qwen, swift, coder, ...)
 #   MODEL_PATH    GGUF files you already have, a folder or one .gguf, inside the container (mount it read-only)
+#   ALLOW_DOWNLOAD  1: go on and download the model although model files of the older layout (/data/models) were left unread (default: stop)
 #   CONTEXT       32k, 64k, 128k, 256k or a number of tokens
 #   PARALLEL      requests answered at the same time, 1 to 8 (empty: fit to the card)
 #   VISION        off | on | gpu | cpu  (pictures; the picture reader file is downloaded with the model)
@@ -80,6 +92,12 @@
 #                 pictures (its "vision" section's max_tokens / min_tokens) before the server starts: at most / at least
 #                 that many image tokens per picture, 0 = no limit. Setup's default without them: 1024 on the GPU
 #                 reader, 300 on the CPU reader. Fork change 5.
+#   DS4_VISION_TOKENS   DeepSeek only: the picture budget in prompt tokens, written into the pack's
+#                 vision.max_image_tokens (one token per 42x42 px cell, span n_h*(n_w+1)+2). The engine's
+#                 tower refuses to load above 1140; a larger value is clamped with a warning. Unset: the
+#                 pack's own value (setup writes 1024, DeepSeek's native budget). Fork change 6.
+#   DS4_VISION_MIN_PIXELS   DeepSeek only: upscale a small picture to at least this many pixels (the mmproj's
+#                 image_min_pixels by default), written into the pack's vision.min_pixels. Fork change 6.
 #   PRESET        preset name in /data (default "docker"). Settings above are saved into it; with no settings given a saved preset is reused.
 #   STRATA_SET    advanced engine settings, space separated KEY=VALUE (like `strata launch --set`)
 set -u
@@ -97,6 +115,17 @@ say()  { printf '%s\n' "$*"; }
 warn() { printf '[!] %s\n' "$*" >&2; }
 die()  { printf '[X] %s\n' "$*" >&2; exit "${2:-1}"; }
 phase() { printf '%s\n' "$1" > "$PHASE_FILE" 2>/dev/null || true; }
+
+# Model files of the older layout that this image did not move (a folder you mounted at /data/models, or a move that failed) are not read here, and
+# the start would download the model again. Say so and stop instead (#3421); ALLOW_DOWNLOAD=1 goes on, with the same text as a warning.
+# $1: MODEL_PATH (when it is set the files are named and nothing is lost), $2: the older models folder.
+legacy_models_guard() {
+  [ -n "$1" ] && return 0
+  stuck=$(find "$2" -maxdepth 3 -name '*.gguf' 2>/dev/null | head -1)
+  [ -n "$stuck" ] || return 0
+  msg="There are model files in ${stuck%/*} (the older image's place). This image keeps its models in /data/Strata-data/models and does not read them there, so it would download the model again (tens of GB). To use them: mount that folder read-only and set MODEL_PATH to the folder that holds the shards (docs/DOCKER.md, \"Files you already have\"), or put them in /data/Strata-data/models/<model folder>/. To download anyway: set ALLOW_DOWNLOAD=1. Nothing was downloaded."
+  if [ "${ALLOW_DOWNLOAD:-0}" = "1" ]; then warn "$msg Going on, because ALLOW_DOWNLOAD=1."; else die "$msg" 2; fi
+}
 
 # ---- DeepSeek's engine (fork change 4). Our image is the only gfx110x source of
 # strata-dsv41, placed beside `strata` in the engine package folder; the Terminal
@@ -246,6 +275,7 @@ if [ -n "$model_path" ]; then
     die "MODEL_PATH=$model_path holds no .gguf files. Mount the folder with the model's shards (the -0000N-of-0000M.gguf files). Nothing was downloaded." 2
   fi
 fi
+legacy_models_guard "$model_path" "${STRATA_LEGACY_MODELS:-/data/models}"
 
 # ---- chat template (fork change 3). Strata has no --chat-template-file: setup extracts the template into
 # <pack>/tokenizer/chat_template.jinja and the server reads that copy at every start. With CHAT_TEMPLATE_PATH set,
@@ -315,6 +345,73 @@ print(os.path.basename(path) + ": " + ", ".join(what))
     [ -n "$changed" ] && say "Vision budget: $changed."
   done
   [ -n "$seen" ] || warn "VISION_TOKENS/VISION_MIN_TOKENS is set, but this data tree has no run settings yet: setup writes its default this start; the budget is applied on the next start."
+fi
+
+# ---- DeepSeek picture budget (fork change 6). DeepSeek has no separate reader: the engine carries its own tower, and the
+# server sizes each picture from the pack's ds4.txt (vision.max_image_tokens, written as 1024 by
+# tools/dsv41/pack_gguf.py; tools: serve/ds_pictures.py). The span is n_h*(n_w+1)+2 prompt tokens, one token per 42x42 px
+# cell (patch 14 x merge 3). There is no launch flag or STRATA_SET key for it: the pack file is the only knob. The tower's
+# full-attention softmax holds 10,240 patches (kSmT*kSmPer in src/dsv41/ds4_vision.cu, engine 0.1.52) = 1,137 aligner cells
+# = max_image_tokens 1140; a larger value stops the tower loading ("more than the attention covers"), so it is clamped.
+if [ -n "${DS4_VISION_TOKENS:-}" ] || [ -n "${DS4_VISION_MIN_PIXELS:-}" ]; then
+  for vname in DS4_VISION_TOKENS DS4_VISION_MIN_PIXELS; do
+    eval "v=\${$vname:-}"
+    [ -n "$v" ] || continue
+    case "$v" in *[!0-9]*) die "$vname=$v is not a whole number (0 = no limit). Nothing was started." 2 ;; esac
+  done
+  if [ -n "${DS4_VISION_TOKENS:-}" ] && [ "$DS4_VISION_TOKENS" -gt 1140 ]; then
+    warn "DS4_VISION_TOKENS=$DS4_VISION_TOKENS is above the DeepSeek tower's 10,240-patch attention limit (max_image_tokens 1140, engine 0.1.52): using 1140."
+    DS4_VISION_TOKENS=1140
+  fi
+  seen=""
+  for p in /data/Strata-data/packs/*/ds4.txt; do
+    [ -f "$p" ] || continue
+    seen=1
+    changed=$("$PYBIN" -c '
+import os, sys
+path, mx, mn = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(path, encoding="utf-8", errors="replace") as f:
+    lines = f.read().splitlines()
+keys = {}
+for ln in lines:
+    k, _, v = ln.partition(" ")
+    if k:
+        keys[k] = v.strip()
+try:
+    tower = int(keys.get("vision.num_hidden_layers", "0") or 0) > 0 and "image_token_id" in keys
+except ValueError:
+    tower = False
+if not tower:
+    sys.exit(0)                                   # not a DeepSeek pack with a vision tower
+want = {}
+if mx:
+    want["vision.max_image_tokens"] = mx
+if mn:
+    want["vision.min_pixels"] = mn
+changed = [k + "=" + v for k, v in want.items() if keys.get(k) != v]
+if not changed:
+    sys.exit(0)                                   # already the wanted budget: leave the file untouched
+seen = set()
+out = []
+for ln in lines:
+    k, _, _ = ln.partition(" ")
+    if k in want:
+        out.append(k + " " + want[k])
+        seen.add(k)
+    else:
+        out.append(ln)
+for k, v in want.items():
+    if k not in seen:
+        out.append(k + " " + v)
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    f.write("\n".join(out) + "\n")
+os.replace(tmp, path)
+print(os.path.dirname(path).rsplit("/", 1)[-1] + ": " + ", ".join(changed))
+' "$p" "${DS4_VISION_TOKENS:-}" "${DS4_VISION_MIN_PIXELS:-}" 2>/dev/null) || die "Could not write the DeepSeek picture budget into $p. Nothing was started." 2
+    [ -n "$changed" ] && say "DeepSeek vision budget: $changed."
+  done
+  [ -n "$seen" ] || warn "DS4_VISION_TOKENS/DS4_VISION_MIN_PIXELS is set, but this data tree has no DeepSeek pack yet: setup writes its default this start; the budget is applied on the next start."
 fi
 [ -n "${MODEL:-}" ]       && { set -- "$@" --model "$MODEL"; have=1; }
 [ -n "${FAMILY:-}" ]      && { set -- "$@" --family "$FAMILY"; have=1; }
