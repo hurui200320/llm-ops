@@ -27,13 +27,13 @@ llama-swap on `:8080`, which loads one lane at a time on the shared pair.
 
 | What | Value |
 | --- | --- |
-| Image | `ghcr.io/hurui200320/llm-ops-strata:0.2.7-rocm-gfx110x` — digest and size recorded from the `strata-image` run (filled into this table with the build's run number); public GHCR package (no login). Rollback image: `0.2.6-rocm-gfx110x`, digest `sha256:46f1ac8203bd5c20bda83a817a10215545cd26d352cccd89dedd9da09315e243`, 1,900,649,052 B on fedora-tuf (`docker inspect .Size`; CI reports 1,474,735,831 B for the same digest — storage driver), still pulled |
-| Terminal | tag `v0.2.7`, commit `5e8a4cca7d690ac60ca37eb09e7d0e010099ad6d`; Terminal/Control `0.2.7`/`0.1.52`; the `strata` build number is the CMake project version (0.1.52), not the Qwen package's own version |
-| Engine | `strata-engine-0.1.52-linux-x86_64-hip-rx7900` from the `v0.2.7` release's signed feed — **new bytes** (the first Qwen engine change since 0.1.50): asset sha256, manifest `build_id`, listed-file count and the `engine-component.json`/`BUILD.json` hashes are recorded from the workflow's fetch/gate output |
-| `strata-dsv41` | our gfx110x build from the same `v0.2.7` tag, `strata-dsv41 0.1.52 build 5e8a4cca7`, sha256 from CI; beside `strata` in the engine folder, not in the manifest by design; **the DeepSeek lane runs it** via `STRATA_DSV41_EXE` (entrypoint fork change 4) |
-| hipBLASLt table | packaged `tuning/gfx1100-hipblaslt-100200.txt`, version `100200` (the rx7900 package is still built with TheRock `7.10.0a20251120` / hipBLASLt 1.2.0); the workflow gate verifies the file against the manifest and its sha256 is recorded with the package hashes |
+| Image | `ghcr.io/hurui200320/llm-ops-strata:0.2.7-rocm-gfx110x`, digest `sha256:b84c7a5949f6394cb83b5074e0422010cfd1ae82983a9a2ba91ffb9d2fbbf0a1`, 1,939,482,478 B on fedora-tuf (`docker inspect .Size`; CI reports 1,505,264,720 B for the same digest — storage driver); `strata-image` run 40543493857; public GHCR package (no login). Rollback image: `0.2.6-rocm-gfx110x`, digest `sha256:46f1ac8203bd5c20bda83a817a10215545cd26d352cccd89dedd9da09315e243`, 1,900,649,052 B, still pulled |
+| Terminal | tag `v0.2.7`, commit `5e8a4cca7d690ac60ca37eb09e7d0e010099ad6d`; Terminal/Control `0.2.7`/`0.1.52`; `strata 0.2.7 (build 0.1.52; python 3.12.15)` — the build number is the CMake project version |
+| Engine | `strata-engine-0.1.52-linux-x86_64-hip-rx7900` from the `v0.2.7` release's signed feed — **new bytes** (the first Qwen engine change since 0.1.50): 245,001,814 B, asset sha256 `2ade169f…`, variant `rx7900`, archs gfx1100/1101/1102, 580 listed files (582 on disk = 580 + `engine-component.json` + our `strata-dsv41`); `engine-component.json` sha256 `a7d13988…` (the build's manifest hash) and `BUILD.json` `2f9f4176…`; `BUILD.json` source `f-amd-vision a42cc3d7df70` |
+| `strata-dsv41` | our gfx110x build from the same `v0.2.7` tag, `strata-dsv41 0.1.52 build 5e8a4cca7`, sha256 `9c65ec3a43b7f3d1132bc696e7aa18bb6322ce34925f2cd865403c92a8e8b6ea` (CI); beside `strata` in the engine folder, not in the manifest by design; **the DeepSeek lane runs it** via `STRATA_DSV41_EXE` (entrypoint fork change 4) |
+| hipBLASLt table | packaged `tuning/gfx1100-hipblaslt-100200.txt`, sha256 `1bb8cd2e232ce1dec5dc0f303e5bd3b32abd9444330a4428a995ad4db8fb97be` (845 B), version `100200` — **the 0.1.48 table bytes again**: 0.1.50 shipped a re-tuned table (`235a26c3…`, 873 B) and 0.1.52 does not carry that re-tune (the package is still built against hipBLASLt 1.2.0 / TheRock `7.10.0a20251120`) |
 
-The image is our own build of upstream's Terminal (`strata-image.yml`): the released
+The image is our own build of upstream's Terminal (`strata-image.yml`, run 40543493857 for 0.2.7): the released
 engine package plus the one `strata-dsv41` file, so every other byte is upstream's — the signed feed
 ships `strata-dsv41` for cuda13 and hip-rx9070 only, hence the gfx110x build. The 0.2.6 image stays
 pulled for rollback. The engine folder inside the image is
@@ -129,9 +129,19 @@ picked up live; no environment variable is needed to load a lane.
   `--entrypoint /entry-local.sh`, `--device /dev/kfd --device /dev/dri`,
   `--group-add 39 --group-add 105` (host gids — see below), `--security-opt label=disable
   --security-opt seccomp=unconfined`, `--ulimit memlock=-1:-1 --shm-size 2g --stop-timeout 120`.
-- Env: `PORT`, `STRATA_HIPBLASLT_TABLE=on`, `MODEL=IQ3_S`, `CONTEXT=256k`, `GPUS=0,1`, `PARALLEL=1`,
+- Env: `PORT`, `STRATA_HIPBLASLT_TABLE=on`, `STRATA_ALLOWED_HOSTS=fedora-tuf`, `MODEL=IQ3_S`,
+  `CONTEXT=256k`, `GPUS=0,1`, `PARALLEL=1`,
   `MODEL_PATH`, `CHAT_TEMPLATE_PATH`, and the lane's `STRATA_SET` (the DeepSeek lane also sets
-  `STRATA_DS4_HIPK=1`). `PRESET` is unset.
+  `STRATA_DS4_HIPK=1` and `DS4_VISION_TOKENS=1140`). `PRESET` is unset.
+- **`STRATA_ALLOWED_HOSTS` is required since 0.2.7** (new DNS-rebinding protection in the Strata
+  server): without an API key every request first passes a Host check, and only IP addresses,
+  `localhost`/`*.localhost` and the names the server was configured with are accepted. llama-swap
+  forwards the client's Host header, so `http://fedora-tuf:8080/...` and its `/upstream/<model>/` UI
+  would be answered with `403 Host ... is not allowed` (a `curl` to the LAN IP kept working, which is
+  why the direct smokes did not show it). `-e STRATA_ALLOWED_HOSTS=fedora-tuf` in the macro fixes all
+  three lanes (`allowed_hosts` in the run config is the alternative; `*` allows any, an API key turns
+  the check off). Verified 2026-10-28: `fedora-tuf:8080` answers, and `bench/speed/run_longctx.py`
+  (which uses `http://fedora-tuf:8080`) works again.
 - Mounts: the entrypoint fork read-only at `/entry-local.sh`, `/mnt/unenc-xfs/models:/models:z`, the
   repo's `templates/` at `/templates:ro` (Strata never reads it; the fork copies the lane's
   `CHAT_TEMPLATE_PATH` out of it), and the lane's data tree at `/data`. No named volumes, no
@@ -249,7 +259,7 @@ history and rejects: [`notes/qwen3.8/Flash-Next.md`](qwen3.8/Flash-Next.md).
 | 0.2.3 → 0.2.4.2 (own image) | 0.1.48 unchanged | record kept; straight to serving (no setup) | within noise (see Flash-Next note) |
 | 0.2.4.2 → 0.2.5 (own image) | 0.1.48 → 0.1.50 | record dropped; setup once; no repack/download; hipBLASLt table re-tuned | neutral; DeepSeek WMMA kernels enabled (see dsv41 note) |
 | 0.2.5 → 0.2.6 (own image) | 0.1.50 unchanged (rx7900 package re-shipped byte-identical; `strata-dsv41` 0.1.50 → 0.1.51) | record kept; straight to serving (no setup) | functional smoke 2026-10-26 (manual containers with the production env + a llama-swap instance on the updated config, real pair): all three lanes kept their records; vanilla + SC117 chat and `get_weather{"city":"Paris"}` at 262144 ctx with the hipBLASLt table active; the `:npt` alias and `/upstream` path through the proxy; DeepSeek ran `strata-dsv41 0.1.51`, store line `36.0 GB`, chat + tool call + `reasoning_effort:none`; stops 2.1–2.3 s, VRAM freed |
-| 0.2.6 → 0.2.7 (own image) | 0.1.50 → 0.1.52 (**first Qwen engine byte change since 0.1.50**; `strata-dsv41` 0.1.51 → 0.1.52) | expected: record dropped; setup once per lane; Qwen packs reused (no repack/download); DeepSeek pack rebuilt with the vision tower | pending the 2026-10-28 rollout (record filled in per lane) |
+| 0.2.6 → 0.2.7 (own image) | 0.1.50 → 0.1.52 (**first Qwen engine byte change since 0.1.50**; `strata-dsv41` 0.1.51 → 0.1.52) | record dropped; setup once per lane; Qwen packs reused (no repack/download); DeepSeek pack rebuilt with the vision tower | rollout 2026-10-28 (real pair, through llama-swap): first requests incl. setup 48.9 s (vanilla) / 47.5 s (SC117), DS 40.2 s warm; each lane chat + `get_weather{"city":"Paris"}` at 262144 ctx; Qwen lanes: hipBLASLt `26 rows, gfx1100, version 100200`, staged HC read bit-exact on CUDA0/1; DS: `--vision on`, store `36.0 GB`, 4,050 experts (35.3 GB) in VRAM vs 4,353 on 0.2.6, pictures verified (red/blue halves, first 14.0 s, warm 1.6 s, text after fine) and `[text, image]` advertised. Gotcha: the DS preset still said `vision: off` (0.2.6 era) → setup skipped the tower; `VISION=on` repacked it and rewrote the preset. `STRATA_ALLOWED_HOSTS` added (0.2.7 Host check, see "llama-swap wiring") |
 
 0.2.7 changes (deployment side): every engine package is rebuilt at 0.1.52, so each lane runs one
 setup pass (above). The DeepSeek picture budget is set to its maximum, `DS4_VISION_TOKENS=1140`
@@ -258,7 +268,10 @@ section). The Terminal adds the Speed switches (defaults apply; the DeepSeek one
 switch is `DS4_DEFAULTS=026` — details in the dsv41 note), accepts the re-published ISTA shard-1 chat
 template by size+hash (inert: our files are the pinned revision and the repo template overrides the
 pack copy), and the Docker image stage needed our PR #3974 — merged upstream and in this tag, so the
-workflow applies no patch. Entrypoint: upstream adds `legacy_models_guard` (#3421), carried unchanged
+workflow applies no patch. The server adds **DNS-rebinding Host protection** without an API key, so
+the llama-swap macro passes `STRATA_ALLOWED_HOSTS=fedora-tuf` (see "llama-swap wiring"; without it
+`http://fedora-tuf:8080` and the `/upstream` UI get a 403 while a LAN-IP URL still works). Entrypoint:
+upstream adds `legacy_models_guard` (#3421), carried unchanged
 by the fork (inert: `MODEL_PATH` is always set). Engine behaviour on this pair, the rollback
 switches, the vision cost and the tuning candidates/rejects are recorded per model:
 [`qwen3.8/Flash-Next.md`](qwen3.8/Flash-Next.md) and
@@ -367,12 +380,17 @@ turns the store off (every CPU expert read from the SSD per token — do not).
   for deepseek41.
 - **Vision (0.2.7, engine 0.1.52)**: the engine carries its own vision tower (no separate reader
   process). Setup packs the tower's weights from the lane's `mmproj-BF16.gguf` (the 0.2.7 pin matches
-  the file on disk), so the 0.2.7 setup pass rebuilds the pack with `vision.*`/`image_token_id` and
-  the data tree grows by about 1 GB. The tower's memory comes out of the expert cache and host RAM
-  (cost and verification: the dsv41 note). Upstream checked pictures on one R9700 Linux box only —
-  **gfx1100 has never run the tower**, so the lane's `capabilities.in` stays `[text]` until the
-  on-card vision smoke passes (then `[text, image]`). `--vision no` at setup leaves the tower
-  out. **Picture budget: 1140 prompt tokens, the tower's maximum.** The server resizes each picture so
+  the file on disk), so the 0.2.7 setup pass rebuilds the pack with `vision.*`/`image_token_id`; the
+  pack stays ~8.5 MB (the tensors are read from the mmproj in place — the "~1 GB" in the release notes
+  is the download for PCs that do not already have the file, which this lane does).
+  The tower's memory comes out of the expert cache and host RAM
+  (cost and verification: the dsv41 note). Upstream checked pictures on one R9700 Linux box only;
+  **verified on this pair 2026-10-28** (first gfx1100 run of the tower): a 420×420 red/blue-halves
+  picture answered `left=red, right=blue`, 14.0–14.4 s wall on the first picture, 1.6 s warm
+  (`cached_tokens 245`), text requests after it fine, and the lane now advertises
+  `capabilities.in: [text, image]` (llama-swap `/v1/models` shows `['text', 'image']`). `--vision no`
+  at setup leaves the tower out. **Picture budget: 1140 prompt tokens, the tower's maximum.** The
+  server resizes each picture so
   both sides are a multiple of 42 px (patch 14 × merge 3 = one prompt token per 42×42 px cell) and its
   span `n_h*(n_w+1)+2` fits the pack's `vision.max_image_tokens` — setup writes 1024 (DeepSeek's
   native budget) and there is no launch flag or STRATA_SET key. The lane sets
@@ -410,9 +428,19 @@ full command is in [`deploy/strata/README.md`](../deploy/strata/README.md)):
 3. pack build (`Strata-data/packs/deepseek-v4.1-flash-ist-das-2.00bpw/`: tensor map, hash tables,
    tokenizer, the GGUF's own chat template) + `expert-profile.bin`; a few MB to ~6 GB of disk. Since
    0.2.7 the pack also carries the vision tower (`vision.*`/`image_token_id`, from the lane's pinned
-   `mmproj-BF16.gguf`): pictures are on by default, about 1 GB more under the data tree;
+   `mmproj-BF16.gguf`): pictures are on by default, and the pack stays ~8.5 MB (measured 2026-10-28;
+   the tower's tensors are read from the mmproj in the model folder in place);
 4. `strata-dsv41 --pack-info` (every file present), then the 16-token smoke whose answer must name
    Paris — the first kernel run on gfx1100 (allowed up to 5400 s; the cold load reads the experts).
+
+**Pass `-e VISION=on` on the setup run.** A lane installed under 0.2.6 has `"vision": "off"` in its
+saved preset, and setup only packs the tower when pictures are on: without the flag the setup pass
+silently reuses the text-only pack (seen 2026-10-28 — the pack stayed 8.5 MB with no `vision.*`
+keys). `VISION=on` repacks it (the setup prints "Preparing your model for Strata (one time)"; the
+pack gains `vision.*`/`image_token_id`, still 8.5 MB because the tensors are read from the mmproj in
+place) and rewrites the preset to `vision: on`. The init container needs the GPUs to itself: with a
+Qwen lane loaded the smoke dies with `cudaMalloc 2 MiB on CUDA0 failed` (VRAM contention) — stop the
+loaded lane first.
 
 Then stop the container and let llama-swap start the lane. Later starts take a few minutes (the CPU
 lane's experts are read first), hence the lane's 1200 s health timeout.

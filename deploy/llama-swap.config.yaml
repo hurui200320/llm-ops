@@ -184,6 +184,7 @@ macros:
       --ulimit memlock=-1:-1 --shm-size 2g --stop-timeout 120
       -e PORT=${PORT}
       -e STRATA_HIPBLASLT_TABLE=on
+      -e STRATA_ALLOWED_HOSTS=fedora-tuf
       -v /mnt/unenc-xfs/llm-ops/deploy/strata/entrypoint-local.sh:/entry-local.sh:ro
       -v /mnt/unenc-xfs/llm-ops/templates:/templates:ro
       -v /mnt/unenc-xfs/models:/models:z
@@ -582,12 +583,12 @@ models:
     concurrencyLimit: 20
     # Declared, not probed: Strata's /v1/models omits `owned_by` (same as the Qwen
     # lanes). 0.2.7 gives the engine its own vision tower (setup packs the pinned
-    # mmproj-BF16.gguf): `image` is added to `in:` only after the on-card vision
-    # smoke (never verified on gfx1100 upstream) — see notes/strata.md. Tools on:
-    # the server translates DeepSeek's DSML into OpenAI tool_calls and Anthropic
-    # tool_use.
+    # mmproj-BF16.gguf); pictures verified on the real pair 2026-10-28 (red/blue
+    # halves answered, first 14.4 s, warm 1.6 s, text after a picture fine), so
+    # `image` is advertised. Tools on: the server translates DeepSeek's DSML into
+    # OpenAI tool_calls and Anthropic tool_use.
     capabilities:
-      in: [text]
+      in: [text, image]
       out: [text]
       tools: true
       context: 262144

@@ -34,10 +34,11 @@ Digests, package hashes, the engine-folder path and the hipBLASLt table hash are
   `engine-component.json`. The Qwen lanes never invoke it; the DeepSeek lane runs it through
   `STRATA_DSV41_EXE`, which entrypoint fork change 4 resolves from the package folder (see
   "DeepSeek (dsv41) lane").
-- **hipBLASLt table**: packaged at `tuning/gfx1100-hipblaslt-100200.txt`. The 0.2.7 rx7900 package is still
-  built with TheRock `7.10.0a20251120` / hipBLASLt 1.2.0 (`docs/AMD_HIP.md` at the tag); whether the table was
-  re-tuned (same version, new bytes) is recorded from the build gate in
-  [notes/strata.md](../../notes/strata.md#pins). On gfx1100 it is **opt-in**: pass
+- **hipBLASLt table**: packaged at `tuning/gfx1100-hipblaslt-100200.txt`. The 0.2.7 rx7900 package is
+  still built with TheRock `7.10.0a20251120` / hipBLASLt 1.2.0 (`docs/AMD_HIP.md` at the tag) and
+  ships the **0.1.48 table bytes again** (`1bb8cd2e…`, 845 B) — the 0.1.50 re-tune (`235a26c3…`,
+  873 B) is not in it, so prompt numbers can move slightly against the 0.1.50 spot-check before the
+  0.1.52 baseline is recorded. On gfx1100 the table is **opt-in**: pass
   `STRATA_HIPBLASLT_TABLE=on` as a **container environment variable** (`-e`), **not** inside `STRATA_SET`
   (see the tuning section).
 
@@ -225,7 +226,11 @@ own template and budget). Implementation record and current pins:
   token budget (`VISION_TOKENS`/`VISION_MIN_TOKENS`) into the run settings. Docker
   publishes only `127.0.0.1:${PORT}` (`-p 127.0.0.1:${PORT}:${PORT}`) on the host, where llama-swap
   proxies; there is no `--network host`. `launch` stores no key, so llama-swap stays `apiKeys: []`
-  and clients send no header; the LAN reaches Strata only through llama-swap. The browser UI works
+  and clients send no header; the LAN reaches Strata only through llama-swap. **The macro passes
+  `-e STRATA_ALLOWED_HOSTS=fedora-tuf`** because 0.2.7 adds DNS-rebinding Host protection for
+  keyless servers: llama-swap forwards the client's Host header, and without the flag
+  `http://fedora-tuf:8080/...` (and the `/upstream` UI) is answered with
+  `403 Host ... is not allowed` while a LAN-IP URL still works. The browser UI works
   at `http://<fedora-tuf>:8080/upstream/qwen3.8-flash-next-iq3s/` (the app uses relative asset and
   API paths, which llama-swap's prefix stripping preserves).
 - **Re-diff the entrypoint fork on every image bump.** Extract the new
@@ -315,18 +320,18 @@ engine. Same container shape as the Qwen lanes (entrypoint fork, keyless bridge,
 - **Vision (0.2.7).** The engine has its own tower (319 MiB of code, loaded with the model; no
   separate reader process). Setup packs the tower's weights from `mmproj-BF16.gguf` (972,208,288 B,
   sha256 `9a1ef7c4…` — the 0.2.7 pin, and the file already in the lane's model folder), so the setup
-  pass repacks the pack with `vision.*`/`image_token_id` and the data tree grows by about 1 GB. On
-  gfx1100 the tower has never been run upstream (it was checked on one R9700 Linux box): verify it
-  on the card before advertising `image` to llama-swap — the lane's `capabilities.in` stays `[text]`
-  until that smoke passes. Runtime cost and the vision verification:
-  [notes/deepseek/v41f1017.md](../../notes/deepseek/v41f1017.md). `--vision no` at setup leaves it
-  out. **Picture budget: `DS4_VISION_TOKENS=1140`** (fork change 6) — one prompt token per 42×42 px
-  cell, span `n_h*(n_w+1)+2`; setup's native 1024 downscales a 4K screenshot to 1680×966, 1140 is the
-  tower's hard maximum (10,240-patch attention; 1378×1378 square / 1840×1008 at 16:9) and costs only
-  ~17 MB more tower memory. The knob writes the pack's `vision.max_image_tokens` at every start; the
-  Qwen `VISION_TOKENS` only patches Flash-Next readers. Token math, the resolution table and why the
-  Qwen 8192-token budget cannot be matched (DeepSeek's tower caps at 1,140):
-  [notes/strata.md](../../notes/strata.md) ("Context, KV, parallel, vision").
+  pass repacks the pack with `vision.*`/`image_token_id` (the pack stays ~8.5 MB; the tensors are
+  read from the mmproj in place). **Verified on this pair 2026-10-28** (first gfx1100 run of the
+  tower; upstream checked one R9700 only): red/blue-halves picture answered
+  `left=red, right=blue`, first 14.0–14.4 s, warm 1.6 s, text after fine, and the lane advertises
+  `capabilities.in: [text, image]`. Runtime cost and the A/B: see the dsv41 note. `--vision no` at
+  setup leaves it out. **Picture budget: `DS4_VISION_TOKENS=1140`** (fork change 6) — one prompt
+  token per 42×42 px cell, span `n_h*(n_w+1)+2`; setup's native 1024 downscales a 4K screenshot to
+  1680×966, 1140 is the tower's hard maximum (10,240-patch attention; 1378×1378 square / 1840×1008
+  at 16:9) and costs only ~17 MB more tower memory. The knob writes the pack's
+  `vision.max_image_tokens` at every start; the Qwen `VISION_TOKENS` only patches Flash-Next readers.
+  Token math, the resolution table and why the Qwen 8192-token budget cannot be matched (DeepSeek's
+  tower caps at 1,140): [notes/strata.md](../../notes/strata.md) ("Context, KV, parallel, vision").
 - **No KV or parallel.** The engine has its own cache format (no `--kv` flag at all); `--parallel` is
   ignored with a warning in this version. Do not pass `KV=` or `PARALLEL`; the lane declares
   `capabilities` explicitly.
@@ -337,8 +342,12 @@ engine. Same container shape as the Qwen lanes (entrypoint fork, keyless bridge,
   pass over the files (~257 GB), a 5.8 MB Unsloth metadata-shard download, the pack + hot-expert
   profile, and the 16-token smoke (the first gfx1100 run of the binary). 0.2.7 changes the engine
   folder (0.1.50 -> 0.1.52), so the lane drops its record and runs setup once; the pack is rebuilt
-  with the vision tower (pictures on by default; the weights are the lane's own `mmproj-BF16.gguf`,
-  no download). Later starts take a few minutes. Full record: [notes/strata.md](../../notes/strata.md); speed:
+  with the vision tower (the weights are the lane's own `mmproj-BF16.gguf`, no download). **Pass
+  `-e VISION=on` on that setup run**: a lane installed under 0.2.6 saves `"vision": "off"` in its
+  preset and setup only packs the tower when pictures are on (without the flag the pass silently
+  reuses the text-only pack). Also give the init container the GPUs to itself — a loaded Qwen lane
+  makes the smoke fail with `cudaMalloc 2 MiB on CUDA0 failed`. Later starts take a few minutes.
+  Full record: [notes/strata.md](../../notes/strata.md); speed:
   [notes/deepseek/v41f1017.md](../../notes/deepseek/v41f1017.md).
 
   The init run (stop the container when setup finishes; the lane reuses the prepared tree):
@@ -352,7 +361,7 @@ engine. Same container shape as the Qwen lanes (entrypoint fork, keyless bridge,
     --group-add "$(getent group render | cut -d: -f3)" \
     --security-opt label=disable --security-opt seccomp=unconfined \
     --ulimit memlock=-1:-1 --shm-size 2g --stop-timeout 120 \
-    -e PORT=8080 \
+    -e PORT=8080 -e VISION=on \
     -e STRATA_HIPBLASLT_TABLE=on \
     -e CHAT_TEMPLATE_PATH=/templates/deepseek/v4.1-flash-1017-chat-template.jinja \
     -v /mnt/unenc-xfs/llm-ops/deploy/strata/entrypoint-local.sh:/entry-local.sh:ro \

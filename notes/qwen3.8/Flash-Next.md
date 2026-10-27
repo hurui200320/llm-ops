@@ -178,6 +178,7 @@ llama-swap, vanilla lane unless noted.
 | 0.2.4.2 own / 0.1.48 | 2100.5 / 64.05 (0.654) | 2172.4 / 64.00 (0.673) | record kept; straight to serving |
 | 0.2.5 own / 0.1.50, sample 1 | 2005.8 / 63.55 (0.649) | 2049.4 / 65.75 (0.692) | record dropped; setup once; no repack/download; hipBLASLt table re-tuned |
 | 0.2.5 own / 0.1.50, sample 2 | 1936.1 / 63.65 (0.656) | 2074.8 / 64.30 (0.683) | — |
+| 0.2.7 own / 0.1.52 | 2063.9 / 64.30 (0.653) | 2121.1 / 61.60 (0.665) | record dropped; setup once; no repack/download; staged HC read engaged on both cards |
 
 0.2.3 was within ±2 % pp and −2 %/−5 % tg of the 0.2.2 tuning — **no RX 7000 regression from the
 0.1.48 rebuild** (upstream claims none; the Strix Halo changes are gfx1151-only), so treat the tg
@@ -258,4 +259,30 @@ Candidates and rejects (parameter rationale for this lane):
 - **`--prefill-pipe` on the two-card layer split: candidate, not yet run.** Upstream measured
   +15 % at 4K and +23 % at 8K prompts on two RTX A4000; unmeasured on HIP. A/B it after the 0.1.52
   baseline is recorded (same prompts, rotate the arms).
+
+### Measured curve (0.1.52, 2026-10-28)
+
+`run_longctx.py --ctx 262144 --out-pct 1 --reps 2`, through llama-swap, vanilla lane; `cache_n` 0 on
+every rep. Startup landmarks: `prefill gemm: hipBLASLt tuning enabled (26 rows, gfx1100, version
+100200)`, staged HC read on CUDA0 and CUDA1 (bit-exact self-test), 22.62 GiB resident RAM copy,
+lend 3591, expert caches 8452 + 7849 slots.
+
+| in % | pp t/s | tg t/s | accept |
+| ---: | ---: | ---: | ---: |
+| 20 | 1564.5 | 66.05 | 0.641 |
+| 40 | 1882.9 | 66.65 | 0.651 |
+| 60 | 2063.9 | 64.30 | 0.653 |
+| 85 | 2121.1 | 61.60 | 0.665 |
+
+Against the 0.2.5/0.1.50 60/85 table above: pp within +1 to +3 % (inside the 1936-2133 t/s spread),
+tg at 85 % 61.6 against 64.3-65.8 (−4 %, accept 0.665 against 0.68-0.69) — small enough for two reps
+to be noise, but it repeats the direction at 60 %, so re-check with the next paired run before
+calling it an engine delta. The 0.1.52 package ships the **0.1.48 hipBLASLt table bytes** again
+(`1bb8cd2e…`, 845 B), not the 0.1.50 re-tune — the pp numbers above are therefore a fresh baseline,
+not an A/B against the 2026-10-25 table spot-check. Targets hold with room: pp ≥ 1000 t/s and
+tg ≥ 25 t/s at 85 % of 262144.
+
+No 0.1.52 regression on the picture path: a 420×420 red/blue-halves picture answered correctly
+through the swap (reasoning "pure red and pure blue", 1110 prompt tokens at the 8192 budget), and the
+reader warm-up still logs `warmed up at 4096 image tokens`.
 
