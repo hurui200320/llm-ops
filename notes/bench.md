@@ -85,20 +85,20 @@ time ./bench/run_longctx.sh
   + 60%: pp  807.67 t/s  tg 24.18 t/s  accept_rate 0.6764
   + 85%: pp  681.89 t/s  tg 21.64 t/s  accept_rate 0.7065
 + `qwen3.8-flash-next-iq3s`, 256k, strata
-  + 20%: pp 1781.00 t/s  tg 71.00 t/s  accept_rate 0.6751
-  + 40%: pp 2061.95 t/s  tg 68.70 t/s  accept_rate 0.679
-  + 60%: pp 2106.25 t/s  tg 66.20 t/s  accept_rate 0.6774
-  + 85%: pp 2168.40 t/s  tg 66.10 t/s  accept_rate 0.6846
+  + 20%: pp 1767.30 t/s  tg 70.60 t/s  accept_rate 0.6811
+  + 40%: pp 2053.00 t/s  tg 68.30 t/s  accept_rate 0.6796
+  + 60%: pp 2130.85 t/s  tg 67.95 t/s  accept_rate 0.6911
+  + 85%: pp 2161.55 t/s  tg 65.95 t/s  accept_rate 0.7065
 + `qwen3.8-flash-next-sc117-iq3s`, 256k, strata
-  + 20%: pp 1756.50 t/s  tg 71.20 t/s  accept_rate 0.6792
-  + 40%: pp 2069.40 t/s  tg 67.30 t/s  accept_rate 0.6746
-  + 60%: pp 2123.05 t/s  tg 66.90 t/s  accept_rate 0.6873
-  + 85%: pp 2165.55 t/s  tg 65.10 t/s  accept_rate 0.6906
+  + 20%: pp 1777.90 t/s  tg 70.15 t/s  accept_rate 0.6793
+  + 40%: pp 2062.85 t/s  tg 66.65 t/s  accept_rate 0.6683
+  + 60%: pp 1930.40 t/s  tg 66.10 t/s  accept_rate 0.6878
+  + 85%: pp 2167.95 t/s  tg 64.55 t/s  accept_rate 0.6878
 + `deepseek-v4.1-flash-2bpw`, 256k, strata
-  + 20%: pp  415.10 t/s  tg 22.10 t/s
-  + 40%: pp  432.70 t/s  tg 22.70 t/s
-  + 60%: pp  439.20 t/s  tg 22.80 t/s
-  + 85%: pp  427.25 t/s  tg 22.80 t/s
+  + 20%: pp  539.40 t/s  tg 21.80 t/s
+  + 40%: pp  581.35 t/s  tg 22.30 t/s
+  + 60%: pp  585.70 t/s  tg 21.55 t/s
+  + 85%: pp  579.60 t/s  tg 21.65 t/s
 
 
 ## Tool calling
