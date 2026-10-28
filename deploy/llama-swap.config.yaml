@@ -558,15 +558,18 @@ models:
   # DS4_VISION_TOKENS writes the pack's vision.max_image_tokens: 1140 is the
   # tower's hard maximum (10,240-patch attention; 42x42 px per token), vs
   # setup's native 1024. 
+  # 512k ctx (2026-10-28): CONTEXT=512k -> --max-context 524288, measured
+  # speed-neutral vs 256k (the pack addresses 1m; 1m itself is not run here) —
+  # placement and the curve: notes/deepseek/v41f1017.md. Fallback: 256k.
   "deepseek-v4.1-flash-2bpw":
     name: "DeepSeek V4.1-Flash IST-DAS 2.00 bpw"
-    description: "262144 ctx, fixed kv cache quant, engine's own vision tower (0.2.7; advertised after the vision smoke)"
+    description: "524288 ctx, fixed kv cache quant, vision"
     cmd: |
       ${docker-server-strata-rocm}
         -v /mnt/unenc-xfs/strata/ISTA-DASLab-dsv41f1017:/data
         -e MODEL=IST-DAS-2.00bpw
         -e FAMILY=deepseek41
-        -e CONTEXT=256k
+        -e CONTEXT=512k
         -e GPUS=0,1
         -e MODEL_PATH=/models/strata/ISTA-DASLab-dsv41f1017
         -e CHAT_TEMPLATE_PATH=/templates/deepseek/v4.1-flash-1017-chat-template.jinja
@@ -591,7 +594,7 @@ models:
       in: [text, image]
       out: [text]
       tools: true
-      context: 262144
+      context: 524288
       disableAuto: true
     timeouts:
       connect: 30

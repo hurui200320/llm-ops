@@ -335,9 +335,13 @@ engine. Same container shape as the Qwen lanes (entrypoint fork, keyless bridge,
 - **No KV or parallel.** The engine has its own cache format (no `--kv` flag at all); `--parallel` is
   ignored with a warning in this version. Do not pass `KV=` or `PARALLEL`; the lane declares
   `capabilities` explicitly.
-- **Context 256k.** `CONTEXT=256k` → `--max-context 262144`; upstream checked 4K/8K only, so setup
-  warns and keeps it as asked. Fallback ladder: 128k, then 64k (the pack, table and drafter are
-  reused; only the install record is remade).
+- **Context 512k.** `CONTEXT=512k` → `--max-context 524288` (the launcher accepts any `Nk`/`Nm`). The
+  pack's `ds4.txt` says `max_position_embeddings 1048576`, so 512k is inside what the pack addresses —
+  past that the launch refuses. Past 256K it only warns ("Not tested yet…"), and the engine sizes its
+  attention cache by itself: the cache grows and experts move to the CPU lane, which measured
+  speed-neutral on this pair (placement and the 524288 curve:
+  [notes/deepseek/v41f1017.md](../../notes/deepseek/v41f1017.md)). Fallback ladder: 256k, then 128k,
+  then 64k (the pack, table and drafter are reused; only the install record is remade).
 - **First start** (`healthCheckTimeout: 1200`): setup runs outside llama-swap — a one-time SHA-256
   pass over the files (~257 GB), a 5.8 MB Unsloth metadata-shard download, the pack + hot-expert
   profile, and the 16-token smoke (the first gfx1100 run of the binary). 0.2.7 changes the engine
@@ -368,7 +372,7 @@ engine. Same container shape as the Qwen lanes (entrypoint fork, keyless bridge,
     -v /mnt/unenc-xfs/llm-ops/templates:/templates:ro \
     -v /mnt/unenc-xfs/strata/ISTA-DASLab-dsv41f1017:/data \
     -v /mnt/unenc-xfs/models:/models:z \
-    -e MODEL=IST-DAS-2.00bpw -e FAMILY=deepseek41 -e CONTEXT=256k -e GPUS=0,1 \
+    -e MODEL=IST-DAS-2.00bpw -e FAMILY=deepseek41 -e CONTEXT=512k -e GPUS=0,1 \
     -e MODEL_PATH=/models/strata/ISTA-DASLab-dsv41f1017 \
     -e STRATA_SET="ssd-cache=36 reserve-mib=896" \
     -e STRATA_DS4_HIPK=1 \

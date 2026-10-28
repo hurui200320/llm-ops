@@ -130,7 +130,7 @@ picked up live; no environment variable is needed to load a lane.
   `--group-add 39 --group-add 105` (host gids — see below), `--security-opt label=disable
   --security-opt seccomp=unconfined`, `--ulimit memlock=-1:-1 --shm-size 2g --stop-timeout 120`.
 - Env: `PORT`, `STRATA_HIPBLASLT_TABLE=on`, `STRATA_ALLOWED_HOSTS=fedora-tuf`, `MODEL=IQ3_S`,
-  `CONTEXT=256k`, `GPUS=0,1`, `PARALLEL=1`,
+  `CONTEXT=256k` (the DeepSeek lane: `CONTEXT=512k`), `GPUS=0,1`, `PARALLEL=1`,
   `MODEL_PATH`, `CHAT_TEMPLATE_PATH`, and the lane's `STRATA_SET` (the DeepSeek lane also sets
   `STRATA_DS4_HIPK=1` and `DS4_VISION_TOKENS=1140`). `PRESET` is unset.
 - **`STRATA_ALLOWED_HOSTS` is required since 0.2.7** (new DNS-rebinding protection in the Strata
@@ -371,13 +371,21 @@ turns the store off (every CPU expert read from the SSD per token — do not).
 
 ### Context, KV, parallel, vision
 
-- **Context 262144 (256k)**: `--context 256k` → `--max-context 262144`. Upstream checked the engine
-  at 4K/8K only; setup warns "longer is kept as you chose, but untested" and keeps it. Fallback
-  ladder: 128k, then 64k (the engine default is 8192).
-- **No KV setting exists**: `strata-dsv41` has no `--kv` flag — its cache is its own representation
-  (~17 MB per 6.5K tokens, ≈0.7 GB at 256k). `kv=fp16` in `STRATA_SET` would append `--kv fp16` to
-  the engine argv and kill it; `KV=`/`resident-budget-gib` are Flash-Next settings that setup rejects
-  for deepseek41.
+- **Context 524288 (512k)**: `--context 512k` → `--max-context 524288` (the launcher parses any
+  `Nk`/`Nm`, `strata_cli/launch/settings.py:parse_context`). The ceiling is the pack's own
+  `max_position_embeddings` in its `ds4.txt` (this pack: 1,048,576, so 512k and even 1m address;
+  `strata_control/dsv41_context.py` refuses anything larger). Upstream checked the engine at 4K/8K
+  only and past 256K the launch only warns ("Not tested yet…"); the on-card verification of 512k
+  (2026-10-28): [`deepseek/v41f1017.md`](deepseek/v41f1017.md). Fallback ladder: 256k, then 128k,
+  then 64k (the engine default is 8192). The change is a launch setting — the pack, table and drafter
+  are reused, only the install record / launch state are rewritten.
+- **No KV setting exists**: `strata-dsv41` has no `--kv` flag — its cache is its own representation,
+  sized by the engine at load and scaling with `--max-context` (the load line's `caches`: 0.24 + 0.10
+  GB for 256k, 0.48 + 0.19 GB for 512k ≈ 1.3 KB/token; a parked 439K-token conversation is 0.42 GB).
+  The VRAM comes out of the expert tier (`reserve-mib` bounds the expert cache at load, so the expert
+  count falls instead: measured 54 experts to the CPU lane at 512k). `kv=fp16` in `STRATA_SET` would
+  append `--kv fp16` to the engine argv and kill it; `KV=`/`resident-budget-gib` are Flash-Next
+  settings that setup rejects for deepseek41.
 - **Vision (0.2.7, engine 0.1.52)**: the engine carries its own vision tower (no separate reader
   process). Setup packs the tower's weights from the lane's `mmproj-BF16.gguf` (the 0.2.7 pin matches
   the file on disk), so the 0.2.7 setup pass rebuilds the pack with `vision.*`/`image_token_id`; the
