@@ -78,7 +78,10 @@ One tool, through llama-swap so it measures the deployed config itself
   per-request nonce** — some servers, e.g. Strata, ignore `cache_prompt` and
   would otherwise reuse the calibration/previous level's prefix — verified by
   `cache_n == 0`), so no unload-before-run dance is needed;
-  reports per-level pp/tg t/s and spec accept rate at depth.
+  reports per-level pp/tg t/s and spec accept rate at depth. The default
+  corpus is Project Gutenberg's War and Peace plus Les Misérables (~1,600
+  chunks at the default 4,000-char chunk size), enough for two disjoint reps
+  at 85% of a 512k context; a single novel is too short there.
 
 ```bash
 cd speed
@@ -117,8 +120,9 @@ Deployment heuristic — speed is mostly decided by whether things fit in VRAM:
    what it was actually costing.
 
 Draft acceptance only means something on meaningful input, which is why
-`run_longctx.py` feeds a real public-domain novel (Project Gutenberg, fetched
-on the fly, cached under `bench/.cache/`) instead of synthetic filler.
+`run_longctx.py` feeds real public-domain books (Project Gutenberg's War and
+Peace plus Les Misérables by default, fetched on the fly and cached under
+`bench/.cache/`) instead of synthetic filler.
 
 #### System One decision latency
 

@@ -12,7 +12,7 @@ Usage:
                            [--corpus <path-or-url>] [--out results.json]
 
 Sends one chat completion per rep per input level: each level targets
-<in-pct>% of the max context of meaningful text (a public-domain novel,
+<in-pct>% of the max context of meaningful text (public-domain books,
 fetched on the fly and cached under bench/.cache/) wrapped in a summarize
 instruction — the shape of a harness compaction request — with a single
 <out-pct>% of max context output budget shared by all levels. Levels run
@@ -39,7 +39,9 @@ bench/results/longctx/ and are rewritten after every rep, so an interrupted
 run keeps its completed reps. Each level calibrates its own chunks-per-rep
 via /tokenize and reuses corpus segments across levels (disjoint segments
 within a level; cross-level coldness relies on cache_prompt=false, verified
-via cache_n == 0), so the corpus only needs to cover the largest level.
+via cache_n == 0), so the corpus only needs to cover the largest level. The
+default corpus concatenates War and Peace and Les Misérables (~1,600 chunks)
+so two disjoint reps still fit at 85% of a 512k context.
 """
 
 import argparse
@@ -54,12 +56,28 @@ from urllib.parse import quote, urlparse
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 RESULTS_DIR = SCRIPT_DIR.parent / "results" / "longctx"
-CACHE_PATH = SCRIPT_DIR.parent / ".cache" / "longctx" / "war_and_peace.txt"
+CACHE_DIR = SCRIPT_DIR.parent / ".cache" / "longctx"
 
-CORPUS_URLS = [
-    "https://www.gutenberg.org/cache/epub/2600/pg2600.txt",
-    "https://www.gutenberg.org/files/2600/2600-0.txt",
+# A single novel cannot cover two disjoint reps at 85% of a 512k context:
+# War and Peace is ~800 chunks at the default 4,000 chars per chunk, while the
+# 85% level needs ~453 chunks per rep (~906 for two). Concatenate a second
+# public-domain book so the default --reps 2 remains possible as contexts grow.
+CORPUS_BOOKS = [
+    (
+        "war_and_peace",
+        [
+            "https://www.gutenberg.org/cache/epub/2600/pg2600.txt",
+            "https://www.gutenberg.org/files/2600/2600-0.txt",
+        ],
+    ),
+    (
+        "les_miserables",
+        [
+            "https://www.gutenberg.org/cache/epub/135/pg135.txt",
+        ],
+    ),
 ]
+CORPUS_NAME = "gutenberg:war_and_peace+les_miserables"
 USER_AGENT = "llm-ops-bench/1.0"
 API_KEY = ""  # set from --api-key / STRATA_KEY in main(); sent only to the bench server
 CHUNK_CHARS = 4000
@@ -148,28 +166,6 @@ def fetch_url(url, timeout):
         return resp.read().decode("utf-8", "replace").replace("\r\n", "\n")
 
 
-def load_corpus(source):
-    if source:
-        path = Path(source)
-        if path.is_file():
-            return path.read_text(encoding="utf-8", errors="replace")
-        if source.startswith(("http://", "https://")):
-            return fetch_url(source, 120)
-        raise SystemExit(f"error: --corpus {source!r} is neither a file nor a URL")
-    if CACHE_PATH.is_file():
-        return CACHE_PATH.read_text(encoding="utf-8", errors="replace")
-    last_error = None
-    for url in CORPUS_URLS:
-        try:
-            text = fetch_url(url, 120)
-            CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-            CACHE_PATH.write_text(text, encoding="utf-8")
-            return text
-        except Exception as exc:
-            last_error = exc
-    raise SystemExit(f"error: corpus fetch failed ({last_error}); no cached copy at {CACHE_PATH}")
-
-
 def strip_gutenberg(text):
     start = text.find("*** START OF")
     if start != -1:
@@ -179,6 +175,41 @@ def strip_gutenberg(text):
     if end != -1:
         text = text[:end]
     return text
+
+
+def load_corpus(source):
+    if source:
+        path = Path(source)
+        if path.is_file():
+            return strip_gutenberg(path.read_text(encoding="utf-8", errors="replace"))
+        if source.startswith(("http://", "https://")):
+            return strip_gutenberg(fetch_url(source, 120))
+        raise SystemExit(f"error: --corpus {source!r} is neither a file nor a URL")
+
+    parts = []
+    for name, urls in CORPUS_BOOKS:
+        cache = CACHE_DIR / f"{name}.txt"
+        if cache.is_file():
+            text = cache.read_text(encoding="utf-8", errors="replace")
+        else:
+            last_error = None
+            text = None
+            for url in urls:
+                try:
+                    text = fetch_url(url, 120)
+                    break
+                except Exception as exc:
+                    last_error = exc
+            if text is None:
+                raise SystemExit(
+                    f"error: corpus fetch failed for {name} ({last_error}); "
+                    f"no cached copy at {cache}. Pass --corpus <path-or-url> "
+                    "to use a local corpus."
+                )
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            cache.write_text(text, encoding="utf-8")
+        parts.append(strip_gutenberg(text))
+    return "\n\n".join(parts)
 
 
 def chunk_text(text, chunk_chars):
@@ -464,7 +495,7 @@ def main():
         print(f"error: warmup failed: {exc}", file=sys.stderr)
         return 2
 
-    text = strip_gutenberg(load_corpus(args.corpus))
+    text = load_corpus(args.corpus)
     chunks = chunk_text(text, CHUNK_CHARS)
     if not chunks:
         print("error: corpus is empty after stripping", file=sys.stderr)
@@ -539,7 +570,7 @@ def main():
                     "out_pct": out_pct,
                     "osl_target": osl,
                     "reps": args.reps,
-                    "corpus": args.corpus or "gutenberg:war_and_peace",
+                    "corpus": args.corpus or CORPUS_NAME,
                     "chunks_per_rep": {str(st["in_pct"]): st["chunks_per_rep"]
                                        for st in level_states},
                 },
