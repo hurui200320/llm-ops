@@ -143,7 +143,7 @@ macros:
     --ctx-checkpoints 16
     --checkpoint-min-step 8192
 
-  # Strata (upstream image) on the 2x7900XTX pair: HIP engine, bind mounts only.
+  # Strata on the 2x7900XTX pair: HIP engine, bind mounts only.
   # No --memory cap: upstream advises none (the engine plans from the host's
   # meminfo and the entrypoint warns on memory.max); the engine's 28 GiB resident
   # budget is the actual control. No comgr cache volume: the engine is AOT-built.
@@ -552,15 +552,14 @@ models:
 
 
   # DeepSeek-V4.1-Flash 1017 IQ2_XXS, strata
-  # 0.2.7: pictures run inside the engine (its own tower, packed at setup); each
-  # Qwen lane keeps the separate Flash-Next reader with the budget above. The
-  # DeepSeek lane's `image` capability is flipped on after the on-card smoke.
+  # Pictures run inside the engine (its own tower, packed at setup); each
+  # Qwen lane keeps the separate Flash-Next reader with the budget above.
   # DS4_VISION_TOKENS writes the pack's vision.max_image_tokens: 1140 is the
   # tower's hard maximum (10,240-patch attention; 42x42 px per token), vs
   # setup's native 1024. 
-  # 512k ctx (2026-10-28): CONTEXT=512k -> --max-context 524288, measured
-  # speed-neutral vs 256k (the pack addresses 1m; 1m itself is not run here) —
-  # placement and the curve: notes/deepseek/v41f1017.md. Fallback: 256k.
+  # CONTEXT=512k -> --max-context 524288, measured speed-neutral vs 256k
+  # (the pack addresses 1m; 1m itself is not run here) — placement and the
+  # curve: notes/deepseek/v41f1017.md. Fallback: 256k.
   "deepseek-v4.1-flash-2bpw":
     name: "DeepSeek V4.1-Flash IST-DAS 2.00 bpw"
     description: "524288 ctx, fixed kv cache quant, vision"

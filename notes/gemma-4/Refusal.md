@@ -1,3 +1,5 @@
+# 20260917
+
 Jailbreak prompt for Gemma 4, as part of the system prompt:
 
 ```

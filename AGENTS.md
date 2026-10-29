@@ -31,13 +31,15 @@ docker run --rm llm-ops-toolbox:local sh -c 'for cmd in check_updates verify_che
 
 Write facts to **one** canonical place and link to them from everywhere else. Never duplicate benchmark numbers, version/digest tables, tuning logs, or architectural rationale across multiple files.
 
-- **`notes/` is the primary source of truth**:
+- **`notes/` is the primary source of truth (diary format)**:
   - **Model-specific tuning, speed runs, and parameter rationale**: `notes/<model-family>/<model>.md`
-  - **Cross-model benchmark results and evaluations**: `notes/bench.md`
   - **Engine/infrastructure research, version pins, and verification records**: `notes/<topic>.md` (e.g., `notes/strata.md`, `notes/rccl.md`, `notes/model-loading.md`)
-- **Keep other docs focused on their role**:
+  - **Chronological diary rule**: Model and topic notes are written as dated diary entries (`# YYYYMMDD ...`). Always append new findings, upgrades, tuning experiments, or retirement records at the end with a date heading. Do not overwrite past entries in place when settings or versions change; later entries supersede earlier ones while preserving the full experimental history.
+  - **Structured exceptions**: `notes/bench.md` holds cross-model benchmark evaluations by suite, and `notes/TODO.md` tracks open follow-up items.
+- **README files represent only the current/latest state**:
+  - All `README.md` files (`README.md`, `deploy/**/README.md`, `bench/**/README.md`, `scripts/README.md`) must describe **only the current, active state**.
+  - Update READMEs in place when configurations or workflows change, and remove anything that has been fixed, replaced, or retired (such as old version pins, resolved bugs, obsolete workarounds, or dropped models).
   - `deploy/` READMEs and config comments should stay strictly operational (how to build, configure, and run), linking to `notes/` for historical context, digest inventories, benchmark numbers, and why specific flags were chosen.
-  - When a fact changes (e.g., an image upgrade or a new tuning result), update the single canonical section in `notes/` rather than copying the new values into multiple documents.
 
 ## bench/
 

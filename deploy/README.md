@@ -14,11 +14,7 @@ Running on fedora-tuf, which has two AMD 7900XTX.
 + `/mnt/unenc-xfs/models`: copy the archive/LLM content from NAS
 + `/mnt/unenc-xfs/llm-ops`: git clone of this repo
 
-The Strata deployment (second backend; the lanes run our own build
-`ghcr.io/hurui200320/llm-ops-strata:0.2.7-rocm-gfx110x` — upstream has published no Docker image after 0.2.3, and its
-feed has no RX 7900 DeepSeek engine, so [.github/workflows/strata-image.yml](../.github/workflows/strata-image.yml)
-builds the 0.2.7 Terminal around the signed-feed 0.1.52 Qwen engine and adds a gfx110x `strata-dsv41`) is documented
-in [strata/README.md](strata/README.md).
+The Strata deployment (second backend, running `ghcr.io/hurui200320/llm-ops-strata:0.2.7-rocm-gfx110x` built by [.github/workflows/strata-image.yml](../.github/workflows/strata-image.yml) with the signed-feed Qwen engine and a gfx110x `strata-dsv41` DeepSeek engine) is documented in [strata/README.md](strata/README.md).
 
 To download llama-swap (download to /mnt/unenc-xfs/llama-swap):
 
@@ -54,22 +50,20 @@ docker build \
 | Gemma 4 26B | 262144 | 2 | 20 | 40960 MiB |
 | Gemma 4 31B QAT | 262144 | 1 | 16 | 40960 MiB |
 | Muse Glimmer | 131072 | 4 | 32 | 40960 MiB |
-| Ornith 1.5, both variants | 262144 | 1 | 32 | 40960 MiB |
-| Qwen3.8, both variants | 262144 | 1 | 16 | 40960 MiB |
+| Qwen3.8 27B, both variants | 262144 | 1 | 16 | 40960 MiB |
+| OpenJev | 16384 | 8 | 0 | 0 MiB |
 
-Muse disables eager idle-slot RAM copies; its private slots still retain prefixes
-in VRAM, and saved-prompt caching remains available when a slot is replaced.
-Every family shares one 40960 MiB (40 GiB) saved-prompt budget, large enough to
-hold a full-length conversation's saved state (KV plus retained checkpoints):
-a 225K-token Qwen3.8 conversation saves about 31 GiB and a full 256K one about
-35 GiB, per the `prompt state size` log lines. The budget is an LRU ceiling,
-not an allocation: states above it are rejected (logged as "exceeds cache size
-limit") and re-prefill on return, and states that do not fit in the 32 GiB RAM
-cap may sit in swap until a restore (see "Memory and cache tuning"). Gemma 4's
-saved-state sizes were never measured while its cache was disabled, so confirm
-the budget holds via the same log lines after a workspace switch. See the
-corresponding model notes for measured sizes, latency and the tradeoff for
-older-history edits.
+Muse and OpenJev disable eager idle-slot RAM copies (`--no-cache-idle-slots`);
+Muse's private slots still retain prefixes in VRAM, and saved-prompt caching
+remains available when a slot is replaced. Every chat model family shares one
+40960 MiB (40 GiB) saved-prompt budget, large enough to hold a full-length
+conversation's saved state (KV plus retained checkpoints): a 225K-token Qwen3.8
+conversation saves about 31 GiB and a full 256K one about 35 GiB, per the
+`prompt state size` log lines. The budget is an LRU ceiling, not an allocation:
+states above it are rejected (logged as "exceeds cache size limit") and
+re-prefill on return, and states that do not fit in the 32 GiB RAM cap may sit
+in swap until a restore (see "Memory and cache tuning"). See the corresponding
+model notes for measured sizes, latency and the tradeoff for older-history edits.
 
 ## Memory and cache tuning
 
@@ -134,10 +128,9 @@ batch sizes and slots are already set explicitly. Inference warmup remains enabl
 
 All models use `--load-mode dio` for faster cold loads and rotation across the
 collection. Unlike `mmap`, direct I/O bypasses the page cache for most weight
-reads, so even a previously cached model must be read again. `mmap` was faster
-with fully cached weights; it remains an alternative if usage changes to a small
-frequently revisited subset. `none` uses buffered reads and was not the best
-overall strategy in the switching tests. Context and KV precision are unchanged.
+reads, so even a previously cached model must be read again. `mmap` remains an
+alternative if usage changes to a small frequently revisited subset whose
+weights stay fully cached in RAM.
 
 The Docker named volume `llm-ops-comgr-cache` preserves ROCm compilation results
 under `/root/.cache/comgr` when serving containers are removed. Docker creates it

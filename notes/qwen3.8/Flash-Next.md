@@ -166,24 +166,41 @@ Revisit only if Strata ships `--batch` + `--pipeline-windows` compatibility, or 
 that keeps the expert cache intact while slots exist (that would fix the eviction but not the 53 tg
 pipeline ceiling), or the workload truly needs 2+ simultaneous long decodes.
 
-# Upgrade history (0.2.3 → 0.2.5)
+# 20261023 Upgrade to Strata 0.2.3 (engine 0.1.48)
 
-Setup/deploy mechanics are in [`notes/strata.md`](../strata.md); this table keeps the lane-level
-verification. Numbers are `run_longctx.py --ctx 262144 --out-pct 1 --in-pcts 60,85`, 2 reps, through
-llama-swap, vanilla lane unless noted.
+Setup/deploy mechanics are in [`notes/strata.md`](../strata.md). First start dropped the 0.2.2
+install record, ran setup once, and reused the pack and MTP (SC117 swapped in with its own mmproj).
+Spot-check (`run_longctx.py --ctx 262144 --out-pct 1 --in-pcts 60,85`, 2 reps, through llama-swap,
+vanilla lane):
 
-| Image / engine | 60 % pp / tg (accept) | 85 % pp / tg (accept) | First start |
-| --- | --- | --- | --- |
-| 0.2.3 upstream / 0.1.48 | 2077.3 / 65.95 (0.654) | 2132.5 / 63.30 (0.670) | record dropped; setup once; no repack/download |
-| 0.2.4.2 own / 0.1.48 | 2100.5 / 64.05 (0.654) | 2172.4 / 64.00 (0.673) | record kept; straight to serving |
-| 0.2.5 own / 0.1.50, sample 1 | 2005.8 / 63.55 (0.649) | 2049.4 / 65.75 (0.692) | record dropped; setup once; no repack/download; hipBLASLt table re-tuned |
-| 0.2.5 own / 0.1.50, sample 2 | 1936.1 / 63.65 (0.656) | 2074.8 / 64.30 (0.683) | — |
-| 0.2.7 own / 0.1.52 | 2063.9 / 64.30 (0.653) | 2121.1 / 61.60 (0.665) | record dropped; setup once; no repack/download; staged HC read engaged on both cards |
++ 60 %: pp 2077.3 / tg 65.95 (accept 0.654)
++ 85 %: pp 2132.5 / tg 63.30 (accept 0.670)
 
-0.2.3 was within ±2 % pp and −2 %/−5 % tg of the 0.2.2 tuning — **no RX 7000 regression from the
-0.1.48 rebuild** (upstream claims none; the Strix Halo changes are gfx1151-only), so treat the tg
-delta as run-to-run noise unless it repeats. 0.2.4.2 was +1.1 %/+1.9 % pp and −2.9 %/+1.1 % tg
-against 0.2.3 — both noise, no action.
+Within ±2 % pp and −2 %/−5 % tg of the 0.2.2 tuning — **no RX 7000 regression from the 0.1.48
+rebuild** (upstream claims none; the Strix Halo changes are gfx1151-only), so treat the tg delta as
+run-to-run noise unless it repeats.
+
+# 20261024 Upgrade to Strata 0.2.4.2
+
+Switched to our own `0.2.4.2-rocm-gfx110x` image (engine 0.1.48 unchanged; install record kept,
+straight to serving with no setup pass). Spot-check (`run_longctx.py --ctx 262144 --out-pct 1
+--in-pcts 60,85`, 2 reps, through llama-swap, vanilla lane):
+
++ 60 %: pp 2100.5 / tg 64.05 (accept 0.654)
++ 85 %: pp 2172.4 / tg 64.00 (accept 0.673)
+
++1.1 %/+1.9 % pp and −2.9 %/+1.1 % tg against 0.2.3 — both noise, no action.
+
+# 20261025 Upgrade to Strata 0.2.5 (engine 0.1.50 and re-tuned hipBLASLt table)
+
+0.2.5 moved the engine to 0.1.50 (install record dropped, setup once with no repack/download) and
+re-tuned the packaged hipBLASLt table (`100200`). Two `run_longctx.py` samples (`--ctx 262144
+--out-pct 1 --in-pcts 60,85`, 2 reps, through llama-swap, vanilla lane):
+
+| Sample | 60 % pp / tg (accept) | 85 % pp / tg (accept) |
+| --- | --- | --- |
+| Sample 1 | 2005.8 / 63.55 (0.649) | 2049.4 / 65.75 (0.692) |
+| Sample 2 | 1936.1 / 63.65 (0.656) | 2074.8 / 64.30 (0.683) |
 
 The 0.2.5 60 % average is dragged down by the first measured rep of each sample (1900.8 and
 1739.0 t/s); those requests logged an ~8.3-8.7 GB OS read from NVMe (cold page cache after the
@@ -235,11 +252,11 @@ Verified on SC117 (2026-10-27, llama-swap lane):
   and prefill ~1000 t/s. Cards run near-full by design (expert cache). If it recurs, raise
   `vram-reserve-mib` 1536 → 1600-2048 in `STRATA_SET` (engine's own suggestion) and re-check.
 
-## 20261028 0.2.7 engine 0.1.52 (staged HC read; KVA rejected; prefill-pipe candidate)
+# 20261028 0.2.7 engine 0.1.52 (staged HC read; KVA rejected; prefill-pipe candidate)
 
 The image moves to Terminal 0.2.7 / engine 0.1.52 — the first Qwen engine byte change since 0.1.50
 (engine folder `0.1.52-linux-x86_64-hip-rx7900`, so the lane re-runs setup once and reuses its pack;
-deployment record: [notes/strata.md](../strata.md#upgrade-history)).
+deployment record: [notes/strata.md](../strata.md)).
 
 Engine changes that reach gfx1100: only the staged/split hyper-connection read (`STRATA_HC_SPLIT`,
 unset = staged). It is picked by a per-card self-test at every start and used only when exact;
@@ -260,7 +277,7 @@ Candidates and rejects (parameter rationale for this lane):
   +15 % at 4K and +23 % at 8K prompts on two RTX A4000; unmeasured on HIP. A/B it after the 0.1.52
   baseline is recorded (same prompts, rotate the arms).
 
-### Measured curve (0.1.52, 2026-10-28)
+## Measured curve (0.1.52, 2026-10-28)
 
 `run_longctx.py --ctx 262144 --out-pct 1 --reps 2`, through llama-swap, vanilla lane; `cache_n` 0 on
 every rep. Startup landmarks: `prefill gemm: hipBLASLt tuning enabled (26 rows, gfx1100, version

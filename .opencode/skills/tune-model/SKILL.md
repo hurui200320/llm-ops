@@ -61,4 +61,4 @@ For **every** tested arm (both working and non-working), record in `notes/<model
 ### 6. Finalize & Validate
 After all approved arms are tested and recorded:
 1. Validate the final kept configuration end-to-end (including syncing `deploy/` if requested, running smoke checks, and verifying clean container stop / VRAM release).
-2. Keep detailed tuning tables, rejected arms, and parameter rationale in `notes/<model-family>/<model>.md` as the single source of truth, and link to it from `deploy/` per `AGENTS.md`.
+2. Keep detailed tuning tables, rejected arms, and parameter rationale in a dated `# YYYYMMDD ...` entry appended to `notes/<model-family>/<model>.md` as the single source of truth, and update `deploy/` READMEs in place to reflect only the current state per `AGENTS.md`.

@@ -85,7 +85,7 @@ One tool, through llama-swap so it measures the deployed config itself
 
 ```bash
 cd speed
-python3 run_longctx.py --model ornith-1.5-35b-a3b-q80-vision                      # ctx auto-detected from /props
+python3 run_longctx.py --model google-gemma-4-26b-a4b-q80-vision                   # ctx auto-detected from /props
 python3 run_longctx.py --model meta-muse-glimmer-30b-kquant-vision               # 128K per slot, also auto-detected
 python3 run_longctx.py --model <alias> --ctx 262144                              # override (warns if /props disagrees)
 python3 run_longctx.py --model <alias> --in-pcts 20,40,60,85 --out-pct 10        # explicit (these are the defaults)
@@ -277,21 +277,19 @@ up here. Retries are a single 60s wait (`RETRY_WAITS_S = (60,)` in
 twice is a genuine fail, and on a single-slot setup each extra retry is
 another half hour of wall. Expect ~45-90 min per model.
 
-Comparison runs no longer try to rank: `SKIP_IDS=` runs everything (43),
-only useful for calibrating a new gate set. The frozen manifest and the
-problem files always hold the full set. Transient gateway 5xx — what a
-restarting llama-swap answers instantly — get the single retry above;
-4xx stays fatal and the run aborts after 5 consecutive errors, so
-mid-run restarts no longer silently lose problems.
+`SKIP_IDS=` runs all 43 problems on disk, useful when calibrating a new gate
+set. The frozen manifest and the problem files always hold the full set.
+Transient gateway 5xx — what a restarting llama-swap answers instantly — get
+the single retry above; 4xx stays fatal and the run aborts after 5 consecutive
+errors.
 
-Why the tier mix: the old light+hard split saturated (Gemma 4 26B scored
-36/36, all `finish: stop`, nowhere to differentiate quants or abliterated
-variants). AIME 2026 is fresh competition math; zebra puzzles are long pure
-deduction where one bad step cascades — both sit at the frontier where
-strong models land in the 50-90% band. Zebra generation follows the
-ZebraLogicBench recipe (random solution grid, all true clues, minimize under
-a uniqueness-checking CSP solver) because its public release hides the
-answers; being generated also makes them contamination-free.
+Why the tier mix: AIME 2026 is fresh competition math; zebra puzzles are long
+pure deduction where one bad step cascades — both sit at the frontier where
+strong models land in the 50-90% band and differentiate quants or abliterated
+variants. Zebra generation follows the ZebraLogicBench recipe (random solution
+grid, all true clues, minimize under a uniqueness-checking CSP solver) because
+its public release hides the answers; being generated also makes them
+contamination-free.
 
 ```bash
 cd reasoning
@@ -361,30 +359,20 @@ aggregate alone.
 
 The model gets a GitHub issue + repo checkout in Docker and must drive the
 loop itself — read/grep/edit via bash tool calls, then submit a patch scored
-by the repo's own tests. This is the same mechanism as OpenCode, unlike the
-old aider-polyglot layer (which injected files and parsed edit blocks, no
-tool calls — deleted as uninformative for this use case).
+by the repo's own tests (the same mechanism as OpenCode).
 
 Dataset: [SWE-bench Multilingual](https://www.swebench.com/multilingual.html)
 (300 tasks, native SWE-bench format). No Kotlin exists in any standard agent
 benchmark, so a frozen 20-instance pilot (8 java + 8 js/ts + 4 cpp) stands in,
 with Java as the JVM/Gradle/JUnit proxy for Kotlin. Repo picks avoid heavy
 builds (`logstash`, `druid`); instance_ids are frozen in the runner — reruns
-on the same filter are comparable, different filters are not. v2 of the
-freeze (Sep 2026) dropped `projectlombok__lombok-3312/3326/3479` (their eval
-scripts run `ant test.instance`, a target absent from the repo's `build.xml` —
-grading fails for every model) and `axios__axios-4738` (its own
-`timeout 10s mocha` wrapper exits 124 and truncates the TAP output), replacing
-them with `google__gson-2024/2061/2158` and `mrdoob__three.js-26589` (same
-image/parser patterns as the surviving instances — verified against the
-dataset's eval specs). Java is gson + lucene only; if repo diversity is ever
-wanted, javaparser/reactivex are the next candidates but their
-`./mvnw`/`./gradlew` wrappers download toolchains at test time, so smoke-test
-first. `apache__lucene-*` evals download `gradle-wrapper.jar` from
-`raw.githubusercontent.com` at test time — they fail whenever that host is
-unreachable (it was during the Sep-24 DNS outage; verified reachable from the
-container after the fix), so run evals with working upstream DNS. Expand the
-set only when several models saturate it (all correct).
+on the same filter are comparable, different filters are not. Java is gson +
+lucene only; if repo diversity is ever wanted, javaparser/reactivex are the
+next candidates, but their `./mvnw`/`./gradlew` wrappers download toolchains at
+test time, so smoke-test first. `apache__lucene-*` evals download
+`gradle-wrapper.jar` from `raw.githubusercontent.com` at test time, so run
+evals with working upstream DNS. Expand the set only when several models
+saturate it (all correct).
 
 Wrapped up as [bench/run_agentic.sh](run_agentic.sh): installs mini-swe-agent
 and the `swebench` eval package via uv on the fly (never vendored; the eval
@@ -409,7 +397,7 @@ agent loop), `EVAL_TIMEOUT` (per-instance test seconds, default 1800).
 ```bash
 ./bench/run_agentic.sh                         # all models, frozen 20-instance pilot
 ./bench/run_agentic.sh <alias>                 # one model (smoke first)
-FILTER='^(axios__axios-4738)$' ./bench/run_agentic.sh <alias>   # 1-instance smoke
+FILTER='^(axios__axios-6539)$' ./bench/run_agentic.sh <alias>   # 1-instance smoke
 ```
 
 One worker: the servers run `--parallel 1`. Expect ~3-10 min/instance on
@@ -435,17 +423,12 @@ Reading the verdict:
   patches land in.
 
 Caveat: `unresolved` lumps "wrong code" with "right code rejected on a
-technicality". The two technicalities that motivated v2 of the freeze are gone
-from the set (lombok's missing ant target, axios-4738's `timeout 10s mocha`
-wrapper exiting 124 while mocha itself passed 4/4). A third one turned out to
-be self-inflicted and is fixed: `sanitize_preds` used to strip the trailing
-newline from every patch, making `git apply` reject patches that the model
-had submitted correctly (grading survived only via the harness's
-`patch --fuzz=5` fallback); the sanitizer now restores the newline, and a
-model patch whose last line is unterminated for real reasons still gets
-rescued by that fallback. For comparing models use `unresolved` as-is; for
-diagnosing one instance read its per-instance `report.json` + `test_output.txt`
-under `logs/run_evaluation/<run_id>/`.
+technicality". `sanitize_preds` ensures every non-empty patch ends with a
+trailing newline so `git apply` accepts valid diffs cleanly (and the harness's
+`patch --fuzz=5` fallback rescues patches whose last line is genuinely
+unterminated). For comparing models use `unresolved` as-is; for diagnosing one
+instance read its per-instance `report.json` + `test_output.txt` under
+`logs/run_evaluation/<run_id>/`.
 
 Reviewing failures — don't stop at x/y (`verdict.txt` is the scoreboard,
 not the diagnosis):

@@ -1,4 +1,4 @@
-# RCCL / multi-GPU Radeon (20261004–20261005)
+# 20261004 RCCL requirement, hardware evidence, and engine verdict
 
 **Use llama.cpp `--split-mode layer` (current split 35/31).** GPU1 sits behind
 the Z790 PCH, which cannot route PCIe atomics: RCCL-based multi-GPU engines
@@ -53,7 +53,7 @@ Thread findings:
 | LMDeploy / MLC-LLM / exo / Ollama / LM Studio / TabbyAPI / KTransformers | Out: CUDA-only, llama.cpp wrappers, or missing MTP / 256k / vision parity. |
 | llama.cpp | **Use layer split:** direct P2P / host-staged copies, no RCCL dependency. |
 
-## llama.cpp split modes (20261005)
+# 20261005 llama.cpp split modes
 
 Verified against running `ghcr.io/ggml-org/llama.cpp:full-rocm`,
 b11096/c550d2f60:

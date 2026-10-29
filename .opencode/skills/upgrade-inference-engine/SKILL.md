@@ -46,4 +46,4 @@ Before modifying files or pulling/building images, present a concise upgrade rep
 Once the user approves how to proceed:
 1. Update any affected configs, pins, workflows, and local fork scripts.
 2. Pull or build the updated engine image and run smoke checks.
-3. Run any follow-up benchmarks agreed upon with the user and update the relevant docs/notes.
+3. Run any follow-up benchmarks agreed upon with the user, append a new dated `# YYYYMMDD ...` entry to the relevant `notes/` file(s), and update `deploy/` READMEs in place so they reflect only the current state (removing any retired workarounds or superseded pins per `AGENTS.md`).
