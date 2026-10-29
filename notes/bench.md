@@ -94,11 +94,11 @@ time ./bench/run_longctx.sh
   + 40%: pp 2062.85 t/s  tg 66.65 t/s  accept_rate 0.6683
   + 60%: pp 1930.40 t/s  tg 66.10 t/s  accept_rate 0.6878
   + 85%: pp 2167.95 t/s  tg 64.55 t/s  accept_rate 0.6878
-+ `deepseek-v4.1-flash-2bpw`, 256k, strata
-  + 20%: pp  539.40 t/s  tg 21.80 t/s
-  + 40%: pp  581.35 t/s  tg 22.30 t/s
-  + 60%: pp  585.70 t/s  tg 21.55 t/s
-  + 85%: pp  579.60 t/s  tg 21.65 t/s
++ `deepseek-v4.1-flash-2bpw`, 512k, strata
+  + 20%: pp  579.15 t/s  tg 21.20 t/s
+  + 40%: pp  612.60 t/s  tg 22.00 t/s
+  + 60%: pp  576.30 t/s  tg 21.80 t/s
+  + 85%: pp  547.10 t/s  tg 20.40 t/s
 
 
 ## Tool calling
