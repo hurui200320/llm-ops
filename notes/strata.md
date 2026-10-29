@@ -525,3 +525,45 @@ above stands. See [`notes/deepseek/v41f1017.md`](deepseek/v41f1017.md).
 pack. Engine behaviour on this pair, the rollback switches (`DS4_DEFAULTS=026`, `DS4_SETTLE_STORE=1`),
 the experts rule (still 6 here) and the vision cost are in
 [`notes/deepseek/v41f1017.md`](deepseek/v41f1017.md); the measured 0.1.52 curve goes there too.
+
+# 20261030 ISTA's new GGUF for deepseek
+
+**ISTA-DASLab republished the sets on 2026-10-27 in llama.cpp's own DeepSeek-V4.1 layout, and
+Strata 0.2.7/0.2.7.1 does not read it. The lane keeps the files above; do not convert and do not
+re-download from `main`.** What moved on the Hub: five backbone shards per build plus the shared
+Engram as shard 6 (`…-00006-of-00006.gguf` is a link to `DeepSeek-V4.1-Flash-Engram-IQ4_NL.gguf`),
+the Engram hash constants as `ple.*` / `engram.token_map` metadata instead of integer tensors of
+shard 1, one `per_layer_token_embd` table, `engram_wkv` renamed `engram_kv`, `engram_q`/`engram_k`
+folded into `engram_gate`, an added `exp_probs_b_vl` (the vision router bias), `attn_output_a` as a
+2-D matrix, and the mmproj renamed `mmproj-DeepSeek-V4.1-Flash-1017-BF16.gguf` with
+`clip.projector_type` `deepseek4v` → `deepseek41v`. llama.cpp reads it from b11870; the quantized
+weights are the same bytes, only the headers, tensor names and the split points move. The lane's own
+`mmproj-BF16.gguf` and drafter come from Unsloth and are already in that layout, so only the four
+shards and the Engram header are the old ones.
+
+Why the new files are unusable here, checked against the `v0.2.7` and `v0.2.7.1` trees: `setup.py`
+pins `DSV41_ISTA_SHARD` as `…-0000{1..4}-of-00004.gguf` with the sizes and SHA-256 above and the
+Engram at `eb19f30d…`, and `HF_REVISIONS` holds the repository at
+`cb02422c900df489cea5833e8a92171224059b3c` (2026-10-24) — a setup-driven download still gets the
+old layout, and a `MODEL_PATH`/`--gguf-dir` folder of `-of-00006` shards fails the shard check (the
+pinned `-of-00004` names are missing). `pack_gguf.py` itself knows the new names
+(`engram_kv`, `engram_gate`, `per_layer_token_embd`/`ple.*`, `exp_probs_b_vl`, `deepseek41v` — it
+needed them for Unsloth's set), but setup's pins and its `--shards` list do not.
+
+Rules for this lane:
+
+- The pack is filename- and offset-bound: `tensors.txt` names `…-00001-of-00004.gguf` … `00004`,
+  the Engram, the drafter and the mmproj. Running ISTA's `convert_ds41_upstream.py` over the folder
+  writes five shards with different split points and breaks the pack (the Engram itself is safe:
+  its header is rewritten in place at the same data start, so its 110 GB of table bytes stay).
+- `strata launch` does not notice such a swap — the run config names only `--pack`, and
+  `files_present()`/`desc_matches()` check the pack folder and the context/KV/picture choices, not
+  the shards. The container starts, `strata-dsv41` fails to open its files, and the recovery setup
+  refuses the new names: the lane is down until the old files are put back.
+- Any hand download of these sets pins the revision
+  (`--revision cb02422c900df489cea5833e8a92171224059b3c`); the current `main` is the layout setup
+  rejects.
+- Re-check the pins at the next Strata release (`v0.2.7.1`, 2026-10-28, still had the old ones).
+  Moving the lane is then: `convert_ds41_upstream.py` on the folder (needs ~138 GB free for the new
+  shards, fetches only `chat_template.jinja` + `exp_probs_b_vl.f32`), repack, re-run the smoke and
+  the first-start record. Tracked in [notes/TODO.md](TODO.md).

@@ -287,6 +287,14 @@ engine. Same container shape as the Qwen lanes (entrypoint fork, keyless bridge,
   change 4 exports `STRATA_DSV41_EXE=/opt/strata/components/engine/<package>/strata-dsv41` when it
   is unset; setup's `dsv41_exe()` and the launch's `dsv41_engine_found()` both honour it. Without
   it, first setup stops at "DeepSeek's engine is not available for this computer yet".
+- **Model files: the old IST-DASLab layout only.** The lane's folder holds the 2026-10-24 four-shard
+  set (`…-IQ2_XXS-0000{1..4}-of-00004.gguf` + the old-header Engram); Strata 0.2.7/0.2.7.1 pins
+  exactly those names, sizes and SHA-256. The repository's `main` has carried llama.cpp's own
+  DeepSeek-V4.1 layout (five shards + the Engram as shard 6) since 2026-10-27, which setup refuses —
+  so never re-download these sets without `--revision cb02422c900df489cea5833e8a92171224059b3c`, and
+  do not run ISTA's `convert_ds41_upstream.py` on the folder: `tensors.txt` names the old shards and
+  their offsets, and `strata launch` will not re-run setup when they go missing. What to watch and
+  the migration steps: [notes/strata.md](../../notes/strata.md) ("Model files and pins").
 - **RAM budget and VRAM reserve.** `STRATA_SET="ssd-cache=36 reserve-mib=896"` → a
   36 GB (decimal) RAM store for the hot CPU-lane experts, and 896 MiB per GPU kept out of the expert
   cache at load (unset, the store auto-sizes to available RAM − 12 GB, capped at 48 GB).
