@@ -303,3 +303,34 @@ No 0.1.52 regression on the picture path: a 420×420 red/blue-halves picture ans
 through the swap (reasoning "pure red and pure blue", 1110 prompt tokens at the 8192 budget), and the
 reader warm-up still logs `warmed up at 4096 image tokens`.
 
+# 20261030 0.2.8 engine 0.1.54 (spot check)
+
+The image moves to Terminal 0.2.8 / engine 0.1.54 (engine folder `0.1.54-linux-x86_64-hip-rx7900`,
+so the lane re-runs setup once and reuses its pack; deployment record: [notes/strata.md](../strata.md)).
+The Qwen engine delta is the HIP-wide **16-row verify/batch window default**
+(`STRATA_WINDOW_MAX_T=auto`; bit-exact per upstream) plus the fixes on our path: #4474 (the auto
+expert cache prices the ~245 MiB it allocates after the cache, so `vram-reserve-mib` is honoured),
+#4518 (the PLE lock gives way when the conversation cache needs the RAM) and #4051 (a start waits up
+to 120 s for a leftover engine's memory). The release's own speed numbers are CUDA/gfx12
+measurements; a single-request lane forms narrow windows, so no pp/tg change was expected.
+
+## Spot (0.1.54, 2026-10-30)
+
+`run_longctx.py --ctx 262144 --out-pct 1 --in-pcts 60,85 --reps 2`, through llama-swap, vanilla lane;
+`cache_n` 0 on every rep. Startup: hipBLASLt `26 rows, gfx1100, version 100200`, staged HC read
+bit-exact on both cards, expert caches 8,304 + 7,849 slots, 22.87 GiB pinned RAM copy, lend 3,580.
+
+| in % | pp t/s | tg t/s | accept | 0.2.7 pp/tg |
+| ---: | ---: | ---: | ---: | --- |
+| 60 | 2,038.8 | 65.50 | 0.673 | 2,063.9 / 64.30 |
+| 85 | 2,122.1 | 62.30 | 0.6447 | 2,121.1 / 61.60 |
+
+Prompts within noise (−1.2 % / +0.05 %), decode +1.9 % / +1.1 % over the 0.1.52 curve — two reps
+cannot separate that from run noise. Targets hold with room (pp ≥ 1000, tg ≥ 25 at 85 %). Results:
+`bench/results/longctx/qwen3.8-flash-next-iq3s-20261030-151659.json`.
+
+Placement is 0.9 % smaller than 0.1.52 (16,153 resident experts against 16,301; RAM copy 22.87 GiB
+against 22.62 GiB) — the new reserve pricing, inside the usual start-to-start spread. The 0.2.7
+candidates stand: `STRATA_KVA` still rejected, `--prefill-pipe` still unmeasured on HIP. New in 0.2.8:
+`tool_call_recovery` is on by default; it changed no well-formed call in the deployment smoke.
+

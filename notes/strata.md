@@ -458,3 +458,84 @@ Rules for this lane:
   Moving the lane is then: `convert_ds41_upstream.py` on the folder (needs ~138 GB free for the new
   shards, fetches only `chat_template.jinja` + `exp_probs_b_vl.f32`), repack, re-run the smoke and
   the first-start record. Tracked in [notes/TODO.md](TODO.md).
+
+# 20261030 Upgrade to 0.2.8 (engine 0.1.54)
+
+Upgraded to Terminal `0.2.8` / Control `0.1.54` and engine `0.1.54` across both Qwen lanes and
+`strata-dsv41`. `v0.2.7.1` (2026-10-28, not deployed) was Mac-DeepSeek and DGX-Spark work only, so the
+effective diff for this box is `v0.2.7..v0.2.8`.
+
+## Pins (0.2.8)
+
+| What | Value |
+| --- | --- |
+| Image | `ghcr.io/hurui200320/llm-ops-strata:0.2.8-rocm-gfx110x`, digest `sha256:476ded1c680e26e888fc84e93eeec97adcf6997be8124655da9340c1d5c1ba29`, 1,969,765,328 B (`strata-image` run `41015223494`) |
+| Terminal | tag `v0.2.8`, commit `870aedd9e1ebe1c91f94da93b59af17729f6c5c0`; `strata 0.2.8 (build 0.1.54; python 3.12.15)` |
+| Engine | `strata-engine-0.1.54-linux-x86_64-hip-rx7900`, 250,580,785 B, asset sha256 `4d2833cd95a4912e7e7794f32baa7a00a69830a6980d4ac8a28ef57707b12ee1`, manifest sha256 `e70b103f4b0915339fb00fb992a6721047c8bb6c14a5cd073f3e5de6f4705245`, build_id `8c1aea4bca1b+rocm`, `BUILD.json` source `f-amd-vision 8c1aea4bca1b` |
+| `strata-dsv41` | gfx110x build from `v0.2.8`, `strata-dsv41 0.1.54 build 870aedd9e`, sha256 `abc048e909b41bf707681c9d2e32fe6c0cb57b762be886c45961c740965c66d0` |
+| hipBLASLt table | packaged `tuning/gfx1100-hipblaslt-100200.txt`, sha256 `1bb8cd2e…` (845 B), version `100200` — **unchanged**; `THEROCK_PIN` stays `7.10.0a20251120` |
+| Entrypoint | `/opt/strata/entrypoint.sh` sha256 `10fe9c4f…` — byte-identical to 0.2.7, so the fork carries over unchanged (header re-diffed) |
+
+## Engine and server changes that reach us
+
+- **16-row verify/batch windows on HIP** (`STRATA_WINDOW_MAX_T=auto` → 16; CUDA stays 8; no runtime
+  switch). The Qwen engine and our dsv41 build both carry them; upstream measured the answers
+  bit-exact (10/10 cards), and our `PARALLEL=1` lanes form narrow windows anyway. dsv41 logs
+  `prompt path: the chunked pass from 96 tokens, windows of 16 below`.
+- **`tool_call_recovery` is on by default** (was opt-in): slightly malformed calls are repaired,
+  extra closing think tags dropped, a missing `</function>` recovered; `"tool_call_recovery": false`
+  turns it off. No repair events were logged on well-formed smoke calls; agent-loop quality still
+  needs a bench/tool A/B (tracked in [notes/TODO.md](TODO.md)).
+- **DeepSeek stop ids (#4576/#4137)**: only a one-token `<|im_end|>` is a stop id, so a tokenizer that
+  splits it no longer ends a reply at `|`, `>` or `im` (the "Nerazim" bug); a config that names no
+  `arch` is served as `deepseek41` when the tokenizer says so.
+- **Fixes on our paths**: the layer-split chunked-prompt deadlock (PR #4211, our DeepSeek topology);
+  #4474 (the auto expert cache prices its late allocation) and #4518 (PLE lock vs conversation
+  cache) on the Qwen side; #4051 (waits up to 120 s for a leftover engine's memory before a start);
+  #4209 (lower-case saved model tags resolve); #4188 (the packaged Terminal runs setup without
+  `CMakeLists.txt`).
+- **`DS4_FAT_ROWS` is CUDA-only**: `fat_ready()` returns false under `STRATA_USE_HIP`
+  (`src/dsv41/ds4_model.cu`), and the string is absent from our binary — the planned prompt-speed A/B
+  is moot on gfx1100 and was skipped.
+- **ISTA DeepSeek pins unchanged**: `setup.py` still pins `cb02422c…` and the four-shard
+  `…-0000{1..4}-of-00004.gguf` names/sizes/hashes (byte-identical to the lane's files). No migration,
+  no conversion; the TODO re-check is recorded.
+
+## Rollout (2026-10-30)
+
+Each lane dropped its 0.2.7 install record (engine folder `0.1.52` → `0.1.54`), re-ran setup once
+(packs reused, nothing downloaded), and served on the first request: vanilla 49.7 s, SC117 52.3 s,
+DeepSeek 45.7 s including setup and load. Both Qwen lanes re-made their run settings because the
+record named the 0.1.52 readers, so `VISION_TOKENS` applied on the next start
+(`Vision budget: strata-iq3_s.json: max_tokens=8192, min_tokens=1024`); the DeepSeek pack kept
+`vision.max_image_tokens 1140`.
+
+Placement on 0.1.54:
+
+- **Qwen (vanilla)**: expert caches 8,304 slots (CUDA0, 15.06 GiB) + 7,849 (CUDA1, 15.72 GiB) =
+  16,153 resident experts; 22.87 GiB pinned RAM copy; lend 3,580 slots; file tier 0.0 GiB; hipBLASLt
+  enabled (26 rows, version 100200); staged HC read checked bit-for-bit on both cards (0.2.7:
+  8,452 + 7,849, 22.62 GiB, lend 3,591 — −0.9 %).
+- **DeepSeek**: store 3,504 slots (36.0 GB), 27.2 GB pre-filled; CUDA0 2,037/8,064 experts (16.94 GB,
+  892 MiB free), CUDA1 1,957/7,296 (17.87 GB, 886 MiB free) — 3,994 in VRAM, 11,366 on the CPU lane
+  (98.0 GB), exactly the 0.2.7 512k placement; DSpark auto-unloaded, vision on,
+  `--ssd-cache 36 --reserve-mib 896`.
+
+## Verification and speed
+
+- **Functional** (all through llama-swap): declared `get_weather{"city":"Paris"}` on all three lanes
+  (2.3 s / 2.2 s / 15.3 s); `:npt` "OK" on both Qwen lanes; 640×360 vision on both Qwen lanes
+  ("Left: Red / Right: Blue", "The left half is red and the right half is blue"); DeepSeek "Nerazim"
+  exact (1.1 s, the #4576 case) and a 420×420 picture ("red, blue", 8.8 s) with
+  `reasoning_effort: "none"`; `/upstream/` UI 200 (23,050 B), LAN `10.233.1.16:8080` and
+  `Host: fedora-tuf:8080` both 200; no tool-call repair events on well-formed calls.
+- **Stops**: vanilla 2.9 s, SC117 2.6 s, DeepSeek 3.9 s; VRAM back to 118/259 MiB.
+- **Qwen longctx spot** (vanilla, `run_longctx.py --ctx 262144 --out-pct 1 --in-pcts 60,85
+  --reps 2`): 60 % pp 2,038.8 / tg 65.50 (0.2.7: 2,063.9 / 64.30); 85 % pp 2,122.1 / tg 62.30
+  (2,121.1 / 61.60) — prompts within noise, decode +1–2 %. Numbers and the curve context:
+  [`qwen3.8/Flash-Next.md`](qwen3.8/Flash-Next.md).
+- **DeepSeek 512k spot** (shipping lane, `--ctx 524288 --in-pcts 40,85 --out-pct 1 --reps 1`):
+  40 % pp 544.1 / tg 19.9 and a repeat at 632.4 / 20.2 (0.2.7: 608.1 / 19.3); 85 % pp 550.1 / tg 18.8
+  (547.1 / 19.3). The two 40 % samples straddle the old baseline by −10.5 % / +4.0 %, the run-to-run
+  spread on this box, so no delta is claimed; 85 % is equal and decode is within noise. Details:
+  [`deepseek/v41f1017.md`](deepseek/v41f1017.md).
