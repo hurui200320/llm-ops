@@ -539,3 +539,38 @@ Placement on 0.1.54:
   (547.1 / 19.3). The two 40 % samples straddle the old baseline by −10.5 % / +4.0 %, the run-to-run
   spread on this box, so no delta is claimed; 85 % is equal and decode is within noise. Details:
   [`deepseek/v41f1017.md`](deepseek/v41f1017.md).
+
+# 20261030 A/B mechanics: the preset `extra` accumulates `--set` keys
+
+While A/B-testing knobs on the vanilla Qwen lane (arms and results:
+[`notes/qwen3.8/Flash-Next.md`](qwen3.8/Flash-Next.md)), found the reason "reverting" a `STRATA_SET`
+key did nothing: `strata launch --set KEY=VALUE` — which the entrypoint fork drives from
+`STRATA_SET`, line 452 — merges the key into the lane's run preset,
+`<data>/config/strata/launch-presets/docker.json` → `"extra"`, and every start re-derives the
+engine argv/env from it. Removing the key from `STRATA_SET` in `deploy/llama-swap.config.yaml` (or
+clearing `env` in `state/strata/launch/docker.json`, which is a derived artifact and gets rewritten)
+does **not** remove it: the next launch re-adds it. This is the flip side of the 2026-10-21 finding
+that `STRATA_HIPBLASLT_TABLE` inside `STRATA_SET` only reaches the engine.
+`STRATA_SCORES_THREAD=1` is live this way: it is in the preset `extra`, not only in `STRATA_SET`.
+
+Practical rules for lane experiments:
+
+- Change the arm in `preset["extra"]` (or in `STRATA_SET` *and* `extra` for a keep), then verify the
+  running engine's env (`docker exec <lane> .../proc/<pid>/environ`) and argv (engine log's
+  `engine started:` line) — the engine log, not the config file, is the truth.
+- Revert by writing `extra` back to the exact baseline map: the twelve flags from the 2026-10-22
+  tuning plus `STRATA_SCORES_THREAD=1`; `--prefill` is `auto` (not `auto:16384`), and no
+  `STRATA_MTP_*`, `STRATA_EXCHANGE_*` or `STRATA_PCIE_*` keys remain.
+- Flags with values (e.g. `--adapt-every`) do not persist outside `extra` (`user_args` stays null),
+  but env names absolutely do.
+
+Second quirk seen today: the **first** request that starts a stopped lane through llama-swap can
+return `502 Bad Gateway` while the proxy races the serving start; the next request succeeds and the
+lane is healthy. A bench script that aborts on its warmup must retry (or pre-warm with a retry
+loop).
+
+Final state after the sweep: both Qwen lanes are unchanged from the 2026-10-22 tuning; the vanilla
+lane was restarted from the cleaned preset and reproduced its landmarks (expert caches 7959 +
+7849, 23.50 GiB pinned resident copy, lend 3581/3581, chunk 8192 ring 96, draft layer on the last
+card), with chat, `get_weather{"city":"Paris"}`, `:npt` and 640×360 vision verified through
+llama-swap.

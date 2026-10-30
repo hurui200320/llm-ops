@@ -334,3 +334,108 @@ against 22.62 GiB) — the new reserve pricing, inside the usual start-to-start 
 candidates stand: `STRATA_KVA` still rejected, `--prefill-pipe` still unmeasured on HIP. New in 0.2.8:
 `tool_call_recovery` is on by default; it changed no well-formed call in the deployment smoke.
 
+# 20261030 Knob census A/B on 0.1.54 (source review of v0.2.8)
+
+After the 0.2.8 spot, did a full census of engine 0.1.54 (`generate.cpp` help + parser,
+`strata_control/tune_knobs.py` registry and never-list, `speed_switches.py`, `docs/AMD_HIP.md`,
+`MULTI_GPU.md`, `DETAILS.md`) for production knobs this lane never measured. Arm A of the census,
+`--draft-vocab en` (348 → 133 MiB draft head, English 1–2 % faster), was dropped without testing:
+both lanes serve Chinese and English, so the default CJK subset stays. Six tested arms follow, one
+variable at a time on the vanilla lane, `run_longctx.py --ctx 262144 --out-pct 1 --in-pcts 60,85
+--reps 2` through llama-swap (`cache_n` 0 on every rep). **Result: no arm beat the noise; the
+2026-10-22 configuration is unchanged.**
+
+## Two methodology traps that invalidated the first half of the sweep
+
+- **Preset `extra` is the accumulator, not `STRATA_SET`.** Every `--set KEY=VALUE` (flags *and*
+  env names) is merged into the lane's run preset
+  (`config/strata/launch-presets/docker.json` → `"extra"`), and each start re-derives the engine
+  argv/env from it. Removing a key from `STRATA_SET` — or clearing `env` in
+  `state/strata/launch/docker.json` — does **not** revert it; the next launch re-adds it. This is
+  the same preset-env behaviour noted for `STRATA_HIPBLASLT_TABLE` on 2026-10-21, seen from the
+  other side. For an A/B, write `extra` to the exact baseline + the arm and verify the engine
+  process env/argv after the start. Mechanics: [notes/strata.md](../strata.md).
+- **Start-to-start drift is large.** Identical-config starts today span 1968–2094 pp and
+  64.05–68.40 tg at 60 %, 2075–2256 pp and 62.30–64.85 tg at 85 % (the first start after an idle
+  period is the slow one). A single 2-rep run resolves only ≥ 3–4 % effects; anything smaller
+  needs a replicate or a fresh adjacent control.
+- Also: the first request that *starts* a lane through llama-swap can return 502 (proxy races the
+  serving start). Pre-warm with a retry loop before benching, or the runner aborts.
+
+Clean controls used below:
+
+| Run | 60 % pp/tg | 85 % pp/tg | note |
+| --- | --- | --- | --- |
+| control 1 (19:15) | 1968.1 / 64.05 | 2075.7 / 63.00 | first start after idle |
+| control 5 (21:09) | 2081.6 / 64.75 | 2234.6 / 64.85 | after the preset `extra` was cleaned |
+
+## Arms
+
+| Arm | Setting | 60 % pp/tg | 85 % pp/tg | Verdict |
+| --- | --- | --- | --- | --- |
+| B | `STRATA_MTP_HIP_PRIO=1` | 2023.3 / 66.45 | 2167.2 / 63.50 | **rejected, neutral** |
+| C | `STRATA_EXCHANGE_ROTATE=1` (measured on top of B) | 2092.1 / 66.35 | 2081.3 / 63.85 | **rejected, no effect** |
+| D | `--adapt-every 1 --adapt-swaps 80 --adapt-decay 0.97` | 1982.5 / 63.15 | 2071.9 / 62.45 | **rejected, below control** |
+| E | `STRATA_PCIE_AUTO_SPLIT=1` | 1984.8 / 63.60 | 2107.7 / 64.35 | **rejected, never engaged** |
+| F | `--prefill auto:16384` (clean) | 2094.0 / 65.30 | 2256.1 / 63.55 | **rejected, neutral** |
+| G | `STRATA_MTP_STAGE0=1` (draft on the first card) | 2098.2 / **53.10** | 2088.0 / **51.80** | **rejected, −20 % tg** |
+
+- **B**: the draft stream at high priority (default on gfx12, never measured on gfx1100). Against
+  control 5 the decode is +2.6 % at 60 % and −2.1 % at 85 % — inside the band in both directions.
+  No explicit win.
+- **C**: rotation engaged (`96 buffers in 7 block sizes`, 11,803 blocks and ~23.0 GB of host
+  memcpy avoided over a run) but is invisible in the numbers: against B (rotation off) the tg agrees
+  within 0.6 % at both levels and the pp differs by the usual noise. The adaptive tier's swap copies
+  are off the critical path here; the 1.27 GiB of
+  page-locked spare buffers (vs ~0.2 GiB for the copy path) buy nothing.
+- **D**: the upstream "adapt tier fast" arm decoded slightly behind at both levels (63.15 and
+  62.45 tg against 64.75 / 64.85); the expert hit rate was already 98–99 %, so there is nothing for
+  a faster re-balance to win.
+- **E**: `PCIe share:` never appeared, so the two-stage refinement did not start on gfx1100 (its
+  per-stage probes stay 0.55 on CUDA0 at 27.6 GB/s and 0.19 on CUDA1 at 7.0 GB/s). Treat as
+  unsupported here until upstream says otherwise.
+- **F**: with the preset cleaned, the 16K chunk is neutral (+0.6 %/+1.0 % pp, +0.8 %/−2.0 % tg vs
+  control 5). It does change placement at start — the lend grows 3581 → 6741 slots and the
+  resident copy 23.50 → 28.00 GiB (760 lent slots end up without a RAM copy, read from the file
+  tier during prompts), while the expert caches stay 7959 + 7849 and the draft stays on the last
+  card. Bigger prompt chunks are not this workload's bottleneck: the auto pick already keeps the
+  ring full at 8192, and the 85 % pp point is attention-bound.
+- **G**: the live log's `note: --pipeline-windows 2 … without the draft layer on the first card`
+  invited this arm, and it is emphatically wrong for this rig: the draft layer + 220 MiB head move
+  to CUDA0 (cache 7959 → 7113, CUDA1 grows 7849 → 8487) and decode falls ~20 % — the chain pays a
+  hand-off per draft step on this two-stage split. Keep the default (drafter on the last card).
+
+For the record, the contaminated runs (preset `extra` still held B+C+G): control 2 and control 3
+were replicates of C, and the first F run carried G's regression (tg ~53 at both levels). They are
+discarded, not evidence.
+
+## Mechanics confirmed by the logs
+
+- The pcie probe measures each stage separately: CUDA0 27.6 GB/s → 0.55, CUDA1 7.0 GB/s → 0.19 —
+  the x16/x4 asymmetry is priced in; an explicit `--pcie-frac` would flatten both stages and should
+  not be used on this split.
+- `FileExpertSource: the split stages lend 3581 slots … 3581 keep their experts in RAM too` — the
+  lend coverage is complete at the baseline (no free pp win there).
+- Rotation/exchange stats are the right instrument for adaptive-tier claims: a long run is
+  ~11.8 k exchanges, so "0 exchanges" from a warm-up line is not evidence of anything.
+- Open hygiene item: after each long-context request, a *second* request continues the just-served
+  conversation (+18 or +1,989 fresh tokens, 637 generated) — present in the pre-session log too,
+  absent for short requests, identity unknown. The engine is single-slot, so it runs sequentially
+  and did not overlap the measured reps, but it makes the lane busier than a bench expects; find
+  the client before trusting small deltas in future sweeps.
+
+## Final state (2026-10-30)
+
+Config unchanged — verbatim the 2026-10-22 tuning:
+`kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28
+prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8
+pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1`.
+The lane was restarted from the cleaned preset and reproduced its landmarks exactly (expert caches
+7959 + 7849, resident 23.50 GiB pinned, lend 3581/3581, chunk 8192 ring 96, draft head CJK 106,299
+tokens, draft layer on the last card). Smoke through llama-swap: `get_weather{"city":"Paris"}`,
+`:npt` → "OK", 640×360 vision → "Left: Red / Right: Blue" (1,142 prompt tokens).
+
+Verdict: keep the current configuration; none of B–F is worth its complexity and G is harmful.
+Revisit only if an upstream release changes these paths (gfx11 pipeline draft pairing, PCIe
+auto-split on gfx11, adaptive-tier cost) — the source census and the arm table above say which
+knob to re-open and why.
