@@ -560,6 +560,10 @@ models:
   # CONTEXT=512k -> --max-context 524288, measured speed-neutral vs 256k
   # (the pack addresses 1m; 1m itself is not run here) — placement and the
   # curve: notes/deepseek/v41f1017.md. Fallback: 256k.
+  # DS4_FAST_ATTN=1: gfx1100 is opt-in for the chunked prompt's WMMA packed-KV
+  # attention (the gfx12 default); measured +7-13 % pp at 52K and +10.6 % at
+  # 210K on this pair, decode unchanged, deterministic gate identical
+  # (notes/deepseek/v41f1017.md, 20261030). Prompt-only: decode keeps scalar.
   "deepseek-v4.1-flash-2bpw":
     name: "DeepSeek V4.1-Flash IST-DAS 2.00 bpw"
     description: "524288 ctx, fixed kv cache quant, vision"
@@ -574,6 +578,7 @@ models:
         -e CHAT_TEMPLATE_PATH=/templates/deepseek/v4.1-flash-1017-chat-template.jinja
         -e STRATA_SET="ssd-cache=36 reserve-mib=896"
         -e STRATA_DS4_HIPK=1
+        -e DS4_FAST_ATTN=1
         -e DS4_VISION_TOKENS=1140
         ghcr.io/hurui200320/llm-ops-strata:0.2.8-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}

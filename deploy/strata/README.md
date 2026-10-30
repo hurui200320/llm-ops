@@ -267,6 +267,11 @@ DeepSeek-V4.1-Flash on the image's `strata-dsv41` engine. Same container shape a
   [notes/deepseek/v41f1017.md](../../notes/deepseek/v41f1017.md). `DS4_DEFAULTS=026` (container env)
   restores earlier engine defaults in one variable; `DS4_SETTLE_STORE=1` restores only the
   post-prompt store pre-fill.
+- **gfx11 WMMA prompt attention: `DS4_FAST_ATTN=1`.** The chunked prompt's packed-KV attention has
+  a matrix-core path that is on by default only on gfx1200/1201; on gfx1100 it is an opt-in
+  **container env var** (prompt-only: `T >= 16`, `heads % 16 == 0`; decode keeps the scalar
+  kernels). Measured on this pair: +7–13 % pp at 52K and +10.6 % at 210K, decode unchanged and the
+  deterministic gate identical: [notes/deepseek/v41f1017.md](../../notes/deepseek/v41f1017.md).
 - **Vision.** The engine has its own vision tower (loaded with the model; no separate reader
   process). Setup packs the tower's weights from `mmproj-BF16.gguf` in the model folder (the tensors
   are read from the mmproj in place), and the lane advertises `capabilities.in: [text, image]`.
