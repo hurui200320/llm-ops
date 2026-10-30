@@ -469,7 +469,7 @@ models:
         -e VISION_TOKENS=8192
         -e VISION_MIN_TOKENS=1024
         -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1"
-        ghcr.io/hurui200320/llm-ops-strata:0.2.7-rocm-gfx110x
+        ghcr.io/hurui200320/llm-ops-strata:0.2.8-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
@@ -524,7 +524,7 @@ models:
         -e VISION_TOKENS=8192
         -e VISION_MIN_TOKENS=1024
         -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1"
-        ghcr.io/hurui200320/llm-ops-strata:0.2.7-rocm-gfx110x
+        ghcr.io/hurui200320/llm-ops-strata:0.2.8-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
@@ -575,7 +575,7 @@ models:
         -e STRATA_SET="ssd-cache=36 reserve-mib=896"
         -e STRATA_DS4_HIPK=1
         -e DS4_VISION_TOKENS=1140
-        ghcr.io/hurui200320/llm-ops-strata:0.2.7-rocm-gfx110x
+        ghcr.io/hurui200320/llm-ops-strata:0.2.8-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health

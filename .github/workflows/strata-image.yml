@@ -16,7 +16,7 @@ name: strata-image
 #   3. puts strata-dsv41 beside `strata` in that package folder — the shape upstream's rx9070 package ships (its
 #      build sets DSV41=1) — and builds the image with upstream's docker/build.sh.
 #
-# The result differs from an upstream 0.2.7-rocm-gfx110x image by exactly one added file (strata-dsv41, our build):
+# The result differs from an upstream 0.2.8-rocm-gfx110x image by exactly one added file (strata-dsv41, our build):
 # every other byte is the released package, and the Terminal is built from the same tag, as upstream does. The
 # Dockerfile's verify stage re-checks the package (every listed file, binary_deps on every ELF, ldd in the image), so
 # a dsv41 binary that needs a library the package does not bundle stops the build instead of failing at run time.
@@ -52,11 +52,13 @@ env:
   IMAGE: ghcr.io/hurui200320/llm-ops-strata
   STRATA_REPO: Niko1221/Strata
   # Terminal sources, the Dockerfile and the dsv41 sources (deploy/strata/build-dsv41.sh's flags are its tag's).
-  STRATA_REF: v0.2.7
-  # The release that carries the signed feed and the Qwen engine packages. v0.2.7 rebuilds EVERY engine package at
-  # 0.1.52 (both the Qwen and the DeepSeek engine changed), so this is the first bump since 0.2.5 whose rx7900 engine
-  # is not byte-identical: the engine folder changes 0.1.50 -> 0.1.52 and every lane re-runs setup once.
-  ENGINE_RELEASE: v0.2.7
+  STRATA_REF: v0.2.8
+  # The release that carries the signed feed and the Qwen engine packages. v0.2.8 rebuilds EVERY engine package
+  # again, at 0.1.54 (Qwen and DeepSeek both changed, like 0.2.7): the rx7900 engine folder changes 0.1.52 ->
+  # 0.1.54 and every lane re-runs setup once. The 0.1.54 HIP engines carry 16-row verify/batch windows
+  # (STRATA_WINDOW_MAX_T defaults to 16 for HIP; bit-exact vs 8 rows), which is most of the ~5.6 MB the rx7900
+  # package grew.
+  ENGINE_RELEASE: v0.2.8
   # TheRock ROCm wheels (gfx110X-dgpu index) of the ROCm line the released package was built with.
   THEROCK_PIN: "7.10.0a20251120"
   # hipBLASLt version the package's gfx1100 tuning table must match (BUILD.json hipblaslt_version).
