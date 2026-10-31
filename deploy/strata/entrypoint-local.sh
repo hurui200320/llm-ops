@@ -1,13 +1,13 @@
 #!/bin/sh
 # Fork of upstream's /opt/strata/entrypoint.sh for the llm-ops llama-swap lane.
 #
-# Changes from upstream v0.2.8 (image
-# ghcr.io/hurui200320/llm-ops-strata:0.2.8-rocm-gfx110x, terminal 0.2.8 / engine
-# 0.1.54; re-diffed 2026-10-30, sha256
-# 10fe9c4f7ac551d5934d9f7aa6363da852f3bd41b5ce7ccbe46e66e9e7fc0226). The 0.2.8
-# entrypoint is byte-identical to v0.2.7's, which added only legacy_models_guard
-# (#3421) to the v0.2.6 entrypoint (sha256 7c74cfd3…, the same bytes as v0.2.4.2
-# through v0.2.6); the fork carries it unchanged:
+# Changes from upstream v0.2.9 (image
+# ghcr.io/hurui200320/llm-ops-strata:0.2.9-rocm-gfx110x, terminal 0.2.9 / engine
+# 0.1.55; re-diffed 2026-10-31, sha256
+# 10fe9c4f7ac551d5934d9f7aa6363da852f3bd41b5ce7ccbe46e66e9e7fc0226). The 0.2.9
+# entrypoint is byte-identical to v0.2.8's, which is byte-identical to v0.2.7's
+# (which added only legacy_models_guard (#3421) to the v0.2.6 entrypoint, sha256
+# 7c74cfd3…); the fork carries it unchanged:
 #   1. When no API key is given, pass `--no-api-key` to `strata launch` instead of
 #      letting it make one. Strata 0.2.4.2 allows a non-loopback bind without a key
 #      (with one warning), so the server can listen on 0.0.0.0 inside its own
@@ -352,7 +352,7 @@ fi
 # server sizes each picture from the pack's ds4.txt (vision.max_image_tokens, written as 1024 by
 # tools/dsv41/pack_gguf.py; tools: serve/ds_pictures.py). The span is n_h*(n_w+1)+2 prompt tokens, one token per 42x42 px
 # cell (patch 14 x merge 3). There is no launch flag or STRATA_SET key for it: the pack file is the only knob. The tower's
-# full-attention softmax holds 10,240 patches (kSmT*kSmPer in src/dsv41/ds4_vision.cu, engine 0.1.54) = 1,137 aligner cells
+# full-attention softmax holds 10,240 patches (kSmT*kSmPer in src/dsv41/ds4_vision.cu, engine 0.1.55) = 1,137 aligner cells
 # = max_image_tokens 1140; a larger value stops the tower loading ("more than the attention covers"), so it is clamped.
 if [ -n "${DS4_VISION_TOKENS:-}" ] || [ -n "${DS4_VISION_MIN_PIXELS:-}" ]; then
   for vname in DS4_VISION_TOKENS DS4_VISION_MIN_PIXELS; do
@@ -361,7 +361,7 @@ if [ -n "${DS4_VISION_TOKENS:-}" ] || [ -n "${DS4_VISION_MIN_PIXELS:-}" ]; then
     case "$v" in *[!0-9]*) die "$vname=$v is not a whole number (0 = no limit). Nothing was started." 2 ;; esac
   done
   if [ -n "${DS4_VISION_TOKENS:-}" ] && [ "$DS4_VISION_TOKENS" -gt 1140 ]; then
-    warn "DS4_VISION_TOKENS=$DS4_VISION_TOKENS is above the DeepSeek tower's 10,240-patch attention limit (max_image_tokens 1140, engine 0.1.54): using 1140."
+    warn "DS4_VISION_TOKENS=$DS4_VISION_TOKENS is above the DeepSeek tower's 10,240-patch attention limit (max_image_tokens 1140, engine 0.1.55): using 1140."
     DS4_VISION_TOKENS=1140
   fi
   seen=""

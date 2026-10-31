@@ -574,3 +574,89 @@ lane was restarted from the cleaned preset and reproduced its landmarks (expert 
 7849, 23.50 GiB pinned resident copy, lend 3581/3581, chunk 8192 ring 96, draft layer on the last
 card), with chat, `get_weather{"city":"Paris"}`, `:npt` and 640×360 vision verified through
 llama-swap.
+
+# 20261031 Upgrade to 0.2.9 (engine 0.1.55) — ISTA's six-shard DeepSeek layout adopted
+
+Upgraded to Terminal/Control `0.2.9`/`0.1.55` and engine `0.1.55` across both Qwen lanes and
+`strata-dsv41`, and moved the DeepSeek lane from the pinned four-shard ISTA layout to the six-shard
+set the same day the GGUF files were swapped by hand in the lane's folder. `v0.2.9` is upstream's
+first release that reads that layout (the `setup.py` comment calls it "0.2.8.1"; there is no
+`v0.2.8.1` tag, so the effective diff here is `v0.2.8..v0.2.9`, tag commit
+`c62d5e3a15b40ea51c96aae9e8d36928965f53ab`).
+
+## Pins (0.2.9)
+
+| What | Value |
+| --- | --- |
+| Image | `ghcr.io/hurui200320/llm-ops-strata:0.2.9-rocm-gfx110x`, digest `sha256:4d369491ccd53fa878cc0b871b52789820981a6059c51c533cce956476fb50a2`, 1,530,632,544 B in CI / 1,971,106,262 B on fedora-tuf (`strata-image` run `41200983707`) |
+| Terminal | tag `v0.2.9`, commit `c62d5e3a15b4`; `strata 0.2.9 (build 0.1.55; python 3.12.15)` |
+| Engine | `strata-engine-0.1.55-linux-x86_64-hip-rx7900`, 250,890,402 B, asset sha256 `5cfedda68ac3957cae946d387c364db4568da55910d7be933369c04b84d2b01c`, manifest sha256 `b3f45acb0ff8e5d03ecd9821ca48998994d2429023693a334136ed5b77a3e199`, build_id `99866a47a2b8+rocm`, 580 files |
+| `strata-dsv41` | gfx110x build from `v0.2.9`, `strata-dsv41 0.1.55 build c62d5e3a1`, sha256 `7738aa7f518b43d115efbf71ce44a1214432c3b636ce6dfa22af449819943f77` |
+| hipBLASLt table | packaged `tuning/gfx1100-hipblaslt-100200.txt`, sha256 `1bb8cd2e…` (845 B), version `100200` — unchanged; `THEROCK_PIN` stays `7.10.0a20251120` |
+| Entrypoint | `/opt/strata/entrypoint.sh` unchanged from 0.2.8 (sha256 `10fe9c4f…`), so the fork carries over (header re-diffed) |
+
+## Engine changes that reach this box
+
+- **Qwen 0.1.55 is functionally neutral on gfx1100.** The release's new Linux defaults (Gated
+  DeltaNet tensor-core prompt kernels, the nine parallel-request settings) are NVIDIA-only, and the
+  gfx12 chunked kernel starting at 64 tokens is RDNA4-only. The range `b11889..b12020`-era engine
+  diff has no gfx11/HIP kernel change (the `RDNA4_M` split covers gfx1170/1171 only).
+- **`strata-dsv41` 0.1.55 reads ISTA's re-split layout** (#4348, #4632): `DSV41_ISTA6_FILES` pins
+  the five backbone shards of IQ1_M/IQ2_XS/IQ2_XXS by size and SHA-256; `dsv41_layout_of()` picks
+  "six" only when those files are present and the four-shard ones are not; `dsv41_pack_layout()`
+  reads a pack's `tensors.txt` and rebuilds a pack made from the other layout. Setup's *download*
+  default stays the pinned four-shard revision `cb02422c…`; the six-shard set is taken from local
+  files (`--gguf-dir`/`--model-path`).
+- **Converted Engram accepted**: the six-shard layout rewrites `DeepSeek-V4.1-Flash-Engram-IQ4_NL.gguf`
+  in place (same name and 110,595,290,816 B, one tensor instead of two tables). `DSV41_SHA_ALSO`
+  accepts the new hash `3dac4c54…` beside the old pin `eb19f30d…`; either file works with either
+  layout.
+- **Non-events checked**: `DS4_NO_VIEW` (shards dropped after load) is default-on only for a Windows
+  HIP build on an APU, so this Linux dGPU lane keeps the in-place reads; the "DeepSeek uses all AMD
+  cards" widening (`widen_setups_one_card`) cannot touch the lane because every launch passes
+  `--gpu 0,1` (`gpus_by: "person"`); the local `full-rocm-a07421535` llama.cpp image was unrelated.
+
+## GGUF swap (fedora-tuf, 2026-10-31)
+
+The lane folder `/mnt/unenc-xfs/models/strata/ISTA-DASLab-dsv41f1017/` now holds the six-shard
+2.00 bpw set, downloaded by hand (same folder, no path change):
+
+| File | Size (B) | sha256 (sidecar; matches `DSV41_ISTA6_FILES`) |
+| --- | ---: | --- |
+| `…-IQ2_XXS-00001-of-00006.gguf` (metadata shard) | 5,780,704 | `f356f198…` |
+| `…-IQ2_XXS-00002-of-00006.gguf` | 39,535,781,184 | `25af3785…` |
+| `…-IQ2_XXS-00003-of-00006.gguf` | 39,736,712,000 | `8168d099…` |
+| `…-IQ2_XXS-00004-of-00006.gguf` | 39,036,908,384 | `9eb9b4de…` |
+| `…-IQ2_XXS-00005-of-00006.gguf` | 19,923,784,832 | `7e35f6b4…` |
+| `DeepSeek-V4.1-Flash-Engram-IQ4_NL.gguf` (converted in place) | 110,595,290,816 | `3dac4c54…` |
+| `dspark-DeepSeek-V4.1-Flash-1017-Q8_0.gguf` (kept) | 7,976,914,240 | `6ba6ac1b…` |
+| `mmproj-BF16.gguf` (kept; Unsloth, `deepseek41v`) | 972,208,288 | `9a1ef7c4…` |
+
+The four `-of-00004` shards are removed (their presence would have kept the layout at "four"), and
+their `.sha256` sidecars with them. The folder also carries the Hub's renamed
+`mmproj-DeepSeek-V4.1-Flash-1017-BF16.gguf` (972,208,096 B) and its `README.md`: setup looks up
+`mmproj-BF16.gguf` by exact name (no globs), so the extra file is inert.
+
+## Rollout
+
+- **Build**: `strata-image` run `41200983707` (v0.2.9, 0.1.55 package, dsv41 rebuilt with the
+  unchanged `build-dsv41.sh` flags) finished green in ~25 min; the workflow gate re-checked the
+  package (580 files, manifest, `hipblaslt_version 100200`) and the in-image smokes passed.
+- **First init attempt** (20:49 local) hashed the five new shards and the Engram (`.done` marks
+  written beside the files), rebuilt the pack (six-shard `tensors.txt`, fresh `expert-profile.bin`
+  from the shipped `profile-2.00.bin`, `engram.bin` 517,980 B), then died in the 16-token smoke:
+  the user's opencode had started the vanilla Qwen lane, which held the GPUs — the documented
+  `cudaMalloc` failure. The pack and hash marks survived; the install record did not.
+- **Second init** (GPU-free) skipped the hashing and packing, re-checked the pack with the engine,
+  passed the smoke and served. Record: engine `0.1.55…/strata-dsv41`, `--max-context 524288`,
+  `--vision on`, `gpus 0,1`; `ds4.txt` `vision.max_image_tokens 1140`. Placement was exactly the
+  0.2.8 512k one: store 3,504 slots (36.0 GB), 27.2 GB pre-filled; CUDA0 2,037/8,064 experts
+  (16.94 GB, 892 MiB free), CUDA1 1,957/7,296 (17.87 GB, 886 MiB free); 11,366 CPU-lane experts
+  (98.0 GB, in place); DSpark auto-unloaded.
+- **DeepSeek functional smoke** (init server, `reasoning_effort: "none"`): "OK"; `Nerazim` exact
+  (the #4576 case); `get_weather{"city":"Paris"}` → `tool_calls` with
+  `{"city":"Paris"}`; a 64×64 red/blue-halves PNG → "Red, Blue". Init stopped with VRAM freed.
+
+The Qwen lanes' 0.2.9 pass (engine folder `0.1.54` → `0.1.55`, one setup pass each, no downloads,
+vision budget re-applied on the next start) and their smoke are recorded below once the config
+carrying the new tag is on the runner.

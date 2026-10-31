@@ -1,8 +1,8 @@
 # Strata (AMD / HIP) deployment
 
-The Strata image the lanes run is **our own build**, `ghcr.io/hurui200320/llm-ops-strata:0.2.8-rocm-gfx110x`,
+The Strata image the lanes run is **our own build**, `ghcr.io/hurui200320/llm-ops-strata:0.2.9-rocm-gfx110x`,
 made by [`.github/workflows/strata-image.yml`](../../.github/workflows/strata-image.yml). It carries upstream's
-Terminal 0.2.8 (serve + the GGUF preparation tools and the `strata` CLI), upstream's signed-feed 0.1.54 Qwen engine
+Terminal 0.2.9 (serve + the GGUF preparation tools and the `strata` CLI), upstream's signed-feed 0.1.55 Qwen engine
 package, both picture readers (CPU and GPU), and the ROCm runtime for the whole RDNA 3
 dGPU family (gfx1100 = RX 7900 XTX/XT, gfx1101 = RX 7800/7700 XT, gfx1102 = RX 7600), plus one added file: the
 gfx110x `strata-dsv41` build (DeepSeek V4.1-Flash; run by the `deepseek-v4.1-flash-2bpw` lane — see
@@ -16,14 +16,14 @@ See "Building the image" and the pins below; historical context and upgrade reco
 
 ## Pins
 
-Current image: `ghcr.io/hurui200320/llm-ops-strata:0.2.8-rocm-gfx110x` (Terminal `v0.2.8`, engine
-`0.1.54` rx7900, plus our `strata-dsv41` `0.1.54`). Digests, package hashes, and verification records are in
+Current image: `ghcr.io/hurui200320/llm-ops-strata:0.2.9-rocm-gfx110x` (Terminal `v0.2.9`, engine
+`0.1.55` rx7900, plus our `strata-dsv41` `0.1.55`). Digests, package hashes, and verification records are in
 [notes/strata.md](../../notes/strata.md); the workflow `env:` block pins the build inputs.
 
-- **Engine folder**: `/opt/strata/components/engine/0.1.54-linux-x86_64-hip-rx7900` (upstream names
+- **Engine folder**: `/opt/strata/components/engine/0.1.55-linux-x86_64-hip-rx7900` (upstream names
   the folder without the `strata-engine-` prefix; reference the engine as `component:strata-engine`,
   never by path).
-- **`strata-dsv41`** is our gfx110x build from the `v0.2.8` tag (`0.1.54`), placed beside `strata` in that
+- **`strata-dsv41`** is our gfx110x build from the `v0.2.9` tag (`0.1.55`), placed beside `strata` in that
   folder (the shape of upstream's `DSV41=1` rx9070 package) and deliberately not listed in
   `engine-component.json`. The Qwen lanes never invoke it; the DeepSeek lane runs it through
   `STRATA_DSV41_EXE`, which entrypoint fork change 4 resolves from the package folder (see
@@ -60,7 +60,7 @@ docker run -d --name strata-init --init --rm \
   -e CHAT_TEMPLATE_PATH=/templates/qwen3.8/Flash-Next-chat-template.jinja \
   -e VISION_TOKENS=8192 -e VISION_MIN_TOKENS=1024 \
   -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1" \
-  ghcr.io/hurui200320/llm-ops-strata:0.2.8-rocm-gfx110x
+  ghcr.io/hurui200320/llm-ops-strata:0.2.9-rocm-gfx110x
 docker logs -f strata-init    # wait for one-time setup to finish, then stop the container
 ```
 
@@ -117,7 +117,7 @@ docker run -it --rm \
   --group-add "$(getent group video | cut -d: -f3)" \
   --group-add "$(getent group render | cut -d: -f3)" \
   -v /mnt/unenc-xfs/strata/ISTA-DASLab-Flash-Next:/data -v /mnt/unenc-xfs/models:/models:z \
-  ghcr.io/hurui200320/llm-ops-strata:0.2.8-rocm-gfx110x sh
+  ghcr.io/hurui200320/llm-ops-strata:0.2.9-rocm-gfx110x sh
 ```
 
 Any command replaces the server start (`docker run … image strata launch --help`, `… image sh`).
@@ -150,11 +150,11 @@ A local build is those same steps run by hand (Docker + network, no GPU): upstre
 A plain upstream image (no DeepSeek engine) builds with:
 
 ```sh
-git -C <strata-checkout> worktree add /tmp/strata-v0.2.8 v0.2.8
-tar -xzf strata-engine-0.1.54-linux-x86_64-hip-rx7900.tar.gz -C <empty-dir>
-/tmp/strata-v0.2.8/docker/build.sh --flavor hip \
-  --engine <empty-dir> --repo /tmp/strata-v0.2.8 \
-  --version 0.2.8 --tag strata:0.2.8-rocm-gfx110x-local
+git -C <strata-checkout> worktree add /tmp/strata-v0.2.9 v0.2.9
+tar -xzf strata-engine-0.1.55-linux-x86_64-hip-rx7900.tar.gz -C <empty-dir>
+/tmp/strata-v0.2.9/docker/build.sh --flavor hip \
+  --engine <empty-dir> --repo /tmp/strata-v0.2.9 \
+  --version 0.2.9 --tag strata:0.2.9-rocm-gfx110x-local
 ```
 
 Needs network (base image + the terminal's pinned CPython 3.12 and hash-locked wheels). `--ctx-only` keeps the
@@ -236,14 +236,18 @@ DeepSeek-V4.1-Flash on the image's `strata-dsv41` engine. Same container shape a
   change 4 exports `STRATA_DSV41_EXE=/opt/strata/components/engine/<package>/strata-dsv41` when it
   is unset; setup's `dsv41_exe()` and the launch's `dsv41_engine_found()` both honour it. Without
   it, first setup stops at "DeepSeek's engine is not available for this computer yet".
-- **Model files: the pinned 4-shard IST-DASLab layout only.** The lane's folder holds the four-shard
-  set (`…-IQ2_XXS-0000{1..4}-of-00004.gguf` + the old-header Engram); Strata 0.2.8 (re-checked at the
-  release) still pins exactly those names, sizes and SHA-256. The upstream Hugging Face repository's `main` has since
-  switched to llama.cpp's five-shard DeepSeek-V4.1 layout, which Strata setup refuses — so never
-  re-download these sets without `--revision cb02422c900df489cea5833e8a92171224059b3c`, and do not
-  run ISTA's `convert_ds41_upstream.py` on the folder: `tensors.txt` names the old shards and their
-  offsets, and `strata launch` will not re-run setup when they go missing. Details and migration
-  rules: [notes/strata.md](../../notes/strata.md).
+- **Model files: IST-DASLab's six-shard layout** (`…-IQ2_XXS-0000{1..5}-of-00006.gguf`, shard 1 is
+  metadata only, plus `DeepSeek-V4.1-Flash-Engram-IQ4_NL.gguf` under its own name). Strata 0.2.9
+  accepts this layout beside the four-shard one (`setup.py`'s `DSV41_ISTA6_FILES` pins every shard's
+  size and SHA-256; the converted Engram hash is accepted too). Keep the five shards, the Engram, the
+  DSpark drafter and `mmproj-BF16.gguf` co-located in the lane's flat folder and remove the old
+  `-of-00004` shards — setup picks the four-shard layout whenever those files are still present. A
+  pack made from the other layout is detected from its `tensors.txt` and rebuilt automatically on the
+  first start (with the shipped hot-expert profile); setup's own download default is still the pinned
+  four-shard revision `cb02422c…`, so a setup-driven download and a manual six-shard swap both work.
+  Do not run ISTA's `convert_ds41_upstream.py`: the pack names the files and offsets it was built
+  from, and a converted folder needs a repack. Details and the swap record:
+  [notes/strata.md](../../notes/strata.md).
 - **RAM budget and VRAM reserve.** `STRATA_SET="ssd-cache=36 reserve-mib=896"` → a
   36 GB (decimal) RAM store for the hot CPU-lane experts, and 896 MiB per GPU kept out of the expert
   cache at load (unset, the store auto-sizes to available RAM − 12 GB, capped at 48 GB).
@@ -290,9 +294,10 @@ DeepSeek-V4.1-Flash on the image's `strata-dsv41` engine. Same container shape a
   curve: [notes/deepseek/v41f1017.md](../../notes/deepseek/v41f1017.md)). Fallback ladder: 256k,
   then 128k, then 64k (the pack, table and drafter are reused; only the install record is remade).
 - **First start** (`healthCheckTimeout: 1200`): setup runs outside llama-swap — a one-time SHA-256
-  pass over the files (~257 GB), a 5.8 MB Unsloth metadata-shard download, the pack + vision tower +
-  hot-expert profile, and the 16-token smoke. **Pass `-e VISION=on` on the setup run** so setup
-  packs the vision tower even if an existing preset had `"vision": "off"`. Also give the init
+  pass over the files (~250 GB: the five shards and the Engram), a 5.8 MB Unsloth metadata-shard
+  download, the pack + vision tower + hot-expert profile, and the 16-token smoke. **Pass
+  `-e VISION=on` on the setup run** so setup packs the vision tower even if an existing preset had
+  `"vision": "off"`. Also give the init
   container the GPUs to itself — a loaded Qwen lane makes the smoke fail with
   `cudaMalloc ... on CUDA0 failed`. Later starts take a few minutes.
 
@@ -318,8 +323,9 @@ DeepSeek-V4.1-Flash on the image's `strata-dsv41` engine. Same container shape a
     -e MODEL_PATH=/models/strata/ISTA-DASLab-dsv41f1017 \
     -e STRATA_SET="ssd-cache=36 reserve-mib=896" \
     -e STRATA_DS4_HIPK=1 \
+    -e DS4_FAST_ATTN=1 \
     -e DS4_VISION_TOKENS=1140 \
-    ghcr.io/hurui200320/llm-ops-strata:0.2.8-rocm-gfx110x
+    ghcr.io/hurui200320/llm-ops-strata:0.2.9-rocm-gfx110x
   docker logs -f strata-init-ds
   ```
 
