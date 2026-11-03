@@ -454,9 +454,21 @@ models:
   # Qwen3.8 Flash-Next IQ3_S on Strata.
   # Picture reader budget (entrypoint fork change 5): 8192 image tokens at most,
   # 1024 at least — one token per 1024 px, so a 4K picture fits. See notes/strata.md.
+  # DRAFTING=dflash2 (entrypoint fork change 7) pins the drafter explicitly; upstream
+  # Auto picks the same here (PARALLEL=1 writes no --batch flag), but a pin cannot
+  # change under a later upgrade. pipeline-windows is NOT set: it blocks DFlash2 by
+  # design. The first start fetches ~1.2 GB once into Strata-data/dflash2/ (Q4_0
+  # pack + its Q4_0-selector conversion, ~860 MB on disk; 715 MiB VRAM vs the MTP
+  # layer's 1082). MTP arm / revert (the 2026-10-22 tuning): set DRAFTING=mtp —
+  # removing the env does NOT clear the choice, --save-preset stores it in the
+  # lane's docker preset (same lesson as STRATA_SET, notes/strata.md 20261030) —
+  # and add pipeline-windows=2 spec-min-p=0.7 back to STRATA_SET. The same
+  # persistence cuts both ways: an existing lane's preset extra still carries
+  # pipeline-windows/spec-min-p, so delete those two keys once before the first
+  # 0.2.10 start or DFlash2 stays blocked (notes/strata.md, 20261103).
   "qwen3.8-flash-next-iq3s":
     name: "Qwen3.8 Flash-Next IQ3_S"
-    description: "262144 ctx, F16 KV, Strata layer split over 2x7900XTX, fully resident @28 GiB; image 1024-8192 tok"
+    description: "262144 ctx, F16 KV, Strata layer split over 2x7900XTX, fully resident @28 GiB, DFlash2, image 1024-8192 tok"
     cmd: |
       ${docker-server-strata-rocm}
         -v /mnt/unenc-xfs/strata/ISTA-DASLab-Flash-Next:/data
@@ -468,8 +480,9 @@ models:
         -e CHAT_TEMPLATE_PATH=/templates/qwen3.8/Flash-Next-chat-template.jinja
         -e VISION_TOKENS=8192
         -e VISION_MIN_TOKENS=1024
-        -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1"
-        ghcr.io/hurui200320/llm-ops-strata:0.2.9-rocm-gfx110x
+        -e DRAFTING=dflash2
+        -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 layer-split=26 trim-stage-weights=on STRATA_SCORES_THREAD=1"
+        ghcr.io/hurui200320/llm-ops-strata:0.2.10-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
@@ -508,10 +521,11 @@ models:
 
 
   # SC117 abliterated (uncensored) transplant of the same ISTA GSQ-RCO IQ3_S.
-  # Same picture-reader budget as the vanilla lane (VISION_TOKENS/MIN_TOKENS).
+  # Same picture-reader budget and the same pinned DRAFTING=dflash2 arm as the
+  # vanilla lane (see there for the revert recipe).
   "qwen3.8-flash-next-sc117-iq3s":
     name: "Qwen3.8 Flash-Next SC117 IQ3_S (abliterated)"
-    description: "262144 ctx, F16 KV, Strata layer split over 2x7900XTX, uncensored; image 1024-8192 tok"
+    description: "262144 ctx, F16 KV, Strata layer split over 2x7900XTX, uncensored, DFlash2; image 1024-8192 tok"
     cmd: |
       ${docker-server-strata-rocm}
         -v /mnt/unenc-xfs/strata/sc117-Flash-Next-uncensored:/data
@@ -523,8 +537,9 @@ models:
         -e CHAT_TEMPLATE_PATH=/templates/qwen3.8/Flash-Next-chat-template.jinja
         -e VISION_TOKENS=8192
         -e VISION_MIN_TOKENS=1024
-        -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1"
-        ghcr.io/hurui200320/llm-ops-strata:0.2.9-rocm-gfx110x
+        -e DRAFTING=dflash2
+        -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 layer-split=26 trim-stage-weights=on STRATA_SCORES_THREAD=1"
+        ghcr.io/hurui200320/llm-ops-strata:0.2.10-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
@@ -564,6 +579,11 @@ models:
   # attention (the gfx12 default); measured +7-13 % pp at 52K and +10.6 % at
   # 210K on this pair, decode unchanged, deterministic gate identical
   # (notes/deepseek/v41f1017.md, 20261030). Prompt-only: decode keeps scalar.
+  # reserve-mib=900 (0.2.10): setup now writes that floor for pictures on a
+  # discrete card, and 0.1.56 keeps the tower in pinned host RAM between
+  # pictures (it takes ~320 MiB of VRAM only for a picture turn, out of this
+  # reserve) — the old 896 was 4 MiB below the new default and measured against
+  # the pre-0.1.56 always-resident tower.
   "deepseek-v4.1-flash-2bpw":
     name: "DeepSeek V4.1-Flash IST-DAS 2.00 bpw"
     description: "524288 ctx, fixed kv cache quant, vision"
@@ -576,11 +596,11 @@ models:
         -e GPUS=0,1
         -e MODEL_PATH=/models/strata/ISTA-DASLab-dsv41f1017
         -e CHAT_TEMPLATE_PATH=/templates/deepseek/v4.1-flash-1017-chat-template.jinja
-        -e STRATA_SET="ssd-cache=36 reserve-mib=896"
+        -e STRATA_SET="ssd-cache=36 reserve-mib=900"
         -e STRATA_DS4_HIPK=1
         -e DS4_FAST_ATTN=1
         -e DS4_VISION_TOKENS=1140
-        ghcr.io/hurui200320/llm-ops-strata:0.2.9-rocm-gfx110x
+        ghcr.io/hurui200320/llm-ops-strata:0.2.10-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health

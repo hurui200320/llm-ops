@@ -660,3 +660,80 @@ their `.sha256` sidecars with them. The folder also carries the Hub's renamed
 The Qwen lanes' 0.2.9 pass (engine folder `0.1.54` → `0.1.55`, one setup pass each, no downloads,
 vision budget re-applied on the next start) and their smoke are recorded below once the config
 carrying the new tag is on the runner.
+
+# 20261103 Upgrade to 0.2.10 (engine 0.1.56) — DFlash2 drafter on the Qwen lanes
+
+Upgraded to Terminal/Control `0.2.10`/`0.1.56` and engine `0.1.56` across both Qwen lanes and
+`strata-dsv41`. The effective diff for this box is `v0.2.9..v0.2.10` (tag commit
+`ffa80d73133ea5c548aefe57889a16e8085a938f`); the release's headline items (all-cards split engine
+auto-start, 128K on 8 GB cards, ISTA-DAS Coder, DeepSeek pictures on a Mac) are either gated away
+from this pair or out of scope, see below.
+
+## Pins (0.2.10)
+
+| What | Value |
+| --- | --- |
+| Image | `ghcr.io/hurui200320/llm-ops-strata:0.2.10-rocm-gfx110x` (digest recorded when the `strata-image` run finishes) |
+| Terminal | tag `v0.2.10`, commit `ffa80d73133ea5c548aefe57889a16e8085a938f`; `strata 0.2.10 (build 0.1.56; python 3.12.15)` |
+| Engine | `strata-engine-0.1.56-linux-x86_64-hip-rx7900`, 300,041,962 B, asset sha256 `b57768c85db8aa47f6bd62352df561f22504420a9629c49a573749a9555c6b1d`, manifest sha256 `094d78df38aa414f2e501da477fec3f8fa9ca1fd6c199809a7f7476cf2172573`, build_id `c75ab7655503+rocm`, variant `rx7900`, archs gfx1100/1101/1102 |
+| `strata-dsv41` | gfx110x build from `v0.2.10`, `strata-dsv41 0.1.56 build ffa80d731` (sha256 from the CI run); `build-dsv41.sh` flags unchanged — they match upstream's new `packaging/build_dsv41_hip_linux.sh` line for line |
+| hipBLASLt table | packaged `tuning/gfx1100-hipblaslt-100200.txt`, version `100200` — `THEROCK_PIN` stays `7.10.0a20251120` (only the rx9070 package moved to TheRock 7.13) |
+| Entrypoint | upstream `/opt/strata/entrypoint.sh` sha256 `0c660798a51cedb2352847cc91c8c90c59aaec22ca4294a13456c00fb6a6e9b1` = 0.2.9's `10fe9c4f…` + the `RETUNE` line (#4779) and one comment; our fork now carries seven changes (the new one: `DRAFTING` → `strata launch --drafting`) |
+
+## What changes for this box
+
+- **The split engine is inert here.** The rx7900 package now carries `strata-split-2/3/4-amd`
+  (`c75ab765…`, ~+49 MB), but Auto requires gfx1201, exactly four cards, Q4/Q5/Q8 expert families
+  (IQ3_S is explicitly excluded: "the layer split is faster on AMD today") and context ≤ 131072.
+  `--split-engine on` is experimental on AMD and untested above 128K, so the lanes keep the layer
+  split and no `STRATA_SPLIT_ENGINE` is set.
+- **Qwen 0.1.56**: DFlash2 drafter (`--draft dflash2`, also on a layer split, one request at a
+  time); serve fixes #4677 (parked conversation continuation — upstream measured Linux HIP 4/16 →
+  0/16 failed continuations), #4590 (penalties count the reply's own tokens; the old window is
+  `STRATA_PENALTY_PROMPT=1`), #4701/#4751/#4663/#4700 (tool-call parsing), #4846 (the arena's PLE
+  lock is given back when RAM runs short). The RX 7900 XTX arena-alias fix (#3431/#2960, PR #4787)
+  is **Windows HIP only** — a non-event on this Linux pair.
+- **dsv41 0.1.56**: the vision tower stays in pinned host RAM between pictures on AMD discrete
+  cards (it takes its ~320 MiB only for a picture turn, out of `--reserve-mib`; a card with no room
+  lends expert slots for the turn and reads them back). Setup writes
+  `DSV41_VISION_RESERVE_MIB = 900` for pictures on a discrete card, which matches upstream's
+  measured margin; the lane moved `reserve-mib=896` → `900`. Also #4772 (no more "update the
+  engine" nag about the Qwen reader), NaN/router guards, a new gfx11 dense-dequantizer default
+  (`dq_rows_kernel2`; `DS4_DQ_OLD=1` restores the row-per-lane kernel) and a staging-overflow fix.
+- **`vram_fit.fit_start` / the 8 GB-card walk do not apply**: both exclude layer splits and
+  DeepSeek, and our starts fit.
+
+## DFlash2 on the Qwen lanes (2026-11-03 decision)
+
+Upstream 0.2.10 makes DFlash2 the Auto drafter for Qwen3.8-Flash-Next on gfx1100. On our lanes the
+plan treats `--pipeline-windows 2` as "several requests at once" and would fall back to MTP at
+serve time, while `needs_pack()` still fetched the 1.2 GB drafter on the first start and never ran
+it. Decision: **pin the DFlash2 arm explicitly** — entrypoint fork change 7 (`DRAFTING` env → the
+launch's `--drafting`), `-e DRAFTING=dflash2` on both lanes, and `pipeline-windows=2` /
+`spec-min-p=0.7` out of `STRATA_SET` (`spec-min-p` is MTP-only and is stripped from a DFlash2
+start anyway). `PARALLEL=1` stays: a `1` writes no `--batch`/`--slots` flag and does not block
+DFlash2. The first start per lane fetches ~1.2 GB once into `Strata-data/dflash2/` and builds the
+Q4_0 pack plus its Q4_0-selector conversion (~860 MB on disk; 715 MiB VRAM against the MTP layer's
+1082, so the freed ~370 MiB goes to the expert cache).
+
+**Bench gate**: the 262144 longctx spot (60/85%) must not regress against the 0.2.8 MTP baseline
+(60% pp 2,038.8 / tg 65.50; 85% pp 2,122.1 / tg 62.30 — [`qwen3.8/Flash-Next.md`](qwen3.8/Flash-Next.md)).
+If it does, the MTP arm comes back: set `DRAFTING=mtp` (removing the env does not clear the choice —
+`--save-preset` stores `drafting` in the lane's `docker` preset, the same persistence as the
+`STRATA_SET` keys, 20261030) and restore `pipeline-windows=2 spec-min-p=0.7` (the 2026-10-22 tuning).
+The A/B stays listed in [`TODO.md`](TODO.md) until the numbers are in.
+
+## Rollout (pending)
+
+**Before the first start** (both Qwen lanes, on fedora-tuf): the lanes' `docker` presets still carry
+the 2026-10-22 `extra` keys `pipeline-windows` and `spec-min-p` — `--set` keys persist in
+`<data>/config/strata/launch-presets/docker.json` and leaving them out of `STRATA_SET` does not
+remove them (20261030). Delete those two keys from `extra` once; otherwise the stale
+`pipeline-windows` keeps DFlash2 blocked and the start falls back to MTP with a note. The lane's
+other saved settings (`access`, `no_key`, `parallel`, …) are re-supplied from the env every start
+and stay as they are.
+
+Then the `strata-image` run and its digests, the first-start logs (setup re-runs once because the
+engine folder changes `0.1.55` → `0.1.56`; Qwen packs reused; the DFlash2 fetch and `Drafting:
+DFlash2 alone (--draft dflash2, …)` line; dsv41 pack reused with the lazy tower), the smoke matrix
+and the speed spots are appended here when the image is on fedora-tuf.

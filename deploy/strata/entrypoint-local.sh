@@ -1,13 +1,15 @@
 #!/bin/sh
 # Fork of upstream's /opt/strata/entrypoint.sh for the llm-ops llama-swap lane.
 #
-# Changes from upstream v0.2.9 (image
-# ghcr.io/hurui200320/llm-ops-strata:0.2.9-rocm-gfx110x, terminal 0.2.9 / engine
-# 0.1.55; re-diffed 2026-10-31, sha256
-# 10fe9c4f7ac551d5934d9f7aa6363da852f3bd41b5ce7ccbe46e66e9e7fc0226). The 0.2.9
-# entrypoint is byte-identical to v0.2.8's, which is byte-identical to v0.2.7's
-# (which added only legacy_models_guard (#3421) to the v0.2.6 entrypoint, sha256
-# 7c74cfd3…); the fork carries it unchanged:
+# Changes from upstream v0.2.10 (image
+# ghcr.io/hurui200320/llm-ops-strata:0.2.10-rocm-gfx110x, terminal 0.2.10 / engine
+# 0.1.56; sha256
+# 0c660798a51cedb2352847cc91c8c90c59aaec22ca4294a13456c00fb6a6e9b1). The 0.2.10
+# entrypoint is the 0.2.9 one (sha256 10fe9c4f…) plus upstream's `--retune` line
+# (#4779) and one comment; that 0.2.9 entrypoint was byte-identical to v0.2.8's,
+# which was byte-identical to v0.2.7's (which added only legacy_models_guard
+# (#3421) to the v0.2.6 entrypoint, sha256 7c74cfd3…). The fork carries those
+# upstream lines unchanged:
 #   1. When no API key is given, pass `--no-api-key` to `strata launch` instead of
 #      letting it make one. Strata 0.2.4.2 allows a non-loopback bind without a key
 #      (with one warning), so the server can listen on 0.0.0.0 inside its own
@@ -47,7 +49,14 @@
 #      above 1140 tokens (10,240 patches in the attention kernel), so a larger value
 #      is clamped with a warning. min_pixels scales small pictures up; unset, the
 #      pack keeps the mmproj's own value.
-# The script below is upstream v0.2.4.2 apart from the six changes above and the
+#   7. When DRAFTING is set, pass `strata launch --drafting <value>`
+#      (auto | mtp | dflash2 | off) so a lane's drafter is an explicit choice and
+#      cannot change under it when upstream changes Auto's resolution. This is a
+#      launch flag, never a STRATA_SET key: lowercase STRATA_SET keys become engine
+#      argv flags and the engine exits 2 on an unknown `--drafting`. Both Qwen lanes
+#      pin dflash2 (2026-11-03; the MTP arm is the revert recipe in
+#      deploy/llama-swap.config.yaml).
+# The script below is upstream v0.2.10 apart from the seven changes above and the
 # comment updates that describe them. A key given through API_KEY / API_KEY_FILE
 # still wins and is used exactly as upstream.
 #
@@ -58,10 +67,10 @@
 #
 # Maintenance: on every image bump, extract the new entrypoint from the image
 #   docker run --rm --entrypoint /bin/sh IMAGE -c 'cat /opt/strata/entrypoint.sh'
-# and diff it against this file; re-apply the six changes above (the key
+# and diff it against this file; re-apply the seven changes above (the key
 # conditional, the final warning, the pack chat-template swap, the
-# STRATA_DSV41_EXE export, the picture-reader token budget, and the DeepSeek
-# pack picture budget) and nothing else.
+# STRATA_DSV41_EXE export, the picture-reader token budget, the DeepSeek
+# pack picture budget, and the DRAFTING launch flag) and nothing else.
 #
 # Upstream text follows.
 #
@@ -78,7 +87,9 @@
 #   MODEL_PATH    GGUF files you already have, a folder or one .gguf, inside the container (mount it read-only)
 #   ALLOW_DOWNLOAD  1: go on and download the model although model files of the older layout (/data/models) were left unread (default: stop)
 #   CONTEXT       32k, 64k, 128k, 256k or a number of tokens
-#   PARALLEL      requests answered at the same time, 1 to 8 (empty: fit to the card)
+#   PARALLEL      requests answered at the same time, 1 to 8 (empty: fit to the card; DeepSeek: one at a time)
+#   DRAFTING      auto | mtp | dflash2 | off   the drafter for Qwen3.8-Flash-Next (default: Auto). Fork change 7:
+#                 passed to `strata launch --drafting`, so a lane can pin the drafter instead of following Auto.
 #   VISION        off | on | gpu | cpu  (pictures; the picture reader file is downloaded with the model)
 #   KV            int8 | q4_0 | k8v4 | fp16  (conversation memory format)
 #   GPU / GPUS    card numbers, e.g. 0 or 0,1 (empty or "all": the engine's choice)
@@ -352,7 +363,7 @@ fi
 # server sizes each picture from the pack's ds4.txt (vision.max_image_tokens, written as 1024 by
 # tools/dsv41/pack_gguf.py; tools: serve/ds_pictures.py). The span is n_h*(n_w+1)+2 prompt tokens, one token per 42x42 px
 # cell (patch 14 x merge 3). There is no launch flag or STRATA_SET key for it: the pack file is the only knob. The tower's
-# full-attention softmax holds 10,240 patches (kSmT*kSmPer in src/dsv41/ds4_vision.cu, engine 0.1.55) = 1,137 aligner cells
+# full-attention softmax holds 10,240 patches (kSmT*kSmPer in src/dsv41/ds4_vision.cu, engine 0.1.56) = 1,137 aligner cells
 # = max_image_tokens 1140; a larger value stops the tower loading ("more than the attention covers"), so it is clamped.
 if [ -n "${DS4_VISION_TOKENS:-}" ] || [ -n "${DS4_VISION_MIN_PIXELS:-}" ]; then
   for vname in DS4_VISION_TOKENS DS4_VISION_MIN_PIXELS; do
@@ -361,7 +372,7 @@ if [ -n "${DS4_VISION_TOKENS:-}" ] || [ -n "${DS4_VISION_MIN_PIXELS:-}" ]; then
     case "$v" in *[!0-9]*) die "$vname=$v is not a whole number (0 = no limit). Nothing was started." 2 ;; esac
   done
   if [ -n "${DS4_VISION_TOKENS:-}" ] && [ "$DS4_VISION_TOKENS" -gt 1140 ]; then
-    warn "DS4_VISION_TOKENS=$DS4_VISION_TOKENS is above the DeepSeek tower's 10,240-patch attention limit (max_image_tokens 1140, engine 0.1.55): using 1140."
+    warn "DS4_VISION_TOKENS=$DS4_VISION_TOKENS is above the DeepSeek tower's 10,240-patch attention limit (max_image_tokens 1140, engine 0.1.56): using 1140."
     DS4_VISION_TOKENS=1140
   fi
   seen=""
@@ -419,6 +430,12 @@ fi
 [ -n "$model_path" ]      && { set -- "$@" --model-path "$model_path"; have=1; }
 [ -n "${CONTEXT:-}" ]     && { set -- "$@" --context "$CONTEXT"; have=1; }
 [ -n "${PARALLEL:-}" ] && [ "${PARALLEL}" != "auto" ] && { set -- "$@" --parallel "$PARALLEL"; have=1; }
+if [ -n "${DRAFTING:-}" ]; then
+  case "$(printf '%s' "$DRAFTING" | tr 'A-Z' 'a-z')" in
+    auto|mtp|dflash2|off) set -- "$@" --drafting "$(printf '%s' "$DRAFTING" | tr 'A-Z' 'a-z')"; have=1 ;;
+    *) die "DRAFTING=$DRAFTING is not one of auto, mtp, dflash2, off." 2 ;;
+  esac
+fi
 [ -n "${KV:-}" ]          && { set -- "$@" --kv "$KV"; have=1; }
 if [ -n "${VISION:-}" ]; then
   case "$(printf '%s' "$VISION" | tr 'A-Z' 'a-z')" in
@@ -465,6 +482,7 @@ if [ -n "$tune_mode" ] && [ "$tune_mode" != "skip" ]; then
     say "This preset is already tuned; keeping the tuned settings (set RETUNE=1 to tune again)."
   else
     set -- "$@" --tune "$tune_mode"; have=1
+    [ "${RETUNE:-0}" = "1" ] && set -- "$@" --retune     # without it the launcher sees a tuned preset and measures nothing (#4779)
     say "Tuning is on (TUNE=$tune_mode): the first start takes longer (up to about $([ "$tune_mode" = quick ] && echo 20 || echo 120) minutes), once."
   fi
 fi

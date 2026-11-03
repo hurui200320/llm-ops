@@ -1,8 +1,8 @@
 # Strata (AMD / HIP) deployment
 
-The Strata image the lanes run is **our own build**, `ghcr.io/hurui200320/llm-ops-strata:0.2.9-rocm-gfx110x`,
+The Strata image the lanes run is **our own build**, `ghcr.io/hurui200320/llm-ops-strata:0.2.10-rocm-gfx110x`,
 made by [`.github/workflows/strata-image.yml`](../../.github/workflows/strata-image.yml). It carries upstream's
-Terminal 0.2.9 (serve + the GGUF preparation tools and the `strata` CLI), upstream's signed-feed 0.1.55 Qwen engine
+Terminal 0.2.10 (serve + the GGUF preparation tools and the `strata` CLI), upstream's signed-feed 0.1.56 Qwen engine
 package, both picture readers (CPU and GPU), and the ROCm runtime for the whole RDNA 3
 dGPU family (gfx1100 = RX 7900 XTX/XT, gfx1101 = RX 7800/7700 XT, gfx1102 = RX 7600), plus one added file: the
 gfx110x `strata-dsv41` build (DeepSeek V4.1-Flash; run by the `deepseek-v4.1-flash-2bpw` lane — see
@@ -16,18 +16,21 @@ See "Building the image" and the pins below; historical context and upgrade reco
 
 ## Pins
 
-Current image: `ghcr.io/hurui200320/llm-ops-strata:0.2.9-rocm-gfx110x` (Terminal `v0.2.9`, engine
-`0.1.55` rx7900, plus our `strata-dsv41` `0.1.55`). Digests, package hashes, and verification records are in
+Current image: `ghcr.io/hurui200320/llm-ops-strata:0.2.10-rocm-gfx110x` (Terminal `v0.2.10`, engine
+`0.1.56` rx7900, plus our `strata-dsv41` `0.1.56`). Digests, package hashes, and verification records are in
 [notes/strata.md](../../notes/strata.md); the workflow `env:` block pins the build inputs.
 
-- **Engine folder**: `/opt/strata/components/engine/0.1.55-linux-x86_64-hip-rx7900` (upstream names
+- **Engine folder**: `/opt/strata/components/engine/0.1.56-linux-x86_64-hip-rx7900` (upstream names
   the folder without the `strata-engine-` prefix; reference the engine as `component:strata-engine`,
   never by path).
-- **`strata-dsv41`** is our gfx110x build from the `v0.2.9` tag (`0.1.55`), placed beside `strata` in that
+- **`strata-dsv41`** is our gfx110x build from the `v0.2.10` tag (`0.1.56`), placed beside `strata` in that
   folder (the shape of upstream's `DSV41=1` rx9070 package) and deliberately not listed in
   `engine-component.json`. The Qwen lanes never invoke it; the DeepSeek lane runs it through
   `STRATA_DSV41_EXE`, which entrypoint fork change 4 resolves from the package folder (see
   "DeepSeek (dsv41) lane").
+- **Other package files**: 0.1.56 also ships the all-cards split engine (`strata-split-2/3/4-amd`,
+  upstream's packaging commit `c75ab765…`). Their Auto rule never selects this pair (gfx1201-only,
+  exactly 4 cards, non-IQ3_S experts, context ≤ 128K), so the lanes keep the layer split.
 - **hipBLASLt table**: packaged at `tuning/gfx1100-hipblaslt-100200.txt` (TheRock `7.10.0a20251120` /
   hipBLASLt 1.2.0). On gfx1100 the table is **opt-in**: pass `STRATA_HIPBLASLT_TABLE=on` as a
   **container environment variable** (`-e`), **not** inside `STRATA_SET` (see "The hipBLASLt tuning table").
@@ -59,8 +62,9 @@ docker run -d --name strata-init --init --rm \
   -e STRATA_HIPBLASLT_TABLE=on \
   -e CHAT_TEMPLATE_PATH=/templates/qwen3.8/Flash-Next-chat-template.jinja \
   -e VISION_TOKENS=8192 -e VISION_MIN_TOKENS=1024 \
-  -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1" \
-  ghcr.io/hurui200320/llm-ops-strata:0.2.9-rocm-gfx110x
+  -e DRAFTING=dflash2 \
+  -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 layer-split=26 trim-stage-weights=on STRATA_SCORES_THREAD=1" \
+  ghcr.io/hurui200320/llm-ops-strata:0.2.10-rocm-gfx110x
 docker logs -f strata-init    # wait for one-time setup to finish, then stop the container
 ```
 
@@ -117,7 +121,7 @@ docker run -it --rm \
   --group-add "$(getent group video | cut -d: -f3)" \
   --group-add "$(getent group render | cut -d: -f3)" \
   -v /mnt/unenc-xfs/strata/ISTA-DASLab-Flash-Next:/data -v /mnt/unenc-xfs/models:/models:z \
-  ghcr.io/hurui200320/llm-ops-strata:0.2.9-rocm-gfx110x sh
+  ghcr.io/hurui200320/llm-ops-strata:0.2.10-rocm-gfx110x sh
 ```
 
 Any command replaces the server start (`docker run … image strata launch --help`, `… image sh`).
@@ -150,11 +154,11 @@ A local build is those same steps run by hand (Docker + network, no GPU): upstre
 A plain upstream image (no DeepSeek engine) builds with:
 
 ```sh
-git -C <strata-checkout> worktree add /tmp/strata-v0.2.9 v0.2.9
-tar -xzf strata-engine-0.1.55-linux-x86_64-hip-rx7900.tar.gz -C <empty-dir>
-/tmp/strata-v0.2.9/docker/build.sh --flavor hip \
-  --engine <empty-dir> --repo /tmp/strata-v0.2.9 \
-  --version 0.2.9 --tag strata:0.2.9-rocm-gfx110x-local
+git -C <strata-checkout> worktree add /tmp/strata-v0.2.10 v0.2.10
+tar -xzf strata-engine-0.1.56-linux-x86_64-hip-rx7900.tar.gz -C <empty-dir>
+/tmp/strata-v0.2.10/docker/build.sh --flavor hip \
+  --engine <empty-dir> --repo /tmp/strata-v0.2.10 \
+  --version 0.2.10 --tag strata:0.2.10-rocm-gfx110x-local
 ```
 
 Needs network (base image + the terminal's pinned CPython 3.12 and hash-locked wheels). `--ctx-only` keeps the
@@ -185,8 +189,9 @@ macro.
   [entrypoint-local.sh](entrypoint-local.sh), a fork of upstream's entrypoint that passes
   `--no-api-key` when no key is set, suppresses upstream's false "Strata made one" warning,
   installs `CHAT_TEMPLATE_PATH` over every pack's chat template, exports `STRATA_DSV41_EXE` for the
-  DeepSeek engine, and writes the picture token budget (`VISION_TOKENS`/`VISION_MIN_TOKENS` or
-  `DS4_VISION_TOKENS`/`DS4_VISION_MIN_PIXELS`). Docker publishes only `127.0.0.1:${PORT}`
+  DeepSeek engine, writes the picture token budget (`VISION_TOKENS`/`VISION_MIN_TOKENS` or
+  `DS4_VISION_TOKENS`/`DS4_VISION_MIN_PIXELS`), and passes `DRAFTING` (fork change 7) to
+  `strata launch --drafting`. Docker publishes only `127.0.0.1:${PORT}`
   (`-p 127.0.0.1:${PORT}:${PORT}`) on the host, where llama-swap proxies; there is no
   `--network host`. `launch` stores no key, so llama-swap stays `apiKeys: []` and clients send no
   header; the LAN reaches Strata only through llama-swap. **The macro passes
@@ -199,12 +204,12 @@ macro.
 - **Re-diff the entrypoint fork on every image bump.** Extract the new
   `/opt/strata/entrypoint.sh` from the image
   (`docker run --rm --entrypoint /bin/sh IMAGE -c 'cat /opt/strata/entrypoint.sh'`) and compare it
-  with `entrypoint-local.sh`; re-apply the six local changes (the `--no-api-key` conditional, the
+  with `entrypoint-local.sh`; re-apply the seven local changes (the `--no-api-key` conditional, the
   final keyless warning, the pack chat-template swap, the `STRATA_DSV41_EXE` export for the DeepSeek
-  engine, the Qwen picture-reader token budget, and the DeepSeek pack vision token budget) and
-  nothing else. The fork must exist in the fedora-tuf checkout before the first start (mode 755): a
-  missing bind source is created by Docker as a root-owned directory and the container dies on
-  `--entrypoint`.
+  engine, the Qwen picture-reader token budget, the DeepSeek pack vision token budget, and the
+  `DRAFTING` launch flag) and nothing else. The fork must exist in the fedora-tuf checkout before the
+  first start (mode 755): a missing bind source is created by Docker as a root-owned directory and the
+  container dies on `--entrypoint`.
 - **Preset/key state.** Each lane's `docker` preset is `"access": "lan"`, `"no_key": true`,
   `"api_key": null`; the private launch config gets `"api_key": "none"` (the server's "no key"
   sentinel), and no `/data/state/api-key` is written. A manual run with `API_KEY` still creates
@@ -217,7 +222,8 @@ macro.
   omits, so discovery would fall back to the listing-only prober (context + text; no tools/image).
 - **Env passthrough**: `MODEL`, `CONTEXT`, `GPUS=0,1`, `PARALLEL=1` (Qwen lanes), `MODEL_PATH`, and
   the `STRATA_SET` string (with `kv=fp16` on Qwen); plus the container env
-  `STRATA_HIPBLASLT_TABLE=on`. Never `KV=`, never `--slot-save-path`. No entry passes `PRESET`: the
+  `STRATA_HIPBLASLT_TABLE=on` and `DRAFTING=dflash2` (Qwen lanes). Never `KV=`, never
+  `--slot-save-path`, never `DRAFTING` inside `STRATA_SET`. No entry passes `PRESET`: the
   image default `docker` is saved per lane under each tree's `config/strata/launch-presets/`.
 - **Uncensored Qwen lane (`qwen3.8-flash-next-sc117-iq3s`)**: serves the SC117 abliterated IQ3_S
   transplant with the same configuration as the vanilla lane, differing only in its `/data` mount
@@ -237,7 +243,7 @@ DeepSeek-V4.1-Flash on the image's `strata-dsv41` engine. Same container shape a
   is unset; setup's `dsv41_exe()` and the launch's `dsv41_engine_found()` both honour it. Without
   it, first setup stops at "DeepSeek's engine is not available for this computer yet".
 - **Model files: IST-DASLab's six-shard layout** (`…-IQ2_XXS-0000{1..5}-of-00006.gguf`, shard 1 is
-  metadata only, plus `DeepSeek-V4.1-Flash-Engram-IQ4_NL.gguf` under its own name). Strata 0.2.9
+  metadata only, plus `DeepSeek-V4.1-Flash-Engram-IQ4_NL.gguf` under its own name). Strata 0.2.10
   accepts this layout beside the four-shard one (`setup.py`'s `DSV41_ISTA6_FILES` pins every shard's
   size and SHA-256; the converted Engram hash is accepted too). Keep the five shards, the Engram, the
   DSpark drafter and `mmproj-BF16.gguf` co-located in the lane's flat folder and remove the old
@@ -248,10 +254,13 @@ DeepSeek-V4.1-Flash on the image's `strata-dsv41` engine. Same container shape a
   Do not run ISTA's `convert_ds41_upstream.py`: the pack names the files and offsets it was built
   from, and a converted folder needs a repack. Details and the swap record:
   [notes/strata.md](../../notes/strata.md).
-- **RAM budget and VRAM reserve.** `STRATA_SET="ssd-cache=36 reserve-mib=896"` → a
-  36 GB (decimal) RAM store for the hot CPU-lane experts, and 896 MiB per GPU kept out of the expert
-  cache at load (unset, the store auto-sizes to available RAM − 12 GB, capped at 48 GB).
-  `reserve-mib` is a plan-time input, not a free-VRAM floor. Why these values, and what was measured:
+- **RAM budget and VRAM reserve.** `STRATA_SET="ssd-cache=36 reserve-mib=900"` → a
+  36 GB (decimal) RAM store for the hot CPU-lane experts, and 900 MiB per GPU kept out of the expert
+  cache at load (unset, the store auto-sizes to available RAM − 12 GB, capped at 48 GB). 0.2.10's
+  setup stamps 900 itself for pictures on a discrete card, and 0.1.56 keeps the vision tower in
+  pinned host RAM between pictures (it takes its ~320 MiB only for a picture turn, out of this
+  reserve), so the lane follows upstream's margin. `reserve-mib` is a plan-time input, not a
+  free-VRAM floor. Why these values, and what was measured:
   [notes/deepseek/v41f1017.md](../../notes/deepseek/v41f1017.md). The Qwen lanes'
   `resident-budget-gib` is a Flash-Next setting that DeepSeek ignores (setup warns about it);
   `--ssd-cache` is the knob.
@@ -276,15 +285,18 @@ DeepSeek-V4.1-Flash on the image's `strata-dsv41` engine. Same container shape a
   **container env var** (prompt-only: `T >= 16`, `heads % 16 == 0`; decode keeps the scalar
   kernels). Measured on this pair: +7–13 % pp at 52K and +10.6 % at 210K, decode unchanged and the
   deterministic gate identical: [notes/deepseek/v41f1017.md](../../notes/deepseek/v41f1017.md).
-- **Vision.** The engine has its own vision tower (loaded with the model; no separate reader
-  process). Setup packs the tower's weights from `mmproj-BF16.gguf` in the model folder (the tensors
-  are read from the mmproj in place), and the lane advertises `capabilities.in: [text, image]`.
-  `--vision no` at setup leaves it out. **Picture budget: `DS4_VISION_TOKENS=1140`** (fork change 6)
-  — one prompt token per 42×42 px cell, span `n_h*(n_w+1)+2`; setup's native 1024 downscales a 4K
-  screenshot to 1680×966, whereas 1140 is the tower's hard maximum (10,240-patch attention;
-  1378×1378 square / 1840×1008 at 16:9) and costs only ~17 MB more tower memory. The knob writes the
-  pack's `vision.max_image_tokens` at every start; the Qwen `VISION_TOKENS` only patches Flash-Next
-  readers. Token math and resolution table: [notes/strata.md](../../notes/strata.md).
+- **Vision.** The engine has its own vision tower (no separate reader process). Setup packs the
+  tower's weights from `mmproj-BF16.gguf` in the model folder (the tensors are read from the mmproj
+  in place), and the lane advertises `capabilities.in: [text, image]`. Since 0.1.56 the tower stays
+  in pinned host RAM between pictures on AMD discrete cards: it takes its ~320 MiB of VRAM only for
+  a picture turn (out of `--reserve-mib 900`), and a card without room lends expert slots for the
+  turn and reads them back afterwards. `--vision no` at setup leaves the tower out. **Picture
+  budget: `DS4_VISION_TOKENS=1140`** (fork change 6) — one prompt token per 42×42 px cell, span
+  `n_h*(n_w+1)+2`; setup's native 1024 downscales a 4K screenshot to 1680×966, whereas 1140 is the
+  tower's hard maximum (10,240-patch attention; 1378×1378 square / 1840×1008 at 16:9). The knob
+  writes the pack's `vision.max_image_tokens` at every start; the Qwen `VISION_TOKENS` only patches
+  Flash-Next readers. Token math and resolution table:
+  [notes/strata.md](../../notes/strata.md).
 - **No KV or parallel.** The engine has its own cache format (no `--kv` flag at all); `--parallel` is
   ignored with a warning. Do not pass `KV=` or `PARALLEL`; the lane declares `capabilities`
   explicitly.
@@ -321,11 +333,11 @@ DeepSeek-V4.1-Flash on the image's `strata-dsv41` engine. Same container shape a
     -v /mnt/unenc-xfs/models:/models:z \
     -e MODEL=IST-DAS-2.00bpw -e FAMILY=deepseek41 -e CONTEXT=512k -e GPUS=0,1 \
     -e MODEL_PATH=/models/strata/ISTA-DASLab-dsv41f1017 \
-    -e STRATA_SET="ssd-cache=36 reserve-mib=896" \
+    -e STRATA_SET="ssd-cache=36 reserve-mib=900" \
     -e STRATA_DS4_HIPK=1 \
     -e DS4_FAST_ATTN=1 \
     -e DS4_VISION_TOKENS=1140 \
-    ghcr.io/hurui200320/llm-ops-strata:0.2.9-rocm-gfx110x
+    ghcr.io/hurui200320/llm-ops-strata:0.2.10-rocm-gfx110x
   docker logs -f strata-init-ds
   ```
 
@@ -387,6 +399,39 @@ The DeepSeek lane has no separate reader: its engine's own tower sizes each pict
 writes that key from `DS4_VISION_TOKENS` / `DS4_VISION_MIN_PIXELS`. The lane runs
 `DS4_VISION_TOKENS=1140`, the tower's hard maximum (10,240-patch attention; 1141 refuses to load);
 see "DeepSeek (dsv41) lane" and [notes/strata.md](../../notes/strata.md).
+
+## Drafting (Qwen lanes)
+
+Both Qwen lanes run **DFlash2** (`DRAFTING=dflash2`, entrypoint fork change 7): a block drafter
+(`incoai/Qwen3.8-Flash-Next-DFlash2`, pinned revision) that replaces the MTP draft layer. The 0.2.10
+plan allows DFlash2 alone on a layer split (0.2.9 refused it there); Auto would resolve to the same
+drafter on these lanes, but the pin keeps the choice stable across upgrades.
+
+- The first start fetches ~1.2 GB once into `<data>/Strata-data/dflash2/` and builds the Q4_0 pack
+  plus its Q4_0-selector conversion (~860 MB on disk; the source safetensors is removed). Setup
+  neither downloads it again nor touches the lane's existing `mtp/` layer.
+- `pipeline-windows=2` **must not** be set: upstream's plan treats that option as "several requests
+  at once" and silently starts the MTP instead. `PARALLEL=1` is harmless — a `1` writes no
+  `--batch`/`--slots` flag into the engine argv.
+- **Existing lanes keep stale `extra` keys.** `STRATA_SET` keys are merged into the lane's
+  `<data>/config/strata/launch-presets/docker.json` → `extra` and are **not** removed when they
+  leave `STRATA_SET` (the 2026-10-30 finding). Before the first 0.2.10 start, delete
+  `pipeline-windows` and `spec-min-p` from `extra` in **both Qwen lanes** once; otherwise the stale
+  `pipeline-windows` keeps DFlash2 blocked and the start falls back to MTP with a note. Verify the
+  running engine's `engine started:` line, not the config file.
+- `spec-min-p` is an MTP-only flag and is stripped from a DFlash2 start, so it is not in the lanes'
+  `STRATA_SET`. DFlash2's window/confidence (`--spec 6`, `--draft-conf …`) are the launcher's own
+  values.
+- DFlash2 uses 715 MiB of VRAM against the MTP layer's 1082, so the freed ~370 MiB goes to the expert
+  cache. The server's start line to check: `[strata] drafting: DFlash2 alone (--draft dflash2,
+  --draft-conf …)`.
+- **Revert to the MTP arm** (the 2026-10-22 tuning): set `-e DRAFTING=mtp` — removing the
+  variable does **not** clear the choice, because `--save-preset` stores `drafting` in the lane's
+  `docker` preset (the same persistence as the `STRATA_SET` keys, [notes/strata.md](../../notes/strata.md)
+  20261030) — and add `pipeline-windows=2 spec-min-p=0.7` back to `STRATA_SET`. The drafter folder
+  may stay on disk; the MTP layer is still installed. Speed records and the A/B that chose the arm:
+  [notes/qwen3.8/Flash-Next.md](../../notes/qwen3.8/Flash-Next.md) and
+  [notes/strata.md](../../notes/strata.md).
 
 ## The hipBLASLt tuning table
 
