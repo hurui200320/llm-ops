@@ -454,21 +454,20 @@ models:
   # Qwen3.8 Flash-Next IQ3_S on Strata.
   # Picture reader budget (entrypoint fork change 5): 8192 image tokens at most,
   # 1024 at least — one token per 1024 px, so a 4K picture fits. See notes/strata.md.
-  # DRAFTING=dflash2 (entrypoint fork change 7) pins the drafter explicitly; upstream
-  # Auto picks the same here (PARALLEL=1 writes no --batch flag), but a pin cannot
-  # change under a later upgrade. pipeline-windows is NOT set: it blocks DFlash2 by
-  # design. The first start fetches ~1.2 GB once into Strata-data/dflash2/ (Q4_0
-  # pack + its Q4_0-selector conversion, ~860 MB on disk; 715 MiB VRAM vs the MTP
-  # layer's 1082). MTP arm / revert (the 2026-10-22 tuning): set DRAFTING=mtp —
-  # removing the env does NOT clear the choice, --save-preset stores it in the
-  # lane's docker preset (same lesson as STRATA_SET, notes/strata.md 20261030) —
-  # and add pipeline-windows=2 spec-min-p=0.7 back to STRATA_SET. The same
-  # persistence cuts both ways: an existing lane's preset extra still carries
-  # pipeline-windows/spec-min-p, so delete those two keys once before the first
-  # 0.2.10 start or DFlash2 stays blocked (notes/strata.md, 20261103).
+  # DRAFTING=mtp pins the drafter explicitly (entrypoint fork change 7): upstream
+  # Auto would pick the same here, but a pin cannot change under a later upgrade.
+  # DFlash2 was tried on 0.1.56 (2026-11-03) and REVERTED: it cannot run beside
+  # --pipeline-windows (its plan treats the flag as "several requests at once",
+  # and that flag is our big pp win). The A/B on this pair: DFlash2 60% pp/tg
+  # 2100.5/54.80, 85% 2170.9/52.65 vs 1993.1/65.00 and 2119.2/64.30 on the MTP
+  # arm the same day (0.2.8: 2038.8/65.50, 2122.1/62.30) — decode 16-18% slower,
+  # prompt within noise. If a later release lets DFlash2 run with
+  # pipeline-windows, re-test: set DRAFTING=dflash2 and drop
+  # pipeline-windows=2/spec-min-p=0.7 (then clean the same keys from the preset's
+  # extra — --set keys persist, notes/strata.md 20261030).
   "qwen3.8-flash-next-iq3s":
     name: "Qwen3.8 Flash-Next IQ3_S"
-    description: "262144 ctx, F16 KV, Strata layer split over 2x7900XTX, fully resident @28 GiB, DFlash2, image 1024-8192 tok"
+    description: "262144 ctx, F16 KV, Strata layer split over 2x7900XTX, fully resident @28 GiB, MTP, image 1024-8192 tok"
     cmd: |
       ${docker-server-strata-rocm}
         -v /mnt/unenc-xfs/strata/ISTA-DASLab-Flash-Next:/data
@@ -480,8 +479,8 @@ models:
         -e CHAT_TEMPLATE_PATH=/templates/qwen3.8/Flash-Next-chat-template.jinja
         -e VISION_TOKENS=8192
         -e VISION_MIN_TOKENS=1024
-        -e DRAFTING=dflash2
-        -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 layer-split=26 trim-stage-weights=on STRATA_SCORES_THREAD=1"
+        -e DRAFTING=mtp
+        -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1"
         ghcr.io/hurui200320/llm-ops-strata:0.2.10-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
@@ -521,11 +520,12 @@ models:
 
 
   # SC117 abliterated (uncensored) transplant of the same ISTA GSQ-RCO IQ3_S.
-  # Same picture-reader budget and the same pinned DRAFTING=dflash2 arm as the
-  # vanilla lane (see there for the revert recipe).
+  # Same picture-reader budget and the same MTP arm (DRAFTING=mtp) as the vanilla
+  # lane — DFlash2 was tried and reverted; see there for the numbers and the
+  # future re-test path.
   "qwen3.8-flash-next-sc117-iq3s":
     name: "Qwen3.8 Flash-Next SC117 IQ3_S (abliterated)"
-    description: "262144 ctx, F16 KV, Strata layer split over 2x7900XTX, uncensored, DFlash2; image 1024-8192 tok"
+    description: "262144 ctx, F16 KV, Strata layer split over 2x7900XTX, uncensored, MTP; image 1024-8192 tok"
     cmd: |
       ${docker-server-strata-rocm}
         -v /mnt/unenc-xfs/strata/sc117-Flash-Next-uncensored:/data
@@ -537,8 +537,8 @@ models:
         -e CHAT_TEMPLATE_PATH=/templates/qwen3.8/Flash-Next-chat-template.jinja
         -e VISION_TOKENS=8192
         -e VISION_MIN_TOKENS=1024
-        -e DRAFTING=dflash2
-        -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 layer-split=26 trim-stage-weights=on STRATA_SCORES_THREAD=1"
+        -e DRAFTING=mtp
+        -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1"
         ghcr.io/hurui200320/llm-ops-strata:0.2.10-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}

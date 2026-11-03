@@ -53,9 +53,9 @@
 #      (auto | mtp | dflash2 | off) so a lane's drafter is an explicit choice and
 #      cannot change under it when upstream changes Auto's resolution. This is a
 #      launch flag, never a STRATA_SET key: lowercase STRATA_SET keys become engine
-#      argv flags and the engine exits 2 on an unknown `--drafting`. Both Qwen lanes
-#      pin dflash2 (2026-11-03; the MTP arm is the revert recipe in
-#      deploy/llama-swap.config.yaml).
+#      argv flags and the engine exits 2 on an unknown `--drafting`. The Qwen lanes
+#      pin mtp: DFlash2 was tried on 0.1.56 and reverted (16-18% slower decode, and
+#      it cannot run beside pipeline-windows; see deploy/llama-swap.config.yaml).
 # The script below is upstream v0.2.10 apart from the seven changes above and the
 # comment updates that describe them. A key given through API_KEY / API_KEY_FILE
 # still wins and is used exactly as upstream.

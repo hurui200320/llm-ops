@@ -62,8 +62,8 @@ docker run -d --name strata-init --init --rm \
   -e STRATA_HIPBLASLT_TABLE=on \
   -e CHAT_TEMPLATE_PATH=/templates/qwen3.8/Flash-Next-chat-template.jinja \
   -e VISION_TOKENS=8192 -e VISION_MIN_TOKENS=1024 \
-  -e DRAFTING=dflash2 \
-  -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 layer-split=26 trim-stage-weights=on STRATA_SCORES_THREAD=1" \
+  -e DRAFTING=mtp \
+  -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1" \
   ghcr.io/hurui200320/llm-ops-strata:0.2.10-rocm-gfx110x
 docker logs -f strata-init    # wait for one-time setup to finish, then stop the container
 ```
@@ -222,7 +222,7 @@ macro.
   omits, so discovery would fall back to the listing-only prober (context + text; no tools/image).
 - **Env passthrough**: `MODEL`, `CONTEXT`, `GPUS=0,1`, `PARALLEL=1` (Qwen lanes), `MODEL_PATH`, and
   the `STRATA_SET` string (with `kv=fp16` on Qwen); plus the container env
-  `STRATA_HIPBLASLT_TABLE=on` and `DRAFTING=dflash2` (Qwen lanes). Never `KV=`, never
+  `STRATA_HIPBLASLT_TABLE=on` and `DRAFTING=mtp` (Qwen lanes). Never `KV=`, never
   `--slot-save-path`, never `DRAFTING` inside `STRATA_SET`. No entry passes `PRESET`: the
   image default `docker` is saved per lane under each tree's `config/strata/launch-presets/`.
 - **Uncensored Qwen lane (`qwen3.8-flash-next-sc117-iq3s`)**: serves the SC117 abliterated IQ3_S
@@ -402,34 +402,24 @@ see "DeepSeek (dsv41) lane" and [notes/strata.md](../../notes/strata.md).
 
 ## Drafting (Qwen lanes)
 
-Both Qwen lanes run **DFlash2** (`DRAFTING=dflash2`, entrypoint fork change 7): a block drafter
-(`incoai/Qwen3.8-Flash-Next-DFlash2`, pinned revision) that replaces the MTP draft layer. The 0.2.10
-plan allows DFlash2 alone on a layer split (0.2.9 refused it there); Auto would resolve to the same
-drafter on these lanes, but the pin keeps the choice stable across upgrades.
+Both Qwen lanes run the model's own **MTP** draft layer (`DRAFTING=mtp`, entrypoint fork change 7;
+`pipeline-windows=2`, `spec-min-p=0.7` in `STRATA_SET`). Upstream 0.2.10 makes **DFlash2** the Auto
+drafter for Qwen3.8-Flash-Next on gfx1100; it cannot run beside `--pipeline-windows` (its plan treats
+that option as "several requests at once"), which is our big prompt-speed win, so **DFlash2 was
+tried and reverted the same day**:
 
-- The first start fetches ~1.2 GB once into `<data>/Strata-data/dflash2/` and builds the Q4_0 pack
-  plus its Q4_0-selector conversion (~860 MB on disk; the source safetensors is removed). Setup
-  neither downloads it again nor touches the lane's existing `mtp/` layer.
-- `pipeline-windows=2` **must not** be set: upstream's plan treats that option as "several requests
-  at once" and silently starts the MTP instead. `PARALLEL=1` is harmless — a `1` writes no
-  `--batch`/`--slots` flag into the engine argv.
-- **Existing lanes keep stale `extra` keys.** `STRATA_SET` keys are merged into the lane's
-  `<data>/config/strata/launch-presets/docker.json` → `extra` and are **not** removed when they
-  leave `STRATA_SET` (the 2026-10-30 finding). Before the first 0.2.10 start, delete
-  `pipeline-windows` and `spec-min-p` from `extra` in **both Qwen lanes** once; otherwise the stale
-  `pipeline-windows` keeps DFlash2 blocked and the start falls back to MTP with a note. Verify the
-  running engine's `engine started:` line, not the config file.
-- `spec-min-p` is an MTP-only flag and is stripped from a DFlash2 start, so it is not in the lanes'
-  `STRATA_SET`. DFlash2's window/confidence (`--spec 6`, `--draft-conf …`) are the launcher's own
-  values.
-- DFlash2 uses 715 MiB of VRAM against the MTP layer's 1082, so the freed ~370 MiB goes to the expert
-  cache. The server's start line to check: `[strata] drafting: DFlash2 alone (--draft dflash2,
-  --draft-conf …)`.
-- **Revert to the MTP arm** (the 2026-10-22 tuning): set `-e DRAFTING=mtp` — removing the
-  variable does **not** clear the choice, because `--save-preset` stores `drafting` in the lane's
-  `docker` preset (the same persistence as the `STRATA_SET` keys, [notes/strata.md](../../notes/strata.md)
-  20261030) — and add `pipeline-windows=2 spec-min-p=0.7` back to `STRATA_SET`. The drafter folder
-  may stay on disk; the MTP layer is still installed. Speed records and the A/B that chose the arm:
+- Measured on the vanilla lane, engine 0.1.56, 2026-11-03 (`run_longctx.py --ctx 262144 --reps 2`):
+  DFlash2 60% pp 2,100.5 / tg 54.80, 85% pp 2,170.9 / 52.65 — against MTP 1,993.1 / 65.00 and
+  2,119.2 / 64.30 on the same engine. Decode is 16–18% slower (draft acceptance 0.42–0.44 vs
+  0.65), prompt within noise. The DFlash2 pack (~860 MB) stays on both data trees.
+- The arm is **pinned**, not left to Auto: `--save-preset` stores `drafting` in the lane's preset,
+  and `STRATA_SET` keys persist in that preset's `extra` (the 2026-10-30 finding). A revert must set
+  the new value explicitly (`DRAFTING=mtp`) and re-add the keys; a stale `pipeline-windows` must be
+  deleted from `extra` or DFlash2 stays blocked. The 0.2.10 migration did exactly that (preset
+  backups `docker.json.bak-0.2.10-*`).
+- **Re-test** if a later release lets DFlash2 run beside `pipeline-windows` or lifts its decode:
+  set `DRAFTING=dflash2`, drop `pipeline-windows=2 spec-min-p=0.7`, and delete those two keys from
+  each lane's `extra` once. Speed records:
   [notes/qwen3.8/Flash-Next.md](../../notes/qwen3.8/Flash-Next.md) and
   [notes/strata.md](../../notes/strata.md).
 

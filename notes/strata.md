@@ -718,22 +718,47 @@ Q4_0 pack plus its Q4_0-selector conversion (~860 MB on disk; 715 MiB VRAM again
 
 **Bench gate**: the 262144 longctx spot (60/85%) must not regress against the 0.2.8 MTP baseline
 (60% pp 2,038.8 / tg 65.50; 85% pp 2,122.1 / tg 62.30 — [`qwen3.8/Flash-Next.md`](qwen3.8/Flash-Next.md)).
-If it does, the MTP arm comes back: set `DRAFTING=mtp` (removing the env does not clear the choice —
-`--save-preset` stores `drafting` in the lane's `docker` preset, the same persistence as the
-`STRATA_SET` keys, 20261030) and restore `pipeline-windows=2 spec-min-p=0.7` (the 2026-10-22 tuning).
-The A/B stays listed in [`TODO.md`](TODO.md) until the numbers are in.
+**Outcome (same day)**: DFlash2 decoded 16–18% slower (60% tg 54.80, 85% 52.65 against 65.00/64.30
+on the same 0.1.56 engine), so the MTP arm was restored (`DRAFTING=mtp`, `pipeline-windows=2
+spec-min-p=0.7`) and `TODO.md` now tracks the re-test for a later engine. Full record below.
 
-## Rollout (pending)
+## Rollout (2026-11-03)
 
-**Before the first start** (both Qwen lanes, on fedora-tuf): the lanes' `docker` presets still carry
-the 2026-10-22 `extra` keys `pipeline-windows` and `spec-min-p` — `--set` keys persist in
-`<data>/config/strata/launch-presets/docker.json` and leaving them out of `STRATA_SET` does not
-remove them (20261030). Delete those two keys from `extra` once; otherwise the stale
-`pipeline-windows` keeps DFlash2 blocked and the start falls back to MTP with a note. The lane's
-other saved settings (`access`, `no_key`, `parallel`, …) are re-supplied from the env every start
-and stay as they are.
-
-Then the `strata-image` run and its digests, the first-start logs (setup re-runs once because the
-engine folder changes `0.1.55` → `0.1.56`; Qwen packs reused; the DFlash2 fetch and `Drafting:
-DFlash2 alone (--draft dflash2, …)` line; dsv41 pack reused with the lazy tower), the smoke matrix
-and the speed spots are appended here when the image is on fedora-tuf.
+- **Build**: `strata-image` run `41591858905` finished green in ~19 min; the gate re-checked the
+  package (engine `0.1.56` variant `rx7900`, **583 files** — the three `strata-split-*-amd`
+  binaries are in the package — manifest `094d78df…`, `hipblaslt_version 100200`, tuning table
+  sha256 `1bb8cd2e…`). Image `ghcr.io/hurui200320/llm-ops-strata:0.2.10-rocm-gfx110x`, digest
+  `sha256:453e77dbc0dae27e0f057267b74ce48a4abc424d403596cd0747394d22283f7a` (2,317,806,899 B on
+  fedora-tuf); our `strata-dsv41` `0.1.56 build ffa80d731`, sha256
+  `8febdca0a968ef4079ef702ad477d1a164e31a1af3fa3b2a99c186b26cd3a013`.
+- **Pre-start (preset `extra`)**: both Qwen presets still carried `--pipeline-windows` and
+  `--spec-min-p` (the 20261030 accumulation). Backups were written
+  (`docker.json.bak-0.2.10-20261103-*`) and the two keys deleted so the DFlash2 arm could run; the
+  DeepSeek lane needed nothing (its only changed key is `reserve-mib`, which is overwritten by the
+  new value).
+- **First starts** (engine folder `0.1.55` → `0.1.56`, so each lane dropped its record and ran
+  setup once; packs reused, no re-download): vanilla ~155 s including the 1.2 GB DFlash2 fetch and
+  pack build, SC117 ~230 s, DeepSeek 50 s. The Qwen run settings were remade (they named the
+  0.1.54 readers), so `VISION_TOKENS` applied on the next start
+  (`Vision budget: strata-iq3_s.json: max_tokens=8192, min_tokens=1024`).
+- **Placement**: Qwen DFlash2 arm 16,826 VRAM slots (15.34 + 16.77 GiB) against 15,808 on the
+  MTP arm (the 20261030 landmark; +6.4%), RAM copy 23.5 → 21.5 GiB, lend 3,571; after the revert the
+  MTP arm reproduced those landmarks exactly (7,959 + 7,849 slots, 23.5 GiB RAM copy, lend 3,581). DeepSeek: 4,041 experts in VRAM
+  (2,082 + 1,959; 17.31 + 17.89 GB) against 3,994 on 0.2.9 (+1.2%, the tower is now RAM-lazy),
+  11,319 on the CPU lane (97.6 GB), store 3,504 slots (36.0 GB), `--reserve-mib 900` once in argv,
+  DSpark auto-unloaded.
+- **Smokes** (all through llama-swap): chat "OK", `get_weather{"city":"Paris"}` on all three lanes,
+  `:npt` on both Qwen lanes, 640×360 vision on both Qwen lanes ("Red blue"), DeepSeek `Nerazim`
+  exact, its tool call, `reasoning_effort: "none"`, a 420×420 picture ("Left half is red, and the
+  right half is blue."), `/upstream/` 200 (23,050 B).
+- **Speed** (engine 0.1.56): vanilla 262144 spot — DFlash2 60% pp 2,100.5 / tg 54.80, 85% 2,170.9
+  / 52.65 (draft acceptance 0.443 / 0.422); MTP 60% 1,993.1 / 65.00, 85% 2,119.2 / 64.30
+  (acceptance 0.649 / 0.651). Decode −16 to −18% on DFlash2 → **reverted the same day**; numbers in
+  [`qwen3.8/Flash-Next.md`](qwen3.8/Flash-Next.md). DeepSeek 512k spot: 40% pp 600.7 / tg 19.1,
+  85% pp 561.4 / tg 19.3 (0.2.9: 544.1 and 632.4 / 19.9 and 20.2, and 550.1 / 18.8) — within the
+  run-to-run spread, no regression claimed; details in
+  [`deepseek/v41f1017.md`](deepseek/v41f1017.md).
+- **Final state**: both Qwen lanes on the MTP arm with the 2026-10-22 tuning (`DRAFTING=mtp`,
+  `pipeline-windows=2`, `spec-min-p=0.7` in `STRATA_SET`); the DFlash2 packs stay on disk
+  (~860 MB per lane) for a future re-test; the DeepSeek lane on `reserve-mib=900`. Preset
+  `drafting` is `mtp` in both lanes, `extra` carries the two keys again.

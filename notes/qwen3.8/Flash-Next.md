@@ -439,3 +439,27 @@ Verdict: keep the current configuration; none of B–F is worth its complexity a
 Revisit only if an upstream release changes these paths (gfx11 pipeline draft pairing, PCIe
 auto-split on gfx11, adaptive-tier cost) — the source census and the arm table above say which
 knob to re-open and why.
+
+# 20261103 Strata 0.2.10 DFlash2 A/B (engine 0.1.56, 262144)
+
+First DFlash2 numbers on this pair, measured through llama-swap on the vanilla lane with the
+shipping prompt (`bench/speed/run_longctx.py --ctx 262144 --out-pct 1 --in-pcts 60,85 --reps 2`,
+`cache 0` every rep, same engine 0.1.56 for both arms, same day):
+
+| Arm | 60% pp / tg | 85% pp / tg | draft acceptance |
+| --- | --- | --- | --- |
+| DFlash2 (`--spec 6 --draft-conf 0.35`, `q4_0-selq4` pack) | 2100.5 / 54.80 | 2170.9 / 52.65 | 0.443 / 0.422 |
+| MTP (`--spec 4`, `spec-min-p 0.7`, `pipeline-windows 2`) | 1993.1 / 65.00 | 2119.2 / 64.30 | 0.649 / 0.651 |
+| 0.2.8 baseline (MTP, pre-upgrade) | 2038.8 / 65.50 | 2122.1 / 62.30 | — |
+
+DFlash2 drafts more tokens (2.8–3.0k vs 1.5–1.6k per 2,621-token answer) but accepts far fewer
+(0.42–0.44 vs 0.65), so decode is **16–18% slower** despite the smaller drafter (715 MiB in the
+fit, engine prints 625 MiB, against the MTP layer's 1,082). Prompt is within noise (+2–5%).
+Answers: chat, declared tool call, `:npt` and 640×360 vision ("Red blue") all correct on both arms.
+
+The 0.2.10 plan refuses DFlash2 beside `--pipeline-windows` (it treats the flag as "several
+requests at once"), and that flag is the 2026-10-22 prompt win, so the lane went back to the MTP
+arm (`DRAFTING=mtp` + the two keys). Placement with DFlash2 was 16,826 VRAM slots (15.34 + 16.77
+GiB) and 21.5 GiB pinned RAM against the MTP arm's 7,959 + 7,849 slots (15,808) and 23.5 GiB —
+the extra ~1,000 slots (+6.4%) do not offset the decode loss. Re-test on a later engine if it can
+run DFlash2 with `pipeline-windows` (tracked in [../TODO.md](../TODO.md)).
