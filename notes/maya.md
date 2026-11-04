@@ -325,3 +325,72 @@ Post-state: the lane's data tree holds the pack, tower and config (935 MB); the 
 (link count 1); llama-swap serves `dsv41f1017-iq2xxs` from the repo config. Not verified here: the other Maya
 engines/quant families (GLM-5.3-Flash, MiniMax-M3.1-Flash) and the SETUP path with Maya-managed quants - only the
 DeepSeek lane was exercised.
+
+# 20261104 Maya 1.1.53: a parity bump
+
+Upstream released `v1.1.53` (`7c4aa56ed7faea2788705d8e85dd58e892d19f4b`, 65 commits on `v1.1.52`) the same day
+as the 1.52 bring-up. The lane had just moved off strata and is not tuned, so this is a mechanical parity bump:
+the 1.52 kept config (`--ssd-cache 36 --reserve-mib 1024 --suffix-draft 0`, `DS4_INDEX_TC=1`, 512k, vision 1140)
+carries over untouched, and no knob probes or speed A/B were run - tuning is a separate, later exercise.
+
+## Pins after the bump
+
+| What | Value |
+| --- | --- |
+| Maya | tag `v1.1.53`, commit `7c4aa56ed7faea2788705d8e85dd58e892d19f4b` |
+| llama.cpp | `3cf03257f219afbe7334045ff7c6a06ac68c627d` (unchanged; `setup.py` still pins it) |
+| ROCm base | `docker.io/rocm/dev-ubuntu-24.04:7.2.1-complete` (unchanged) |
+| Arch | `gfx1100` only |
+| hipBLASLt table | `tools/hip/gfx1100-glm-hipblaslt-100202.txt` (unchanged) |
+
+## What changed upstream, and what it means for the image
+
+Checked against the `v1.1.52...v1.1.53` compare, not just the release notes:
+
+- **Build inputs are unchanged.** `setup.py` still pins the 1.52 llama.cpp commit (the workflow gate passes), the
+  HIP `compile_engine_hip` cmake flags and `check_hip_pc` requirements are untouched (only wording: HIP is no
+  longer called "experimental"), `PY_PACKAGES` is unchanged, and `tools/hip/` keeps the gfx1100 `100202` GLM table
+  (only a Windows helper `.bat` changed there). The Dockerfile, `stamps.py` and the entrypoint needed no changes.
+- **Source-level image changes, all inside existing targets**: `maya-ds4` gains `src/ds4/ds4_lane_parity.cpp`
+  (listed in CMakeLists, no flag change), the DeepSeek GGUF reader/graph code grew (#806 head-as-BF16, shard
+  layout errors, GPU-fault recovery) and the EXL3 CPU kernels gained the opt-in `DS4_CPU_W16` /
+  `MAYA_EXL3_AVX2_SHUF` paths. `STRATA_PORTABLE` and the AVX2 baseline are unchanged, so the ggml ISA fix stays
+  asserted at build time.
+- **Lane-relevant behavior**: #688 - a request that leaves a GPU in a fault now ends the engine and the next
+  request starts a fresh one (before: every later request failed until a manual restart). #805 - an update whose
+  engine rebuild fails now stops with the reason instead of starting the previous engine; only installer-managed
+  hosts see it (the image's stamps match by construction).
+- **New opt-in knobs, all off by default** ("unset, the engines run as in v1.1.52"): NVIDIA-only
+  `MAYA_DS4_Q8MV_TC` (sm_80+) and `EXL3_WMMA_GFX950` (gfx950); the prompt-path `DS4_FLOW_COPY_DMA`,
+  `DS4_AI_RUN`, `DS4_CHUNK_AUTO`, `DS4_YOCO_FLOW`, `DS4_LENT_RAM_GB` and `MAYA_PROMPT_MEMO` (measured on
+  4x RTX 3090; HIP applicability unverified); `MAYA_DS4_LANE_PARITY`; and the CPU-lane EXL3 switches
+  (`DS4_CPU_SPLIT_COLS`, `DS4_RECENT_FIT`, ...). None are set in the lane config.
+- **Pack tools unchanged**: `tools/ds4/pack_gguf.py` and `tools/ds4/vision_pack.py` did not change, so the pack
+  was not rebuilt (if a pack-tools change ever triggers a repack, the entrypoint re-applies the 1140 budget).
+
+## Lane test (direct container, production data tree)
+
+The production tree `/mnt/unenc-xfs/maya/dsv41f1017-iq2xxs` (pack, tower, config) served the 1.53 test image the
+way the lane does (same mounts, `PACK_BUILD=1`, `DS4_VISION_TOKENS=1140`): ready in ~17 s, vision "up to 1140
+tokens a picture", context 524288, images on, and **6/6 gates passed** - `SMOKE-OK`; `get_weather` ->
+`{"city":"Paris"}`; `reasoning_effort: none` -> `42` with no reasoning block; first five primes
+`2, 3, 5, 7, 11`; a `def sum_list` code block; 420x420 red/blue halves -> "Left half: red. Right half: blue."
+
+After the workflow pushed the image, the lane itself was exercised through llama-swap: `dsv41f1017-iq2xxs` started
+on `ghcr.io/hurui200320/llm-ops-maya:1.1.53-rocm-gfx1100` (digest above), reported healthy with `maya-ds4 1.1.53
+(build 7c4aa56ed7faea2788705d8e85dd58e892d19f4b)`, and passed the same gates (chat, tool call, reasoning-off,
+primes, vision). Gate 5 returned the correct `sum_list` function 3/3 but without a markdown fence under the terse
+"only code" prompt - it fences when the prompt asks for one, so that is formatting variance, not a proxy or engine
+change. No speed ladder was run: with the new knobs unset the 1.52 numbers stand as the reference until the
+tuning pass.
+
+## Deployment
+
+`MAYA_REF` -> `v1.1.53` in `maya-image.yml`; the workflow (run 41844250080, 30m13s, success) pushed
+`ghcr.io/hurui200320/llm-ops-maya:1.1.53-rocm-gfx1100`, digest
+`sha256:c5794fe98f8135ffe9e6e4811269e0d8a97c09265a3d62aafc39ec1ec7505604` (base
+`rocm/dev-ubuntu-24.04@sha256:3db551c4e1229aac1857ac44fcb6141bb749f41348eb572452f11279153c13c3`);
+`deploy/llama-swap.config.yaml` points `dsv41f1017-iq2xxs` at it. Dockerfile, `stamps.py`, `entrypoint.sh` and
+`deploy/maya/configs/maya-deepseek-2bpw-hip.json` are unchanged. Runner-side the checkout had diverged from a
+force-pushed history, so it was `git reset --hard origin/master`'d (a plain `git pull` there now fast-forwards
+again); the on-demand lane has been started on the new tag and exercised through llama-swap (above).
