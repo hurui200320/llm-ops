@@ -1,0 +1,224 @@
+name: maya-image
+
+# Builds the Project Maya image for the llm-ops lanes and pushes it to GHCR: Maya's GLM-5.3-Flash engine and
+# DeepSeek-V4.1-Flash engine (maya-ds4), compiled for gfx1100 (RX 7900 XT / XTX) the way maya.py's installer
+# compiles them (compile_engine_hip / compile_vision: the same cmake flags, the same llama.cpp commit), plus the
+# GPU vision encoder, on AMD's ROCm 7.2.1 dev container - llama.cpp's .devops/rocm.Dockerfile pattern.
+#
+# Upstream ships no Docker images and compiles the engines on the user's machine at install time; this image
+# carries the binaries and the installer's own "already compiled" stamps, so the first start only downloads the
+# model, builds its pack and serves (nothing is compiled, no compiler needed beyond the SDK's own checks).
+#
+# The base is `-complete` on purpose: maya.py's check_hip_pc runs at every start and requires hipcc >= 7, ROCm's
+# clang and libhipblas inside the environment, so a libs-only runtime image would refuse to start.  Maya's own
+# RX 7900 validation (docs/AMD_MAYA.md) used ROCm 7.2.1, whose hipBLASLt 1.2.2 (= 100202) matches the shipped
+# tools/hip/gfx1100-glm-hipblaslt-100202.txt tuning table (the engine picks the table matching its own version and
+# falls back to plain hipBLAS otherwise).
+#
+# The upstream versions are PINNED in `env:` below, not workflow inputs: the Dockerfile's flags, the llama.cpp
+# commit and the tuning table are written against exactly this combination.  Manual trigger only.  Run recipes and
+# the pins: deploy/maya/README.md; the research record: notes/maya.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      include_ds4:
+        description: "Also build the DeepSeek engine (maya-ds4)"
+        required: true
+        default: true
+        type: boolean
+      push:
+        description: "Push the image to GHCR (off: build and smoke-test only)"
+        required: true
+        default: true
+        type: boolean
+
+env:
+  IMAGE: ghcr.io/hurui200320/llm-ops-maya
+  MAYA_REPO: mw00/project-maya
+  # The tag this image is built from (`setup.py`'s llama.cpp pin is gated against LLAMA_COMMIT below).
+  MAYA_REF: v1.1.52
+  # llama.cpp at the commit Project Maya's setup.py pins (LLAMA_CPP_COMMIT); the Dockerfile downloads this zip.
+  LLAMA_COMMIT: 3cf03257f219afbe7334045ff7c6a06ac68c627d
+  # The ROCm dev container (build stage AND runtime base) and the ROCm line it must carry.
+  ROCM_VERSION: "7.2.1"
+  BASE_IMAGE: docker.io/rocm/dev-ubuntu-24.04:7.2.1-complete
+  # The one GPU family this image is compiled for (RX 7900 XT / XTX, Navi 31).
+  HIP_ARCH: gfx1100
+  # The hipBLASLt version the shipped gfx1100 GLM tuning table is for (7.2.1's hipBLASLt 1.2.2).
+  HIPBLASLT_TABLE_VERSION: "100202"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maya-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and smoke-test the gfx1100 image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out this repository (the workflow and deploy/maya/)
+        uses: actions/checkout@v4
+
+      - name: Check out Project Maya at the pinned tag
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.MAYA_REPO }}
+          ref: ${{ env.MAYA_REF }}
+          path: maya
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Derive the image tag and record the commit
+        run: |
+          set -euo pipefail
+          commit="$(git -C maya rev-parse HEAD)"
+          rm -rf maya/.git
+          tag="${MAYA_REF#v}-rocm-gfx1100"
+          {
+            echo "IMAGE_TAG=$tag"
+            echo "MAYA_COMMIT=$commit"
+          } >> "$GITHUB_ENV"
+          echo "image: $IMAGE:$tag"
+          echo "maya ${MAYA_REF}: $commit"
+
+      - name: "Gate: llama.cpp pin matches setup.py (the installer will reuse the engines only then)"
+        run: |
+          set -euo pipefail
+          pin="$(grep -o 'LLAMA_CPP_COMMIT = "[0-9a-f]*"' maya/setup.py | cut -d'"' -f2)"
+          [ -n "$pin" ] || { echo "no LLAMA_CPP_COMMIT in maya/setup.py" >&2; exit 1; }
+          [ "$pin" = "$LLAMA_COMMIT" ] || {
+            echo "maya/setup.py pins llama.cpp $pin, this workflow builds $LLAMA_COMMIT" >&2
+            exit 1
+          }
+          echo "llama.cpp $pin (matches maya/setup.py)"
+
+      - name: "Gate: the gfx1100 GLM tuning table for the ROCm line's hipBLASLt is in the tag"
+        run: |
+          set -euo pipefail
+          table="maya/tools/hip/${HIP_ARCH}-glm-hipblaslt-${HIPBLASLT_TABLE_VERSION}.txt"
+          [ -f "$table" ] || { echo "$table is missing: the engine would run plain hipBLAS" >&2; exit 1; }
+          echo "$table ($(wc -l < "$table") rows)"
+
+      - name: Free disk space (the ROCm SDK, the build and the image need about 40 GB)
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          docker system prune -af >/dev/null 2>&1 || true
+          df -h /
+
+      - name: Record the base image digest (the pin behind the tag)
+        run: |
+          set -euo pipefail
+          docker pull "$BASE_IMAGE" >/dev/null
+          digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "$BASE_IMAGE")"
+          echo "BASE_DIGEST=$digest" >> "$GITHUB_ENV"
+          echo "base: $digest"
+
+      - name: Build the image (engines + vision compiled in the ROCm dev container)
+        env:
+          ENGINES: ${{ inputs.include_ds4 && 'maya,maya-ds4' || 'maya' }}
+        run: |
+          set -euo pipefail
+          docker build \
+            -f deploy/maya/Dockerfile \
+            --build-arg "BASE_IMAGE=$BASE_IMAGE" \
+            --build-arg "ROCM_VERSION=$ROCM_VERSION" \
+            --build-arg "LLAMA_COMMIT=$LLAMA_COMMIT" \
+            --build-arg "HIP_ARCH=$HIP_ARCH" \
+            --build-arg "ENGINES=$ENGINES" \
+            --build-arg "MAYA_REV=$MAYA_REF" \
+            --build-arg "MAYA_COMMIT=$MAYA_COMMIT" \
+            --build-arg "BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --progress=plain \
+            -t "$IMAGE:$IMAGE_TAG" .
+          docker image inspect "$IMAGE:$IMAGE_TAG" --format 'built {{.RepoTags}} {{.Size}} bytes'
+
+      - name: "In-image smoke test: the engines load and report (no GPU needed)"
+        env:
+          ENGINES: ${{ inputs.include_ds4 && 'maya,maya-ds4' || 'maya' }}
+        run: |
+          set -euo pipefail
+          # dynamic linking resolves every ROCm library at exec, so --help/--version prove the runtime libs are there
+          docker run --rm --entrypoint /opt/maya/build-hip/maya "$IMAGE:$IMAGE_TAG" --help > /dev/null
+          echo "maya --help: OK"
+          if printf '%s' "$ENGINES" | grep -q maya-ds4; then
+            docker run --rm --entrypoint /opt/maya/build-hip/maya-ds4 "$IMAGE:$IMAGE_TAG" --version
+            echo "maya-ds4 --version: OK"
+          fi
+          set +e
+          out="$(docker run --rm --entrypoint /opt/maya/build-vision/bin/maya-vision "$IMAGE:$IMAGE_TAG" 2>&1)"
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          [ "$rc" = 2 ] && printf '%s' "$out" | grep -q 'usage: maya-vision' || {
+            echo "maya-vision did not print its usage (rc=$rc)" >&2
+            exit 1
+          }
+          echo "maya-vision: OK"
+
+      - name: "In-image smoke test: no missing libraries in any binary"
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint /bin/sh "$IMAGE:$IMAGE_TAG" -c '
+            set -eu
+            missing=0
+            for b in /opt/maya/build-hip/maya /opt/maya/build-hip/maya-ds4 /opt/maya/build-vision/bin/maya-vision; do
+              [ -e "$b" ] || continue
+              if ldd "$b" | grep "not found"; then missing=1; fi
+              echo "ldd $(basename "$b"): ok"
+            done
+            [ "$missing" = 0 ] || exit 1
+          '
+
+      - name: "In-image smoke test: the installer reuses the engines (stamps match) and the venv is complete"
+        env:
+          ENGINES: ${{ inputs.include_ds4 && 'maya,maya-ds4' || 'maya' }}
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint python3 "$IMAGE:$IMAGE_TAG" /opt/maya/tools/stamps.py verify \
+            --root /opt/maya --arch "$HIP_ARCH" --engines "$ENGINES" --vision
+          docker run --rm --entrypoint /opt/maya/.venv/bin/python "$IMAGE:$IMAGE_TAG" -c \
+            'import numpy, jinja2, psutil, jsonschema, yaml, tqdm, requests, PIL, textual; print("venv imports OK")'
+          docker run --rm --entrypoint /opt/maya/.venv/bin/python "$IMAGE:$IMAGE_TAG" maya.py --help > /dev/null
+          echo "maya.py --help: OK"
+
+      - name: Record the toolchain the image carries
+        if: ${{ always() }}
+        run: |
+          {
+            echo "### Maya image"
+            echo ""
+            echo "- image: \`${IMAGE}:${IMAGE_TAG:-?}\` (Maya \`${MAYA_REF}\` ${MAYA_COMMIT:-?}, pushed: ${{ inputs.push }})"
+            echo "- engines: \`${{ inputs.include_ds4 && 'maya (GLM-5.3-Flash) + maya-ds4 (DeepSeek-V4.1-Flash)' || 'maya (GLM-5.3-Flash)' }}\` + \`maya-vision\`, arch \`${HIP_ARCH}\`"
+            echo "- base: \`${BASE_IMAGE}\` ${BASE_DIGEST:-?}"
+            echo "- llama.cpp: \`${LLAMA_COMMIT}\`; tuned table: \`tools/hip/${HIP_ARCH}-glm-hipblaslt-${HIPBLASLT_TABLE_VERSION}.txt\`"
+            out="$(docker run --rm --entrypoint /bin/sh "$IMAGE:$IMAGE_TAG" -c \
+              'hipconfig --version 2>/dev/null; ls /opt/rocm/lib/libhipblaslt.so* 2>/dev/null | head -1; \
+               /opt/maya/build-hip/maya-ds4 --version 2>/dev/null | head -1' || true)"
+            echo '```'
+            echo "$out"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Log in to GHCR
+        if: ${{ inputs.push }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push the image
+        if: ${{ inputs.push }}
+        run: |
+          set -euo pipefail
+          docker push "$IMAGE:$IMAGE_TAG"
+          docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$IMAGE_TAG"

@@ -1,0 +1,38 @@
+{
+  "exe": "/opt/maya/build-hip/maya-ds4",
+  "args": [
+    "--pack", "/data/pack/maya-ds4",
+    "--max-context", "524288",
+    "--tp", "2",
+    "--ssd-cache", "36",
+    "--reserve-mib", "1024",
+    "--suffix-draft", "0"
+  ],
+  "cwd": "/opt/maya",
+  "tokenizer": "/data/pack/maya-ds4/tokenizer",
+  "backend": "hip",
+  "model_name": "dsv41f1017-iq2xxs",
+  "gpu": [
+    0,
+    1
+  ],
+  "sampling": {
+    "temperature": 1.0,
+    "top_p": 1.0
+  },
+  "reasoning_effort": "high",
+  "env": {
+    "DS4_INDEX_TC": "1"
+  },
+  "lib_dirs": [],
+  "port": 8080,
+  "host": "0.0.0.0",
+  "log": "/opt/maya/maya-deepseek-2bpw-hip.log",
+  "installer": {
+    "family": "deepseek",
+    "quant": "DeepSeek-V4.1-Flash-1017",
+    "ds4_quant": "GSQ-RCO-IQ2_XXS (ISTA-DASLab 2.00bpw, packed with tools/ds4/pack_gguf.py from the read-only model mount)",
+    "model_dir": "/data/model",
+    "written": "2026-11-04 (llm-ops; the entrypoint copies this config into /data/config at every start)"
+  }
+}

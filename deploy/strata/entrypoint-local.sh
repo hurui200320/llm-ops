@@ -22,17 +22,7 @@
 #      the pack and the server reads it per start, so a file swap is the only
 #      override. This keeps the repo's templates/ checkout the source of truth;
 #      an upstream Qwen template update needs no GGUF re-download or repack.
-#   4. Export STRATA_DSV41_EXE for the DeepSeek engine when it is unset: our image
-#      carries the gfx110x strata-dsv41 build BESIDE `strata` inside the engine
-#      package folder (/opt/strata/components/engine/<package>/), the shape an
-#      upstream DSV41=1 rx9070 package has. That shape is auto-found only by a
-#      desktop install (ROOT/engine is the package folder there); in this image
-#      ROOT/engine does not exist and engine-dsv41/ is a data-tree store, so
-#      setup's dsv41_exe() and the launch's dsv41_engine_found() find nothing
-#      (verified in-image 2026-10-25). Both honour STRATA_DSV41_EXE, so resolve
-#      it from the installed package; an explicit -e still wins. Inert for the
-#      Flash-Next lanes (every dsv41 path is gated on arch/family deepseek41).
-#   5. When VISION_TOKENS / VISION_MIN_TOKENS are set, write them into every run
+#   4. When VISION_TOKENS / VISION_MIN_TOKENS are set, write them into every run
 #      config that reads pictures (its "vision" section's max_tokens / min_tokens)
 #      before the server starts. Setup writes a budget at install time (GPU reader
 #      1024, CPU reader 300) and has no per-launch option for it; the server passes
@@ -40,23 +30,14 @@
 #      Patching the config keeps the repo the source of truth and survives the
 #      config being written again (setup keeps the value: max_tokens for the same
 #      reader device, min_tokens as a key setup does not write).
-#   6. When DS4_VISION_TOKENS / DS4_VISION_MIN_PIXELS are set, write them into every
-#      DeepSeek pack's ds4.txt (vision.max_image_tokens / vision.min_pixels) before
-#      the server starts. DeepSeek has no separate reader: its engine carries its
-#      own tower whose picture size the server computes from those two pack keys
-#      (one prompt token per 42x42 px cell, span n_h*(n_w+1)+2), and there is no
-#      launch flag or STRATA_SET key for them. The engine refuses to load the tower
-#      above 1140 tokens (10,240 patches in the attention kernel), so a larger value
-#      is clamped with a warning. min_pixels scales small pictures up; unset, the
-#      pack keeps the mmproj's own value.
-#   7. When DRAFTING is set, pass `strata launch --drafting <value>`
+#   5. When DRAFTING is set, pass `strata launch --drafting <value>`
 #      (auto | mtp | dflash2 | off) so a lane's drafter is an explicit choice and
 #      cannot change under it when upstream changes Auto's resolution. This is a
 #      launch flag, never a STRATA_SET key: lowercase STRATA_SET keys become engine
 #      argv flags and the engine exits 2 on an unknown `--drafting`. The Qwen lanes
 #      pin mtp: DFlash2 was tried on 0.1.56 and reverted (16-18% slower decode, and
 #      it cannot run beside pipeline-windows; see deploy/llama-swap.config.yaml).
-# The script below is upstream v0.2.10 apart from the seven changes above and the
+# The script below is upstream v0.2.10 apart from the five changes above and the
 # comment updates that describe them. A key given through API_KEY / API_KEY_FILE
 # still wins and is used exactly as upstream.
 #
@@ -67,10 +48,9 @@
 #
 # Maintenance: on every image bump, extract the new entrypoint from the image
 #   docker run --rm --entrypoint /bin/sh IMAGE -c 'cat /opt/strata/entrypoint.sh'
-# and diff it against this file; re-apply the seven changes above (the key
+# and diff it against this file; re-apply the five changes above (the key
 # conditional, the final warning, the pack chat-template swap, the
-# STRATA_DSV41_EXE export, the picture-reader token budget, the DeepSeek
-# pack picture budget, and the DRAFTING launch flag) and nothing else.
+# picture-reader token budget, and the DRAFTING launch flag) and nothing else.
 #
 # Upstream text follows.
 #
@@ -88,7 +68,7 @@
 #   ALLOW_DOWNLOAD  1: go on and download the model although model files of the older layout (/data/models) were left unread (default: stop)
 #   CONTEXT       32k, 64k, 128k, 256k or a number of tokens
 #   PARALLEL      requests answered at the same time, 1 to 8 (empty: fit to the card; DeepSeek: one at a time)
-#   DRAFTING      auto | mtp | dflash2 | off   the drafter for Qwen3.8-Flash-Next (default: Auto). Fork change 7:
+#   DRAFTING      auto | mtp | dflash2 | off   the drafter for Qwen3.8-Flash-Next (default: Auto). Fork change 5:
 #                 passed to `strata launch --drafting`, so a lane can pin the drafter instead of following Auto.
 #   VISION        off | on | gpu | cpu  (pictures; the picture reader file is downloaded with the model)
 #   KV            int8 | q4_0 | k8v4 | fp16  (conversation memory format)
@@ -103,13 +83,7 @@
 #   VISION_TOKENS / VISION_MIN_TOKENS   the picture reader's token budget, written into every run config that reads
 #                 pictures (its "vision" section's max_tokens / min_tokens) before the server starts: at most / at least
 #                 that many image tokens per picture, 0 = no limit. Setup's default without them: 1024 on the GPU
-#                 reader, 300 on the CPU reader. Fork change 5.
-#   DS4_VISION_TOKENS   DeepSeek only: the picture budget in prompt tokens, written into the pack's
-#                 vision.max_image_tokens (one token per 42x42 px cell, span n_h*(n_w+1)+2). The engine's
-#                 tower refuses to load above 1140; a larger value is clamped with a warning. Unset: the
-#                 pack's own value (setup writes 1024, DeepSeek's native budget). Fork change 6.
-#   DS4_VISION_MIN_PIXELS   DeepSeek only: upscale a small picture to at least this many pixels (the mmproj's
-#                 image_min_pixels by default), written into the pack's vision.min_pixels. Fork change 6.
+#                 reader, 300 on the CPU reader. Fork change 4.
 #   PRESET        preset name in /data (default "docker"). Settings above are saved into it; with no settings given a saved preset is reused.
 #   STRATA_SET    advanced engine settings, space separated KEY=VALUE (like `strata launch --set`)
 set -u
@@ -138,18 +112,6 @@ legacy_models_guard() {
   msg="There are model files in ${stuck%/*} (the older image's place). This image keeps its models in /data/Strata-data/models and does not read them there, so it would download the model again (tens of GB). To use them: mount that folder read-only and set MODEL_PATH to the folder that holds the shards (docs/DOCKER.md, \"Files you already have\"), or put them in /data/Strata-data/models/<model folder>/. To download anyway: set ALLOW_DOWNLOAD=1. Nothing was downloaded."
   if [ "${ALLOW_DOWNLOAD:-0}" = "1" ]; then warn "$msg Going on, because ALLOW_DOWNLOAD=1."; else die "$msg" 2; fi
 }
-
-# ---- DeepSeek's engine (fork change 4). Our image is the only gfx110x source of
-# strata-dsv41, placed beside `strata` in the engine package folder; the Terminal
-# never looks there in a container (see the header). Both setup.py's dsv41_exe()
-# and the launch's dsv41_engine_found() honour STRATA_DSV41_EXE, so resolve it
-# from the installed package when no one set it (an explicit -e still wins, and a
-# package without strata-dsv41 leaves it unset for the feed path).
-if [ -z "${STRATA_DSV41_EXE:-}" ]; then
-  for dsv41 in /opt/strata/components/engine/*/strata-dsv41; do
-    [ -x "$dsv41" ] && { export STRATA_DSV41_EXE="$dsv41"; break; }
-  done
-fi
 
 # ---- other commands: `docker run image strata ...`, `docker run image sh`
 if [ "$#" -gt 0 ] && [ "$1" != "run" ] && [ "$1" != "serve" ]; then
@@ -313,7 +275,7 @@ if [ -n "${CHAT_TEMPLATE_PATH:-}" ]; then
   [ -n "$packs" ] || warn "CHAT_TEMPLATE_PATH is set, but no pack has a tokenizer/chat_template.jinja yet: setup writes the GGUF's own template this start; the override is applied on the next start."
 fi
 
-# ---- picture-reader token budget (fork change 5). Setup writes the reader's budget into the run config's "vision"
+# ---- picture-reader token budget (fork change 4). Setup writes the reader's budget into the run config's "vision"
 # section at install time (VISION: GPU reader 1024, CPU reader 300) and the server passes it to the reader as
 # --max-tokens at every start. There is no per-launch option: `strata launch --set` reaches the engine only, and setup's
 # own --vision-tokens is not reachable through `strata launch`. With VISION_TOKENS / VISION_MIN_TOKENS set, write them
@@ -359,72 +321,6 @@ print(os.path.basename(path) + ": " + ", ".join(what))
   [ -n "$seen" ] || warn "VISION_TOKENS/VISION_MIN_TOKENS is set, but this data tree has no run settings yet: setup writes its default this start; the budget is applied on the next start."
 fi
 
-# ---- DeepSeek picture budget (fork change 6). DeepSeek has no separate reader: the engine carries its own tower, and the
-# server sizes each picture from the pack's ds4.txt (vision.max_image_tokens, written as 1024 by
-# tools/dsv41/pack_gguf.py; tools: serve/ds_pictures.py). The span is n_h*(n_w+1)+2 prompt tokens, one token per 42x42 px
-# cell (patch 14 x merge 3). There is no launch flag or STRATA_SET key for it: the pack file is the only knob. The tower's
-# full-attention softmax holds 10,240 patches (kSmT*kSmPer in src/dsv41/ds4_vision.cu, engine 0.1.56) = 1,137 aligner cells
-# = max_image_tokens 1140; a larger value stops the tower loading ("more than the attention covers"), so it is clamped.
-if [ -n "${DS4_VISION_TOKENS:-}" ] || [ -n "${DS4_VISION_MIN_PIXELS:-}" ]; then
-  for vname in DS4_VISION_TOKENS DS4_VISION_MIN_PIXELS; do
-    eval "v=\${$vname:-}"
-    [ -n "$v" ] || continue
-    case "$v" in *[!0-9]*) die "$vname=$v is not a whole number (0 = no limit). Nothing was started." 2 ;; esac
-  done
-  if [ -n "${DS4_VISION_TOKENS:-}" ] && [ "$DS4_VISION_TOKENS" -gt 1140 ]; then
-    warn "DS4_VISION_TOKENS=$DS4_VISION_TOKENS is above the DeepSeek tower's 10,240-patch attention limit (max_image_tokens 1140, engine 0.1.56): using 1140."
-    DS4_VISION_TOKENS=1140
-  fi
-  seen=""
-  for p in /data/Strata-data/packs/*/ds4.txt; do
-    [ -f "$p" ] || continue
-    seen=1
-    changed=$("$PYBIN" -c '
-import os, sys
-path, mx, mn = sys.argv[1], sys.argv[2], sys.argv[3]
-with open(path, encoding="utf-8", errors="replace") as f:
-    lines = f.read().splitlines()
-keys = {}
-for ln in lines:
-    k, _, v = ln.partition(" ")
-    if k:
-        keys[k] = v.strip()
-try:
-    tower = int(keys.get("vision.num_hidden_layers", "0") or 0) > 0 and "image_token_id" in keys
-except ValueError:
-    tower = False
-if not tower:
-    sys.exit(0)                                   # not a DeepSeek pack with a vision tower
-want = {}
-if mx:
-    want["vision.max_image_tokens"] = mx
-if mn:
-    want["vision.min_pixels"] = mn
-changed = [k + "=" + v for k, v in want.items() if keys.get(k) != v]
-if not changed:
-    sys.exit(0)                                   # already the wanted budget: leave the file untouched
-seen = set()
-out = []
-for ln in lines:
-    k, _, _ = ln.partition(" ")
-    if k in want:
-        out.append(k + " " + want[k])
-        seen.add(k)
-    else:
-        out.append(ln)
-for k, v in want.items():
-    if k not in seen:
-        out.append(k + " " + v)
-tmp = path + ".tmp"
-with open(tmp, "w", encoding="utf-8") as f:
-    f.write("\n".join(out) + "\n")
-os.replace(tmp, path)
-print(os.path.dirname(path).rsplit("/", 1)[-1] + ": " + ", ".join(changed))
-' "$p" "${DS4_VISION_TOKENS:-}" "${DS4_VISION_MIN_PIXELS:-}" 2>/dev/null) || die "Could not write the DeepSeek picture budget into $p. Nothing was started." 2
-    [ -n "$changed" ] && say "DeepSeek vision budget: $changed."
-  done
-  [ -n "$seen" ] || warn "DS4_VISION_TOKENS/DS4_VISION_MIN_PIXELS is set, but this data tree has no DeepSeek pack yet: setup writes its default this start; the budget is applied on the next start."
-fi
 [ -n "${MODEL:-}" ]       && { set -- "$@" --model "$MODEL"; have=1; }
 [ -n "${FAMILY:-}" ]      && { set -- "$@" --family "$FAMILY"; have=1; }
 [ -n "$model_path" ]      && { set -- "$@" --model-path "$model_path"; have=1; }

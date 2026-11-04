@@ -171,9 +171,8 @@ macros:
   # fork replaces that copy with the repo's templates/ checkout (mounted at
   # /templates, like the llama.cpp lanes) when CHAT_TEMPLATE_PATH is set, so the
   # template is per-lane state: each model entry sets its own (a Qwen template
-  # update arrives with a git pull + lane restart, no GGUF re-download). It is not
-  # in this macro because the DeepSeek lane needs a different file and duplicate
-  # `-e` flags must not decide which one wins.
+  # update arrives with a git pull + lane restart, no GGUF re-download), and
+  # duplicate `-e` flags must not decide which one wins.
   "docker-server-strata-rocm": >
     docker run --name ${MODEL_ID} --init --rm
       -p 127.0.0.1:${PORT}:${PORT}
@@ -188,6 +187,31 @@ macros:
       -v /mnt/unenc-xfs/llm-ops/deploy/strata/entrypoint-local.sh:/entry-local.sh:ro
       -v /mnt/unenc-xfs/llm-ops/templates:/templates:ro
       -v /mnt/unenc-xfs/models:/models:z
+
+  # The Maya macro: the entrypoint serves the newest /data/config/maya-*-hip.json. The entrypoint itself is also
+  # repo-carried: deploy/maya/entrypoint.sh is bind-mounted over the image's (the same file, 755 in git), so an
+  # entrypoint change ships with a git pull + lane restart instead of a ~30 GB image rebuild - the maya analogue of
+  # the strata fork mount. The engine settings are carried by the REPO (deploy/maya/configs/, mounted read-only
+  # here): the entrypoint copies them into /data/config at every start (CONFIG_SRC) - the declared state, like the
+  # strata fork's STRATA_SET - and prints a summary when the live config it replaces had changed (maya.py rewrites
+  # the config on schema migrations after an upstream bump; the dashboard edits it). maya.py touches the config on
+  # every start, so a repo file must never be mounted writable straight into /data/config - a rewrite would dirty
+  # the checkout and break the runner's git pull. Dashboard edits last until the next lane restart. No model ships
+  # in the image: each lane mounts its own data tree at /data (one per model, the strata pattern) plus the model's
+  # shard folder read-only at /data/model; with PACK_BUILD=1 the entrypoint builds the vision tower and the pack
+  # into /data when they are missing, so a fresh data tree self-provisions at the first start (recipe and checks:
+  # notes/maya.md 20261104). Everything the container writes stays in /data (mount, not image).
+  "docker-server-maya-rocm": >
+    docker run --name ${MODEL_ID} --init --rm
+      -p 127.0.0.1:${PORT}:${PORT}
+      --device /dev/kfd --device /dev/dri
+      --group-add 39 --group-add 105
+      --security-opt label=disable --security-opt seccomp=unconfined
+      --ulimit memlock=-1:-1 --shm-size 2g --stop-timeout 120
+      -e PORT=${PORT}
+      -e CONFIG_SRC=/repo-configs
+      -v /mnt/unenc-xfs/llm-ops/deploy/maya/configs:/repo-configs:ro
+      -v /mnt/unenc-xfs/llm-ops/deploy/maya/entrypoint.sh:/entrypoint.sh:ro
 
 # apiKeys: require an API key when making requests to inference endpoints
 # - optional, default: []
@@ -452,9 +476,9 @@ models:
 
 
   # Qwen3.8 Flash-Next IQ3_S on Strata.
-  # Picture reader budget (entrypoint fork change 5): 8192 image tokens at most,
+  # Picture reader budget (entrypoint fork change 4): 8192 image tokens at most,
   # 1024 at least — one token per 1024 px, so a 4K picture fits. See notes/strata.md.
-  # DRAFTING=mtp pins the drafter explicitly (entrypoint fork change 7): upstream
+  # DRAFTING=mtp pins the drafter explicitly (entrypoint fork change 5): upstream
   # Auto would pick the same here, but a pin cannot change under a later upgrade.
   # DFlash2 was tried on 0.1.56 (2026-11-03) and REVERTED: it cannot run beside
   # --pipeline-windows (its plan treats the flag as "several requests at once",
@@ -566,54 +590,45 @@ models:
       idleConn: 90
 
 
-  # DeepSeek-V4.1-Flash 1017 IQ2_XXS, strata
-  # Pictures run inside the engine (its own tower, packed at setup); each
-  # Qwen lane keeps the separate Flash-Next reader with the budget above.
-  # DS4_VISION_TOKENS writes the pack's vision.max_image_tokens: 1140 is the
-  # tower's hard maximum (10,240-patch attention; 42x42 px per token), vs
-  # setup's native 1024. 
-  # CONTEXT=512k -> --max-context 524288, measured speed-neutral vs 256k
-  # (the pack addresses 1m; 1m itself is not run here) — placement and the
-  # curve: notes/deepseek/v41f1017.md. Fallback: 256k.
-  # DS4_FAST_ATTN=1: gfx1100 is opt-in for the chunked prompt's WMMA packed-KV
-  # attention (the gfx12 default); measured +7-13 % pp at 52K and +10.6 % at
-  # 210K on this pair, decode unchanged, deterministic gate identical
-  # (notes/deepseek/v41f1017.md, 20261030). Prompt-only: decode keeps scalar.
-  # reserve-mib=900 (0.2.10): setup now writes that floor for pictures on a
-  # discrete card, and 0.1.56 keeps the tower in pinned host RAM between
-  # pictures (it takes ~320 MiB of VRAM only for a picture turn, out of this
-  # reserve) — the old 896 was 4 MiB below the new default and measured against
-  # the pre-0.1.56 always-resident tower.
-  "deepseek-v4.1-flash-2bpw":
-    name: "DeepSeek V4.1-Flash IST-DAS 2.00 bpw"
-    description: "524288 ctx, fixed kv cache quant, vision"
+  # DeepSeek-V4.1-Flash 1017 IQ2_XXS, maya. Per-model data tree (the strata pattern): everything derived - config,
+  # pack, vision tower - lives in the lane's own /data, and the GGUFs are read in place from the production folder,
+  # mounted READ-ONLY at /data/model: no hard links, no copies (the pack's ds4.txt records model_dir /data/model and
+  # the engine opens the shards through it; the pack itself lives in /data/pack/maya-ds4). PACK_BUILD=1 builds what
+  # is missing at every start - the vision tower from the mount's mmproj, the pack from the shards' headers - so a
+  # fresh data tree self-provisions and a deleted pack or tower is rebuilt; a restart only stats.
+  # Why /data/model INSIDE the writable data tree instead of a shared /models mount like the strata lanes': the
+  # pack records the vision tower's file relative to the model dir - pack_gguf.py writes ../vision/vision.bin into
+  # the pack (the path is taken from --vision at pack time and resolved against model_dir at every load; there is
+  # no engine flag for it) - so a WRITABLE "vision" folder must sit beside the model dir inside the container. The
+  # shared models folder cannot host it: the mount would have to be read-only (the production tree is shared state)
+  # and vision.bin is derived from the mmproj, i.e. built state that belongs in the lane's data tree. Mounting the
+  # shards at /data/model keeps ../vision inside /data (resolved to /data/vision) and the production folder
+  # untouched; the entrypoint normalizes ds4.txt's model_dir to /data/model, so even a host-side rebuilt pack
+  # resolves here.
+  # The engine settings are version-controlled in the repo: deploy/maya/configs/maya-deepseek-2bpw-hip.json
+  # Vision: the tower runs in-engine (~318 MiB of VRAM only for a picture turn, out of the reserve);
+  # DS4_VISION_TOKENS=1140 is the tower's hard maximum (10,240-patch attention), written into the pack's ds4.txt by
+  # the entrypoint at every start (the strata fork's change 6, mirrored). Maya's pack default 1024 downscales a 4K
+  # screenshot to 1680x966; 1140 is the tower's ceiling (1840x1008 effective for 16:9).
+  "dsv41f1017-iq2xxs":
+    name: "DeepSeek V4.1-Flash ISTA-DAS 2.00 bpw"
+    description: "524288 ctx, maya-ds4, fixed kv cache quant, vision"
     cmd: |
-      ${docker-server-strata-rocm}
-        -v /mnt/unenc-xfs/strata/ISTA-DASLab-dsv41f1017:/data
-        -e MODEL=IST-DAS-2.00bpw
-        -e FAMILY=deepseek41
-        -e CONTEXT=512k
-        -e GPUS=0,1
-        -e MODEL_PATH=/models/strata/ISTA-DASLab-dsv41f1017
-        -e CHAT_TEMPLATE_PATH=/templates/deepseek/v4.1-flash-1017-chat-template.jinja
-        -e STRATA_SET="ssd-cache=36 reserve-mib=900"
-        -e STRATA_DS4_HIPK=1
-        -e DS4_FAST_ATTN=1
+      ${docker-server-maya-rocm}
+        -v /mnt/unenc-xfs/maya/dsv41f1017-iq2xxs:/data
+        -v /mnt/unenc-xfs/models/maya/ISTA-DASLab-dsv41f1017:/data/model:ro
+        -e PACK_BUILD=1
         -e DS4_VISION_TOKENS=1140
-        ghcr.io/hurui200320/llm-ops-strata:0.2.10-rocm-gfx110x
+        ghcr.io/hurui200320/llm-ops-maya:1.1.52-rocm-gfx1100
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
-    # Cold start is "a few minutes" (the CPU lane's experts are read first);
-    # llama-swap also bounds the graceful stop by this value, so -t 120 fits.
-    healthCheckTimeout: 1200
+    # Cold start ~25-40 s (the engine pre-fills its 36 GB store at load); llama-swap also bounds the
+    # graceful stop by this value, so -t 120 fits.
+    healthCheckTimeout: 600
     concurrencyLimit: 20
-    # Declared, not probed: Strata's /v1/models omits `owned_by` (same as the Qwen
-    # lanes). 0.2.7 gives the engine its own vision tower (setup packs the pinned
-    # mmproj-BF16.gguf); pictures verified on the real pair 2026-10-28 (red/blue
-    # halves answered, first 14.4 s, warm 1.6 s, text after a picture fine), so
-    # `image` is advertised. Tools on: the server translates DeepSeek's DSML into
-    # OpenAI tool_calls and Anthropic tool_use.
+    # Declared, not probed: maya's /v1/models omits `owned_by` (same as the Strata lanes). Tools on:
+    # the server translates DeepSeek's DSML into OpenAI tool_calls and Anthropic tool_use (verified).
     capabilities:
       in: [text, image]
       out: [text]

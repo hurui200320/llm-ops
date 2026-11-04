@@ -762,3 +762,26 @@ spec-min-p=0.7`) and `TODO.md` now tracks the re-test for a later engine. Full r
   `pipeline-windows=2`, `spec-min-p=0.7` in `STRATA_SET`); the DFlash2 packs stay on disk
   (~860 MB per lane) for a future re-test; the DeepSeek lane on `reserve-mib=900`. Preset
   `drafting` is `mtp` in both lanes, `extra` carries the two keys again.
+
+# 20261104 DeepSeek retires from strata (workflow build removed, fork stripped to five changes)
+
+The DeepSeek lane moved to Maya the same day and stayed there: with `maya-ds4` serving the ISTA set faster on every
+axis, the gfx110x `strata-dsv41` build has no consumer left. Setup and test record: [notes/maya.md](maya.md) 20261104;
+lane history: [notes/deepseek/v41f1017.md](deepseek/v41f1017.md) 20261104.
+
+- `.github/workflows/strata-image.yml` no longer takes `include_dsv41` and no longer compiles anything: the
+  cmake/ninja install, the TheRock ROCm install, the llama.cpp fetch, the `build-dsv41.sh` run, the beside-engine
+  step and the dsv41 smoke test are gone; `deploy/strata/build-dsv41.sh` is deleted. The image is now exactly what
+  upstream's `docker/build.sh` assembles from the signed-feed package - the workflow's remaining value is the pinned
+  fetch + package gate (the gfx1100 hipBLASLt table check stays) + in-image smoke + GHCR push. The deployed 0.2.10
+  image still carries its `strata-dsv41` binary (inert: no lane invokes it); the next image build produces one
+  without it.
+- `deploy/strata/entrypoint-local.sh` is stripped to **five** changes: the `STRATA_DSV41_EXE` export (old change 4)
+  and the `DS4_VISION_TOKENS`/`DS4_VISION_MIN_PIXELS` pack writer (old change 6) are removed; the remaining five are
+  renumbered 1-5 (`--no-api-key`, no false "made one" warning, the chat-template swap, the picture-reader budget,
+  DRAFTING). The workflow's fork-drift summary matches. `sh -n` clean.
+- `deploy/strata/README.md` describes only the Qwen lanes now; the dsv41 lane section is a pointer to the Maya move.
+  The llama-swap strata macro comment and the deploy README lost their DeepSeek sentences.
+- Runner-side the lane's leftovers are gone: the data tree `/mnt/unenc-xfs/strata/ISTA-DASLab-dsv41f1017` deleted,
+  the model folder renamed to `/mnt/unenc-xfs/models/maya/ISTA-DASLab-dsv41f1017/` (a rename; the Maya tree's links
+  were the same inodes), the unused dspark GGUF and second mmproj deleted ([notes/maya.md](maya.md) 20261104).
