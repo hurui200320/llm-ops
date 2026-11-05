@@ -394,3 +394,26 @@ tuning pass.
 `deploy/maya/configs/maya-deepseek-2bpw-hip.json` are unchanged. Runner-side the checkout had diverged from a
 force-pushed history, so it was `git reset --hard origin/master`'d (a plain `git pull` there now fast-forwards
 again); the on-demand lane has been started on the new tag and exercised through llama-swap (above).
+
+# 20261105 Tuning pass on the DeepSeek lane (config carried over from strata)
+
+The 1.1.52/1.1.53 bring-up deliberately kept strata's engine settings; the tuning pass now derived maya's own
+from maya-ds4 1.1.53. Kept: `--reserve-mib 1664` (from 1024; the run-time floor is ~`reserve - 648 MiB - desktop`,
+and the target was >=500 MiB free on the monitor card during inference), `DS4_CHUNK_GFX11=16384` (turns on the
+engine's *borrowed* 16K chunk, which is disabled by gfx11's hard 4096 cap - the single biggest win: pp +40 % at
+210K and 4,500 experts in VRAM instead of 4,194), `DS4_RING_MB=128` (pp-neutral, +28 experts), and three exact
+decode launch fusions (`DS4_HC_STREAM=1`, `DS4_HC_MIX_SPLIT=2`, `DS4_ROUTE_FUSE=1`, +8 % tg together).
+Deployed config: `deploy/maya/configs/maya-deepseek-2bpw-hip.json`; each knob in `deploy/maya/README.md`.
+Measured (512k ladder, 2 reps): pp 938.05 / tg 27.65 at 40 %, pp 811.65 / tg 26.70 at 85 %, min free
+592 / 1,013 MiB; 6/6 functional gates. Every arm, the rejected knobs and the mechanics:
+[notes/deepseek/v41f1017.md](deepseek/v41f1017.md) 20261104 (kept configuration and end-to-end validation).
+
+# 20261105 DS4_SPLIT on the DeepSeek lane (the biggest pp win)
+
+The tuning pass above left the layer split on auto; it turned out auto is the wrong split on this pair. The auto
+planner balances streamed expert bytes and assumes both links are equal, while the monitor card also carries the
+desktop's ~460 MiB - so it gives CUDA0 21 of 40 layers and streams too much there. `DS4_SPLIT=18,22` (CUDA0 [0,17],
+CUDA1 [18,39]+head) frees expert room on the monitor card and lifts **pp +41 % at 40 % and +44 % at 85 %**
+(1,323 / 1,169 t/s), tg flat-to-better (26.65 / 27.10), 4,559 experts in VRAM (auto 4,499), headroom unchanged
+(598 / 1,015 MiB). All splits tested (22/18, auto, 20/20, 19/21, 18/22, 17/23), the control runs and the
+mechanism: [notes/deepseek/v41f1017.md](deepseek/v41f1017.md) 20261105. The deployed config carries it.

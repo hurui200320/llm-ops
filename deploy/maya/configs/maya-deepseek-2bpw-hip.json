@@ -5,7 +5,7 @@
     "--max-context", "524288",
     "--tp", "2",
     "--ssd-cache", "36",
-    "--reserve-mib", "1024",
+    "--reserve-mib", "1664",
     "--suffix-draft", "0"
   ],
   "cwd": "/opt/maya",
@@ -22,7 +22,13 @@
   },
   "reasoning_effort": "high",
   "env": {
-    "DS4_INDEX_TC": "1"
+    "DS4_INDEX_TC": "1",
+    "DS4_CHUNK_GFX11": "16384",
+    "DS4_RING_MB": "128",
+    "DS4_HC_STREAM": "1",
+    "DS4_HC_MIX_SPLIT": "2",
+    "DS4_ROUTE_FUSE": "1",
+    "DS4_SPLIT": "18,22"
   },
   "lib_dirs": [],
   "port": 8080,

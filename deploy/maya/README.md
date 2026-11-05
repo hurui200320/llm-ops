@@ -178,7 +178,25 @@ the JSONs into `/data/config` at **every** start, so the repo file is the declar
 strata fork's `STRATA_SET` env) and dashboard edits last until the next lane restart. Never mount a repo config
 writable straight into `/data/config`: maya.py touches (and may rewrite) the config on every start, which would
 dirty the checkout. The DeepSeek lane's config is `configs/maya-deepseek-2bpw-hip.json` (512k, `--ssd-cache 36
---reserve-mib 1024 --suffix-draft 0`, env `DS4_INDEX_TC=1`; rationale and numbers: notes/maya.md).
+--reserve-mib 1664 --suffix-draft 0`, env `DS4_INDEX_TC=1 DS4_CHUNK_GFX11=16384 DS4_RING_MB=128 DS4_HC_STREAM=1
+DS4_HC_MIX_SPLIT=2 DS4_ROUTE_FUSE=1 DS4_SPLIT=18,22`; rationale, tuning arms and numbers:
+notes/deepseek/v41f1017.md 20261104/20261105).
+
+The six engine knobs on that lane, in one line each (they exist only as engine environment, not config keys):
+
+| Knob | Why |
+| --- | --- |
+| `DS4_SPLIT=18,22` | layer split (maya CUDA0 gets layers [0,17], CUDA1 [18,39]+head). The auto planner balances *streamed expert bytes* and assumes both links are equal; on this pair the monitor card also carries the desktop's ~460 MiB, so it ends 21/19 and pays a lot for the marginal experts. Spreading towards the x4 card frees expert room on the monitor card: 4,559 experts in VRAM (auto 4,499), pp +41 % at 40 % and +44 % at 85 % |
+| `DS4_CHUNK_GFX11=16384` | raises gfx11's hard 4096 chunk cap so the engine's **borrowed** 16K prompt chunk engages: the chunk's row buffers overlay expert slots between prompts, so pp gains ~40 % at 210K *and* the resident chunk buffer shrinks (4,500 experts in VRAM instead of 4,076) |
+| `DS4_RING_MB=128` | caps the prompt ring (the default sizes it from the card's link: 394 MB on the x16 monitor card); pp-neutral, +28 experts |
+| `DS4_HC_STREAM=1` | keeps the hybrid-cache mix/split on the layer's own stream (HIP defaults to a side stream): +4 % tg, bit-identical math |
+| `DS4_HC_MIX_SPLIT=2` | one launch for a window's hc_mix + hc_split on the side stream (exact, load-checked) |
+| `DS4_ROUTE_FUSE=1` | a decoded token's router gate and the next layer's guess in one launch (exact, load-checked): the largest single tg gain of the decode fusions |
+
+`--reserve-mib 1664` is the headroom knob, not a speed knob: the engine subtracts it per GPU before
+placing experts, and the run-time floor is ~`reserve - 648 MiB - the monitor card's desktop VRAM`
+(measured with the split: 598 MiB free on the monitor, 1,015 on the other card during the 85 % prefill).
+Raising it costs ~12 experts a card per 100 MiB; lowering it eats the desktop's headroom first.
 
 Because that copy resets whatever changed the live config — dashboard edits, and maya.py's own rewrites after an
 upstream bump (schema migrations) — the entrypoint first **summarizes the difference** in the log, e.g.
