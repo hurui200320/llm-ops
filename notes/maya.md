@@ -441,3 +441,79 @@ every next turn's history differs; tool-carrying requests already keep it).
 Verification pending (no numbers yet): deploy the lane, confirm the engine log's `ds4 slots: saved/took back/wrote`
 lines (server: `[maya] sessions: ...`), the 6 functional gates, and an A/B alternating two long conversations
 (first read vs switch-back read).
+
+# 20261105 GLM-5.3-Flash Maya-M-Derisked lane (the GLM engine's first run here)
+
+The DeepSeek lane exercised `maya-ds4` only; this brings up `maya` (the image's GLM engine, `build-hip/maya`) with
+Maya's Maya-M-Derisked quant: `peasantsmith/GLM-5.3-Flash-Maya-M-Derisked-IQ2_S-GGUF`, 3 shards, 116.0 GB
+(47.7 + 47.8 + 20.5 GB), IQ2_S gate/up + IQ3_XXS down + Q6_K attention, the MTP block inside the shards. Intent:
+512k, fp16 KV, the DS4 lane's RAM shape (36 GB expert tier), vision on, disk slots; tuning is the later task.
+
+## Layout: per-file read-only binds (the GLM engine has no model_dir)
+
+The maya-ds4 pack carries `model_dir` in ds4.txt; the GLM pack does not — `src/core/glm_model.cu` opens every shard
+as `<pack>/../<shard name>` (`pack_shard_names()` + `GgufFile(pack_dir + "/../" + nm)`), and the setup requires the
+`--gguf-dir` folder to be writable (the pack is written into `<dir>/pack`). So the shards cannot be a read-only
+folder mount at `/data` itself, and the DS4 lane's `/data/model` folder mount cannot be reused either (the
+entrypoint treats `/data/model` as the DS4 mount and exits 2 when it holds GGUFs without a maya-ds4 pack). Solution:
+each production shard is bound READ-ONLY **per file** at `/data/<shard name>.gguf`, beside the writable `/data/pack`;
+the engine opens them exactly where it looks. Docker materializes the bind target first and leaves 0-byte root-owned
+placeholders in the lane tree (verified on the runner: `-rw-r--r-- root root 0`), which the mounts cover at run
+time; `glm_files()` ignores them (a GGUF with no tensors is no model). The `.sha256` sidecars stay host-only — the
+setup hashes the files itself (`sha256_checked`, cached by size+mtime in `.maya-verified.json`).
+
+## Setup (one run; the pack lives in the lane tree)
+
+```
+docker run ... -v /mnt/unenc-xfs/maya/glm53f-iq2s-derisked:/data \
+  -v <prod>/GLM-…-0000X-of-00003.gguf:/data/GLM-…-0000X-of-00003.gguf:ro (×3) \
+  IMAGE --setup --backend hip --gpus 0,1 --yes --no-start --gguf-dir /data --context 524288 --host 0.0.0.0 --port 8080
+```
+
+`--gpus 0,1` matters: without it `check_hip_pc` picks one card (`chosen = [one]`) and the config is written with
+`"gpu": [0]` — a single-GPU lane. The run verified all three shards against maya.py's published sha256 (the
+sidecars match byte for byte; ~48 s per 47.7 GB shard on the runner's NVMe), built `/data/pack`
+(`iq_pack.py --compat-bf16`: 1257 tensors, 317 native, arena/dense 0.88 GiB, tokenizer vocab 154880, merges 321649)
+and downloaded the vision files into `/data/vision` (mmproj 1075 MB + vocab 9.2 MB). The MTP block is not a separate
+file: the pack leaves blk.45's 26 tensors out and the engine reads the NextN block from the shards itself
+(`glm mtp: CUDA1 the NextN block (blk.45) loaded: 173 MB dense, experts q3_K/q4_K`). The setup wrote
+`maya-maya-m-derisked-hip.json` into the container layer; it was `docker cp`'d out and ported into
+`deploy/maya/configs/glm53f-iq2s-derisked/maya-glm53f-iq2s-derisked-hip.json` (model_name
+`glm-5.3-flash-iq2s-derisked`). The lane's config folder is a **subfolder** because the entrypoint serves the newest
+copied JSON and the DS4 lane's `CONFIG_SRC` is the root of `configs/` — a second JSON there would take both lanes
+over on their next restart. The GLM lane overrides `CONFIG_SRC` to `/repo-configs-glm` (its `-e` comes after the
+macro's; Docker takes the last one).
+
+## Deployment settings (as ported)
+
+- `--max-context 524288`; **fp16 KV** (no `--kv`; Maya-XS is the only quant with `"kv": int8`), `--kv-streaming on`
+  (setup default; 32768 positions a layer resident).
+- `MAYA_GLM_RAM_GB=36` — the DS4 lane's `--ssd-cache 36` analogue: a fixed pinned RAM expert tier.
+- `MAYA_GLM_SLOTS=4` + `MAYA_GLM_SLOT_GB=16` + `MAYA_GLM_SLOT_KEEP=1` — GLM slots are **disk** slots
+  (`<pack>/slots`): there is no RAM-slot tier like `MAYA_DS4_SLOT_RAM_GB`, and a 512k fp16 slot is ~5.9 GB of KV,
+  so a 6 GB RAM cap would hold a single slot. 16 GB holds ~2 full-context slots (or 4 shorter ones); KEEP makes
+  them outlive a llama-swap stop/restart.
+- `MAYA_GLM_RESERVE_MB=3072` (the setup's value for this pair), `--expert-cache auto`, `--prefill auto`,
+  `--expert-profile /opt/maya/data/expert-profile-glm.bin`, the three gfx1100 hipBLASLt tables (the engine takes
+  100202, matching ROCm 7.2.1's hipBLASLt 1.2.2).
+
+## Measured (direct container, production data tree)
+
+- Load ~33 s cold, ~21 s warm: split auto `[0,24)` on CUDA0 and `[24,45)`+head+MTP on CUDA1; expert pools 16.40 /
+  16.50 GB (2,029 + 2,005 = **4,034 experts**, 59% of the routed ones); RAM tiers 17.57 / 18.41 GB (**35.98 GB**);
+  KV streaming 32768 of 524288 positions of each of 6 DSA layers a card in VRAM (0.20 GB) with **3.22 GB pinned per
+  card**; 8192-token prefill chunks (auto, borrowing 2,659 MB of the pool); vision encoder measured at 2.63 GB
+  (2.72 GB lent) per picture turn; thinking budget 32768. After load ~49 GB RAM used / 13 GB available
+  (36 GB tier + 6.4 GB KV + engine and page cache); VRAM back to desktop levels after stop (1-2 s).
+- **6/6 gates**: `SMOKE-OK`; `get_weather` -> `{"city":"Paris"}`; `reasoning_effort: none` -> `42` with no
+  reasoning block; first five primes; a `sum_list` code block; the 420x420 red/blue picture read correctly.
+- Slots: a 1,731-token conversation wrote one 176.6 MB slot at QUIT; the restart logged
+  `sessions: folder /data/pack/slots: 1 conversation(s) kept from earlier runs (0.18 GB)` and a follow-up restored
+  `cache_n 1730` of 1744 prompt tokens (1.4 s for the 14 new ones).
+
+## Not done here
+
+Speed tuning/benchmarks (split, reserve, chunk size, expert-cache and promote knobs, `MAYA_GLM_RESIDENT_TOPK`
+Turbo, DFlash2 vs MTP, slot policy) — the separate later task. The terse gates decode ~23 tok/s; that is not a
+benchmark. TODO.md tracks it.
+

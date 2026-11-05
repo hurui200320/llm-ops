@@ -642,3 +642,58 @@ models:
       responseHeader: 0
       tlsHandshake: 10
       idleConn: 90
+
+
+  # GLM-5.3-Flash Maya-M-Derisked IQ2_S, maya's GLM engine (`build-hip/maya`). The DeepSeek lane's pattern again, with one
+  # difference forced by the engine: maya-ds4 has a model_dir key in its pack (ds4.txt), the GLM engine has none - it opens
+  # the shards as SIBLINGS of the pack (src/core/glm_model.cu: <pack>/../<shard name>). So the production files are bound
+  # READ-ONLY PER FILE at /data/<shard name>, right beside the writable /data/pack the setup builds. The production folder
+  # is never written: Docker leaves 0-byte root-owned placeholder files in /data after a lane stop (the bind target is
+  # materialized before the mount), which the mounts cover while running and glm_files() filters out on the host (a
+  # GGUF with no tensors is no model). A replaced shard (new inode) is picked up on the next lane start - maya lanes are
+  # --rm containers recreated every start. The .sha256 sidecars stay host-only: the setup verifies the hashes itself.
+  #
+  # Everything derived lives in the lane's writable /data tree (one per model, the strata pattern): pack/ (the engine's
+  # index, dense weights and tokenizer), vision/ (mmproj + vocab GGUF, downloaded by the setup), pack/slots/ (the GLM
+  # engine's conversation slots - disk, 4 slots / 16 GB, outliving a llama-swap stop with MAYA_GLM_SLOT_KEEP=1) and
+  # config/ (CONFIG_SRC). The GGUFs are the only thing the production mount provides.
+  #
+  # The engine settings are version-controlled in a lane-private folder, deploy/maya/configs/glm53f-iq2s-derisked/:
+  # the shared deploy/maya/configs/ folder is the DeepSeek macro's CONFIG_SRC and the entrypoint serves the newest
+  # copied JSON, so a second config there would take BOTH lanes over on their next restart. The -e below replaces the
+  # macro's CONFIG_SRC (Docker: the last -e wins) and the extra mount is the lane's own declared state.
+  "glm-5.3-flash-iq2s-derisked":
+    name: "GLM 5.3 Flash Maya-M-Derisked IQ2_S"
+    description: "524288 ctx, maya GLM engine, fp16 KV, 36 GB RAM expert tier, 4 disk slots, vision, MTP drafting"
+    cmd: |
+      ${docker-server-maya-rocm}
+        -v /mnt/unenc-xfs/maya/glm53f-iq2s-derisked:/data
+        -v /mnt/unenc-xfs/models/maya/glm53f-maya-m-derisked/GLM-5.3-Flash-Maya-M-Derisked-IQ2_S-00001-of-00003.gguf:/data/GLM-5.3-Flash-Maya-M-Derisked-IQ2_S-00001-of-00003.gguf:ro
+        -v /mnt/unenc-xfs/models/maya/glm53f-maya-m-derisked/GLM-5.3-Flash-Maya-M-Derisked-IQ2_S-00002-of-00003.gguf:/data/GLM-5.3-Flash-Maya-M-Derisked-IQ2_S-00002-of-00003.gguf:ro
+        -v /mnt/unenc-xfs/models/maya/glm53f-maya-m-derisked/GLM-5.3-Flash-Maya-M-Derisked-IQ2_S-00003-of-00003.gguf:/data/GLM-5.3-Flash-Maya-M-Derisked-IQ2_S-00003-of-00003.gguf:ro
+        -v /mnt/unenc-xfs/llm-ops/deploy/maya/configs/glm53f-iq2s-derisked:/repo-configs-glm:ro
+        -e CONFIG_SRC=/repo-configs-glm
+        ghcr.io/hurui200320/llm-ops-maya:1.1.53-rocm-gfx1100
+    cmdStop: docker stop -t 120 ${MODEL_ID}
+    proxy: http://127.0.0.1:${PORT}
+    checkEndpoint: /health
+    # First load is unmeasured on this box (first GLM-engine run); a llama-swap start also loads the pack and pre-fills
+    # the 36 GB RAM tier. llama-swap bounds the graceful stop by this value too, so -t 120 fits.
+    healthCheckTimeout: 600
+    concurrencyLimit: 20
+    # Declared, not probed: maya's /v1/models omits `owned_by` (same as the DS4/Strata lanes). Tools on: the server
+    # translates GLM's tool calls into OpenAI tool_calls and Anthropic tool_use (the smoke gate checks one).
+    # Context: the GLM engine's 512k, fp16 KV (the engine's default; no --kv in the config), streamed past 32768.
+    capabilities:
+      in: [text, image]
+      out: [text]
+      tools: true
+      context: 524288
+      disableAuto: true
+    timeouts:
+      connect: 30
+      keepalive: 30
+      # experts stream from the RAM tier/SSD; no header timeout
+      responseHeader: 0
+      tlsHandshake: 10
+      idleConn: 90

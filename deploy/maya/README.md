@@ -155,7 +155,12 @@ is the readiness probe (the healthcheck waits up to 30 min for a first load).
 
 ## Data layout
 
+One tree per model (the strata pattern). The DeepSeek lane mounts its shards as a **folder**; the GLM lane
+binds its shards **per file** (the GLM engine has no `model_dir` key: it opens the shards as siblings of its
+pack — `src/core/glm_model.cu` reads `<pack>/../<shard name>`).
+
 ```
+DeepSeek lane (maya-ds4)
 /data/                                   one tree per model (the strata pattern)
   model/                                 READ-ONLY mount of the production shard folder
                                          (the GGUFs the engine reads in place; an empty dir on the host -
@@ -165,6 +170,16 @@ is the readiness probe (the healthcheck waits up to 30 min for a first load).
                                          engram.bin, tokenizer/, the engine's expert profile and caches
   config/maya-<quant>-hip.json           the installed configs the entrypoint serves from (newest wins)
   models/                                only SETUP-installed (Maya-managed) models land here
+
+GLM lane (maya)
+/data/                                   one tree per model
+  GLM-…-0000X-of-00003.gguf              READ-ONLY per-file binds beside pack/, where the engine opens them
+                                         (Docker leaves 0-byte root-owned placeholders on the host; the mounts
+                                         cover them while the lane runs - do not delete or repurpose them)
+  pack/                                  the pack: index.txt, native_experts.txt, dense.bin (0.88 GiB), tokenizer/
+  pack/slots/                            the GLM engine's conversation slots (disk, 4 slots / 16 GB, kept across runs)
+  vision/                                mmproj + vocab GGUF, downloaded by the setup (maya-vision encodes)
+  config/maya-<quant>-hip.json           the installed configs the entrypoint serves from (newest wins)
 ```
 
 Per-start settings (context, expert cache…) live in the config; the dashboard edits it. Logs go to
@@ -173,7 +188,8 @@ Per-start settings (context, expert cache…) live in the config; the dashboard 
 ### Configs from the repo (lanes)
 
 `deploy/maya/configs/` holds version-controlled configs for lanes (one file per lane, named `maya-*-hip.json` so
-the entrypoint's glob finds them). Mount the folder read-only and point `CONFIG_SRC` at it; the entrypoint copies
+the entrypoint's glob finds them; a lane may keep its config in its own subfolder when another lane uses the root,
+see the GLM lane below). Mount the folder read-only and point `CONFIG_SRC` at it; the entrypoint copies
 the JSONs into `/data/config` at **every** start, so the repo file is the declared state (the equivalent of the
 strata fork's `STRATA_SET` env) and dashboard edits last until the next lane restart. Never mount a repo config
 writable straight into `/data/config`: maya.py touches (and may rewrite) the config on every start, which would
@@ -200,6 +216,29 @@ The engine knobs on that lane, in one line each (they exist only as engine envir
 placing experts, and the run-time floor is ~`reserve - 648 MiB - the monitor card's desktop VRAM`
 (measured with the split: 598 MiB free on the monitor, 1,015 on the other card during the 85 % prefill).
 Raising it costs ~12 experts a card per 100 MiB; lowering it eats the desktop's headroom first.
+
+### GLM lane (Maya-M-Derisked)
+
+`configs/glm53f-iq2s-derisked/maya-glm53f-iq2s-derisked-hip.json` is the lane's config, in its own subfolder:
+the entrypoint serves the newest copied JSON and the DeepSeek lane's `CONFIG_SRC` is the **root** of `configs/`,
+so a second JSON there would take both lanes over on their next restart. The lane points `CONFIG_SRC` at the
+subfolder (its `-e` comes after the macro's, and Docker takes the last one). Baseline is the setup's own config
+(`maya.py --setup --backend hip --gpus 0,1 --gguf-dir /data --context 524288`), ported with the knobs below:
+`--glm-pack /data/pack --max-context 524288 --expert-cache auto --prefill auto --kv-streaming on
+--expert-profile /opt/maya/data/expert-profile-glm.bin`.
+
+| Setting | Why |
+| --- | --- |
+| `--max-context 524288` | 512k. KV streaming (`--kv-streaming on`, setup default) keeps 32768 positions a layer in VRAM and the latent cache in pinned RAM: 3.22 GB a card at 512k |
+| no `--kv` | **fp16 KV**, the engine's default (`--kv int8` would halve the latent cache to 544 B/token/layer; not used) |
+| `MAYA_GLM_RAM_GB=36` | fixed pinned RAM expert tier — the DeepSeek lane's `--ssd-cache 36` analogue. Measured: 35.98 GB across the parts (17.57 + 18.41), the rest of the off-card experts stream from the SSD |
+| `MAYA_GLM_RESERVE_MB=3072` | VRAM kept free per card for the desktop (the setup's value for this pair); tuning is a later exercise |
+| `MAYA_GLM_SLOTS=4`, `MAYA_GLM_SLOT_GB=16` | conversation slots on **disk** (`<pack>/slots`). GLM has no RAM-slot tier: one 512k fp16 slot is ~5.9 GB of KV, so the DS4 lane's RAM parking (`MAYA_DS4_SLOT_RAM_GB=6`) would hold a single slot. 16 GB holds ~2 full-context slots, more when shorter |
+| `MAYA_GLM_SLOT_KEEP=1` | slots survive a llama-swap stop/restart (the engine writes them at QUIT; `docker stop -t 120` covers `MAYA_ENGINE_QUIT_S` 50) |
+
+Measured at bring-up (2026-11-05, notes/maya.md): auto split [0,24) / [24,45)+MTP, 4,034 experts in VRAM
+(16.40 + 16.50 GB pools), RAM tier 35.98 GB, 8192-token prefill chunks, ready in ~33 s cold / ~21 s warm,
+stop 1-2 s, 6/6 functional gates, slot restore 1730 of 1744 prompt tokens.
 
 Because that copy resets whatever changed the live config — dashboard edits, and maya.py's own rewrites after an
 upstream bump (schema migrations) — the entrypoint first **summarizes the difference** in the log, e.g.
