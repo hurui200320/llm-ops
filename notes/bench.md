@@ -84,17 +84,17 @@ time ./bench/run_longctx.sh
   + 40%: pp  944.81 t/s  tg 28.59 t/s  accept_rate 0.7329
   + 60%: pp  807.67 t/s  tg 24.18 t/s  accept_rate 0.6764
   + 85%: pp  681.89 t/s  tg 21.64 t/s  accept_rate 0.7065
-+ `qwen3.8-flash-next-iq3s`, 256k, strata
++ `qwen3.8-flash-next-iq3s`, 256k, strata 0.2.10
   + 20%: pp 1767.30 t/s  tg 70.60 t/s  accept_rate 0.6811
   + 40%: pp 2053.00 t/s  tg 68.30 t/s  accept_rate 0.6796
   + 60%: pp 2130.85 t/s  tg 67.95 t/s  accept_rate 0.6911
   + 85%: pp 2161.55 t/s  tg 65.95 t/s  accept_rate 0.7065
-+ `qwen3.8-flash-next-sc117-iq3s`, 256k, strata
++ `qwen3.8-flash-next-sc117-iq3s`, 256k, strata 0.2.10
   + 20%: pp 1777.90 t/s  tg 70.15 t/s  accept_rate 0.6793
   + 40%: pp 2062.85 t/s  tg 66.65 t/s  accept_rate 0.6683
   + 60%: pp 1930.40 t/s  tg 66.10 t/s  accept_rate 0.6878
   + 85%: pp 2167.95 t/s  tg 64.55 t/s  accept_rate 0.6878
-+ `dsv41f1017-iq2xxs`, 512k, maya
++ `dsv41f1017-iq2xxs`, 512k, maya 1.1.53
   + 20%: pp 1262.80 t/s  tg 26.10 t/s
   + 40%: pp 1288.95 t/s  tg 26.05 t/s
   + 60%: pp 1229.25 t/s  tg 26.50 t/s
