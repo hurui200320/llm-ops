@@ -168,7 +168,8 @@ DeepSeek lane (maya-ds4)
   vision/                                the vision tower, built from the mount's mmproj (vision.bin, vision.json)
   pack/maya-ds4/                         the pack: ds4.txt (geometry + model_dir /data/model), tensors.txt,
                                          engram.bin, tokenizer/, the engine's expert profile and caches
-  config/maya-<quant>-hip.json           the installed configs the entrypoint serves from (newest wins)
+  config/maya-<quant>-hip.json           the lane's installed config, copied from CONFIG_SRC at every start
+                                         (newest wins; one lane per folder)
   models/                                only SETUP-installed (Maya-managed) models land here
 
 GLM lane (maya)
@@ -179,7 +180,8 @@ GLM lane (maya)
   pack/                                  the pack: index.txt, native_experts.txt, dense.bin (0.88 GiB), tokenizer/
   pack/slots/                            the GLM engine's conversation slots (disk, 4 slots / 16 GB, kept across runs)
   vision/                                mmproj + vocab GGUF, downloaded by the setup (maya-vision encodes)
-  config/maya-<quant>-hip.json           the installed configs the entrypoint serves from (newest wins)
+  config/maya-<quant>-hip.json           the lane's installed config, copied from CONFIG_SRC at every start
+                                         (newest wins; one lane per folder)
 ```
 
 Per-start settings (context, expert cache…) live in the config; the dashboard edits it. Logs go to
@@ -187,13 +189,15 @@ Per-start settings (context, expert cache…) live in the config; the dashboard 
 
 ### Configs from the repo (lanes)
 
-`deploy/maya/configs/` holds version-controlled configs for lanes (one file per lane, named `maya-*-hip.json` so
-the entrypoint's glob finds them; a lane may keep its config in its own subfolder when another lane uses the root,
-see the GLM lane below). Mount the folder read-only and point `CONFIG_SRC` at it; the entrypoint copies
-the JSONs into `/data/config` at **every** start, so the repo file is the declared state (the equivalent of the
-strata fork's `STRATA_SET` env) and dashboard edits last until the next lane restart. Never mount a repo config
-writable straight into `/data/config`: maya.py touches (and may rewrite) the config on every start, which would
-dirty the checkout. The DeepSeek lane's config is `configs/maya-deepseek-2bpw-hip.json` (512k, `--ssd-cache 36
+`deploy/maya/configs/` holds version-controlled configs for lanes, **one subfolder per lane** named after the
+llama-swap model id (`dsv41f1017-iq2xxs/`, `glm53f-iq2s-derisked/`), each holding one `maya-*-hip.json` so the
+entrypoint's glob finds it. Each lane mounts **its own** folder read-only and points `CONFIG_SRC` at it (the
+llama-swap macro mounts none): the entrypoint serves the newest copied JSON, so a shared folder would let one
+lane's config take over the other on its next restart. The entrypoint copies the JSON into `/data/config` at
+**every** start, so the repo file is the declared state (the equivalent of the strata fork's `STRATA_SET` env)
+and dashboard edits last until the next lane restart. Never mount a repo config writable straight into
+`/data/config`: maya.py touches (and may rewrite) the config on every start, which would dirty the checkout. The
+DeepSeek lane's config is `configs/dsv41f1017-iq2xxs/maya-deepseek-2bpw-hip.json` (512k, `--ssd-cache 36
 --reserve-mib 1664 --suffix-draft 0`, env `DS4_INDEX_TC=1 DS4_CHUNK_GFX11=16384 DS4_RING_MB=128 DS4_HC_STREAM=1
 DS4_HC_MIX_SPLIT=2 DS4_ROUTE_FUSE=1 DS4_SPLIT=18,22 MAYA_DS4_SLOT_KEEP=1 MAYA_DS4_SLOT_CAP=8
 MAYA_DS4_SLOT_RAM_GB=6`; rationale, tuning arms and numbers: notes/deepseek/v41f1017.md 20261104/20261105).
@@ -219,10 +223,9 @@ Raising it costs ~12 experts a card per 100 MiB; lowering it eats the desktop's 
 
 ### GLM lane (Maya-M-Derisked)
 
-`configs/glm53f-iq2s-derisked/maya-glm53f-iq2s-derisked-hip.json` is the lane's config, in its own subfolder:
-the entrypoint serves the newest copied JSON and the DeepSeek lane's `CONFIG_SRC` is the **root** of `configs/`,
-so a second JSON there would take both lanes over on their next restart. The lane points `CONFIG_SRC` at the
-subfolder (its `-e` comes after the macro's, and Docker takes the last one). Baseline is the setup's own config
+`configs/glm53f-iq2s-derisked/maya-glm53f-iq2s-derisked-hip.json` is the lane's config, in its own subfolder
+like every lane (see "Configs from the repo"): the lane mounts only that folder and points `CONFIG_SRC` at it.
+Baseline is the setup's own config
 (`maya.py --setup --backend hip --gpus 0,1 --gguf-dir /data --context 524288`), ported with the knobs below:
 `--glm-pack /data/pack --max-context 524288 --expert-cache auto --prefill auto --kv-streaming on
 --expert-profile /opt/maya/data/expert-profile-glm.bin`.
@@ -248,7 +251,7 @@ maya: /data/config/maya-deepseek-2bpw-hip.json differs from the repo copy (args 
 ```
 
 That line is how a maya-side config change is noticed at all: when it fires on a lane that nobody touched, port
-the named changes into `deploy/maya/configs/<lane>.json`, commit, and `git pull` on the runner.
+the named changes into `deploy/maya/configs/<lane>/maya-<quant>-hip.json`, commit, and `git pull` on the runner.
 - The macro also bind-mounts `deploy/maya/entrypoint.sh` over the image's own (the same file, mode 755 in git), so
   an entrypoint change ships with a git pull + lane restart instead of a ~30 GB image rebuild — the maya analogue
   of the strata fork mount. The DeepSeek lane sets `DS4_VISION_TOKENS=1140`: the picture budget the entrypoint

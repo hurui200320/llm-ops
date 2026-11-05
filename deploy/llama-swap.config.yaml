@@ -191,8 +191,9 @@ macros:
   # The Maya macro: the entrypoint serves the newest /data/config/maya-*-hip.json. The entrypoint itself is also
   # repo-carried: deploy/maya/entrypoint.sh is bind-mounted over the image's (the same file, 755 in git), so an
   # entrypoint change ships with a git pull + lane restart instead of a ~30 GB image rebuild - the maya analogue of
-  # the strata fork mount. The engine settings are carried by the REPO (deploy/maya/configs/, mounted read-only
-  # here): the entrypoint copies them into /data/config at every start (CONFIG_SRC) - the declared state, like the
+  # the strata fork mount. The engine settings are carried by the REPO, one folder per lane under
+  # deploy/maya/configs/ (named after the model id): each model entry mounts its own folder read-only and sets
+  # CONFIG_SRC (the entrypoint copies it into /data/config at every start) - the declared state, like the
   # strata fork's STRATA_SET - and prints a summary when the live config it replaces had changed (maya.py rewrites
   # the config on schema migrations after an upstream bump; the dashboard edits it). maya.py touches the config on
   # every start, so a repo file must never be mounted writable straight into /data/config - a rewrite would dirty
@@ -209,8 +210,6 @@ macros:
       --security-opt label=disable --security-opt seccomp=unconfined
       --ulimit memlock=-1:-1 --shm-size 2g --stop-timeout 120
       -e PORT=${PORT}
-      -e CONFIG_SRC=/repo-configs
-      -v /mnt/unenc-xfs/llm-ops/deploy/maya/configs:/repo-configs:ro
       -v /mnt/unenc-xfs/llm-ops/deploy/maya/entrypoint.sh:/entrypoint.sh:ro
 
 # apiKeys: require an API key when making requests to inference endpoints
@@ -605,7 +604,9 @@ models:
   # shards at /data/model keeps ../vision inside /data (resolved to /data/vision) and the production folder
   # untouched; the entrypoint normalizes ds4.txt's model_dir to /data/model, so even a host-side rebuilt pack
   # resolves here.
-  # The engine settings are version-controlled in the repo: deploy/maya/configs/maya-deepseek-2bpw-hip.json
+  # The engine settings are version-controlled in a lane-private folder, deploy/maya/configs/dsv41f1017-iq2xxs/:
+  # each maya lane mounts only its own config folder and points CONFIG_SRC at it (the macro mounts none), so a
+  # second config can never take the other lane over on its next restart.
   # Vision: the tower runs in-engine (~318 MiB of VRAM only for a picture turn, out of the reserve);
   # DS4_VISION_TOKENS=1140 is the tower's hard maximum (10,240-patch attention), written into the pack's ds4.txt by
   # the entrypoint at every start (the strata fork's change 6, mirrored). Maya's pack default 1024 downscales a 4K
@@ -617,6 +618,8 @@ models:
       ${docker-server-maya-rocm}
         -v /mnt/unenc-xfs/maya/dsv41f1017-iq2xxs:/data
         -v /mnt/unenc-xfs/models/maya/ISTA-DASLab-dsv41f1017:/data/model:ro
+        -v /mnt/unenc-xfs/llm-ops/deploy/maya/configs/dsv41f1017-iq2xxs:/repo-configs-ds4:ro
+        -e CONFIG_SRC=/repo-configs-ds4
         -e PACK_BUILD=1
         -e DS4_VISION_TOKENS=1140
         ghcr.io/hurui200320/llm-ops-maya:1.1.53-rocm-gfx1100
@@ -659,9 +662,9 @@ models:
   # config/ (CONFIG_SRC). The GGUFs are the only thing the production mount provides.
   #
   # The engine settings are version-controlled in a lane-private folder, deploy/maya/configs/glm53f-iq2s-derisked/:
-  # the shared deploy/maya/configs/ folder is the DeepSeek macro's CONFIG_SRC and the entrypoint serves the newest
-  # copied JSON, so a second config there would take BOTH lanes over on their next restart. The -e below replaces the
-  # macro's CONFIG_SRC (Docker: the last -e wins) and the extra mount is the lane's own declared state.
+  # each maya lane mounts only its own config folder and points CONFIG_SRC at it (the macro mounts none), so a
+  # second config can never take the other lane over on its next restart. The -e and the mount below are the
+  # lane's own declared state.
   "glm-5.3-flash-iq2s-derisked":
     name: "GLM 5.3 Flash Maya-M-Derisked IQ2_S"
     description: "524288 ctx, maya GLM engine, fp16 KV, 36 GB RAM expert tier, 4 disk slots, vision, MTP drafting"

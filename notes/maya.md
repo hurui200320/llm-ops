@@ -517,3 +517,14 @@ Speed tuning/benchmarks (split, reserve, chunk size, expert-cache and promote kn
 Turbo, DFlash2 vs MTP, slot policy) — the separate later task. The terse gates decode ~23 tok/s; that is not a
 benchmark. TODO.md tracks it.
 
+# 20261105 Lane configs: one folder per lane in deploy/maya/configs/
+
+The DeepSeek lane's config moved from `deploy/maya/configs/maya-deepseek-2bpw-hip.json` into its own folder,
+`deploy/maya/configs/dsv41f1017-iq2xxs/` (named after the llama-swap model id), matching the GLM lane's
+`glm53f-iq2s-derisked/`. The `docker-server-maya-rocm` macro no longer mounts `deploy/maya/configs/` or defaults
+`CONFIG_SRC`: each lane mounts only its own folder (`/repo-configs-ds4`, `/repo-configs-glm`) and points
+`CONFIG_SRC` at it. Why: the entrypoint serves the newest copied JSON, so a shared folder would let one lane's
+config take over the other on its next restart; per-lane folders remove that coupling. The file name stays
+`maya-deepseek-2bpw-hip.json` (the entrypoint's `maya-*-hip.json` glob and the live `/data/config` name). Runner:
+`git pull` + restart the `dsv41f1017-iq2xxs` lane; the mount source changed, so the container must be recreated
+(it is `--rm`; a llama-swap model swap or lane restart does that).

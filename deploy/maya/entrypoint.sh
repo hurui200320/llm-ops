@@ -55,9 +55,9 @@ PACK_DIR=/data/pack/maya-ds4    # the pack: ds4.txt, tensors.txt, engram.bin, to
 mkdir -p "$CONFIG_DIR"
 
 # CONFIG_SRC: a folder of config JSONs to install into /data/config before serving - how a lane carries its
-# engine settings in the repo (the llama-swap macro mounts the repo's deploy/maya/configs read-only). Copied
-# at every start: the repo file is the declared state (the strata lane's STRATA_SET equivalent), so dashboard
-# edits last until the next lane restart. One maya lane per CONFIG_SRC folder (a plain copy refreshes every
+# engine settings in the repo (each llama-swap lane bind-mounts its own deploy/maya/configs/<lane> folder read-only
+# here). Copied at every start: the repo file is the declared state (the strata lane's STRATA_SET equivalent), so
+# dashboard edits last until the next lane restart. One maya lane per CONFIG_SRC folder (a plain copy refreshes every
 # JSON's mtime, and the serve picks the newest).
 # A live config that differs from the repo copy is summarized BEFORE it is overwritten: maya.py rewrites the
 # config on schema migrations (an upstream bump) and the dashboard edits it - both are reset by this copy, and
