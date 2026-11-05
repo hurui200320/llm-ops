@@ -6,3 +6,5 @@
   slower decode here (60% pp/tg 2100.5/54.80, 85% 2170.9/52.65 vs MTP 1993.1/65.00, 2119.2/64.30;
   notes/qwen3.8/Flash-Next.md 20261103), and the two cannot be combined. Current arm: MTP +
   pipeline-windows=2 + DRAFTING=mtp; the DFlash2 packs stay on both data trees for the retest.
++ Re-bench longctx on deepseek as it now moves to project maya.
++ upgrade maya to 1.1.54
