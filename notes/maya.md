@@ -528,3 +528,16 @@ config take over the other on its next restart; per-lane folders remove that cou
 `maya-deepseek-2bpw-hip.json` (the entrypoint's `maya-*-hip.json` glob and the live `/data/config` name). Runner:
 `git pull` + restart the `dsv41f1017-iq2xxs` lane; the mount source changed, so the container must be recreated
 (it is `--rm`; a llama-swap model swap or lane restart does that).
+
+# 20261105-06 GLM-5.3-Flash lane tuning (the separate later task, done)
+
+The bring-up entry above left the lane deliberately untuned; the pass is recorded in
+[notes/glm/5.3-flash.md](glm/5.3-flash.md). Kept: `MAYA_GLM_RESERVE_MB=1500` /
+`MAYA_GLM_RESERVE_LATER_MB=700` (per-card headroom, replacing the setup's uniform 3072),
+`--prefill 16384` + `MAYA_GLM_PREFILL_MB=6144` (auto caps a split at 8192), and the bit-exact decode
+take-two kernels `MAYA_GLM_MLA_ATTN2=h64lvc` / `MAYA_GLM_DSA_SCORE2=rl2b4`. 512k and fp16 KV unchanged.
+512k ladder (2 reps): pp 748/740 -> **897/933 t/s**, tg 16.9/15.8 -> **18.3/19.3 t/s** at 40/85 %;
+4,517 experts in VRAM (+483); min free VRAM **736 / 321 MiB** (targets 500 / 300) including the picture
+turn; 6/6 gates. Rejected: manual split (pp for tg, ~1:1), DFlash2 (-35 % tg), `PROMOTE_MIN=6`,
+`SPEC_WIN=1`, `GU22_TUNED`, `MV_RDNA`, per-card CPU lanes, 40 GB RAM tier, 32K chunk. Config:
+`deploy/maya/configs/glm53f-iq2s-derisked/`; knob-by-knob rationale: `deploy/maya/README.md`.

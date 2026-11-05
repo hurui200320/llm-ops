@@ -8,5 +8,4 @@
   pipeline-windows=2 + DRAFTING=mtp; the DFlash2 packs stay on both data trees for the retest.
 + Re-bench longctx on deepseek as it now moves to project maya.
 + upgrade maya to 1.1.54
-+ Tune/bench the GLM-5.3-Flash Maya-M-Derisked lane (split, reserve, prefill chunk, expert cache, DFlash2 vs
-  MTP, slot policy) - bring-up only so far, see notes/maya.md 20261105.
++ bench the GLM-5.3-Flash Maya-M-Derisked lane

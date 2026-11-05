@@ -227,21 +227,34 @@ Raising it costs ~12 experts a card per 100 MiB; lowering it eats the desktop's 
 like every lane (see "Configs from the repo"): the lane mounts only that folder and points `CONFIG_SRC` at it.
 Baseline is the setup's own config
 (`maya.py --setup --backend hip --gpus 0,1 --gguf-dir /data --context 524288`), ported with the knobs below:
-`--glm-pack /data/pack --max-context 524288 --expert-cache auto --prefill auto --kv-streaming on
---expert-profile /opt/maya/data/expert-profile-glm.bin`.
+`--glm-pack /data/pack --max-context 524288 --expert-cache auto --prefill 16384 --kv-streaming on
+--expert-profile /opt/maya/data/expert-profile-glm.bin`. Tuning record, arms and numbers:
+[notes/glm/5.3-flash.md](../../notes/glm/5.3-flash.md).
 
 | Setting | Why |
 | --- | --- |
 | `--max-context 524288` | 512k. KV streaming (`--kv-streaming on`, setup default) keeps 32768 positions a layer in VRAM and the latent cache in pinned RAM: 3.22 GB a card at 512k |
 | no `--kv` | **fp16 KV**, the engine's default (`--kv int8` would halve the latent cache to 544 B/token/layer; not used) |
-| `MAYA_GLM_RAM_GB=36` | fixed pinned RAM expert tier — the DeepSeek lane's `--ssd-cache 36` analogue. Measured: 35.98 GB across the parts (17.57 + 18.41), the rest of the off-card experts stream from the SSD |
-| `MAYA_GLM_RESERVE_MB=3072` | VRAM kept free per card for the desktop (the setup's value for this pair); tuning is a later exercise |
+| `--prefill 16384`, `MAYA_GLM_PREFILL_MB=6144` | the prompt chunk. Auto caps a split at 8192; the engine's chunk buffers overlay expert slots between prompts, so a bigger chunk costs nothing at decode. 16K measured **+16 % pp at 40 % and +23 % at 85 %**; 32K added only ~2 % more and cost 2.7 GiB of MemAvailable plus swap. `PREFILL_MB=6144` is the loan cap that lets a 16K chunk fit (the measured borrow is 3.6-4.2 GB a card) |
+| `MAYA_GLM_RESERVE_MB=1500` | headroom kept free on the **monitor** card, sizing its expert pool. The measured run-time floor is ~`reserve - 760 MiB` (engine buffers + the desktop's ~460 MiB). 1500 meets the >=500 MiB target with ~240 MiB of margin for desktop growth; the setup's 3072 left 2.2 GiB idle |
+| `MAYA_GLM_RESERVE_LATER_MB=700` | the same for the later (x4, no-display) card: `~reserve - 380 MiB` (321-345 measured), i.e. >=300 MiB free. The asymmetric reserve is why the x4 card's pool can grow without over-reserving the monitor |
+| `MAYA_GLM_MLA_ATTN2=h64lvc`, `MAYA_GLM_DSA_SCORE2=rl2b4` | the decode-only "take-two" kernels for the F32 MLA split attention and the sparse indexer (MLA_MMA is compiled out on HIP). **Bit-exact**; +1 % at 52K and +5-10 % tg at 200-450K, pp untouched |
+| `MAYA_GLM_RAM_GB=36` | fixed pinned RAM expert tier - the DeepSeek lane's `--ssd-cache 36` analogue. Measured: 35.98 GB across the parts (17.57 + 18.41); the rest of the off-card experts stream from the SSD. 40 GB buys ~5 % tg at 85 % but costs ~5 % pp and ~3 GB of swap on this 62 GiB host |
 | `MAYA_GLM_SLOTS=4`, `MAYA_GLM_SLOT_GB=16` | conversation slots on **disk** (`<pack>/slots`). GLM has no RAM-slot tier: one 512k fp16 slot is ~5.9 GB of KV, so the DS4 lane's RAM parking (`MAYA_DS4_SLOT_RAM_GB=6`) would hold a single slot. 16 GB holds ~2 full-context slots, more when shorter |
 | `MAYA_GLM_SLOT_KEEP=1` | slots survive a llama-swap stop/restart (the engine writes them at QUIT; `docker stop -t 120` covers `MAYA_ENGINE_QUIT_S` 50) |
 
-Measured at bring-up (2026-11-05, notes/maya.md): auto split [0,24) / [24,45)+MTP, 4,034 experts in VRAM
-(16.40 + 16.50 GB pools), RAM tier 35.98 GB, 8192-token prefill chunks, ready in ~33 s cold / ~21 s warm,
-stop 1-2 s, 6/6 functional gates, slot restore 1730 of 1744 prompt tokens.
+Measured on the tuned config (2026-11-05/06, 512k ladder 2 reps, 100 % cold prefills, `cache_n 0`): auto
+split [0,24) / [24,45)+MTP, 4,517 experts in VRAM (18.03 + 18.82 GB pools, +483 over the setup), 16K
+chunks, **pp 897 / 933 t/s and tg 18.3 / 19.3 t/s at 40 % / 85 %** (per-rep pp up to 936, tg up to 20.6),
+**min free VRAM 736 MiB monitor / 321 MiB other over the run**, 10.3 GiB MemAvailable, swap flat, 6/6
+functional gates (the picture turn holds the same floor - the vision encoder lends from the pool). Against
+the setup config: **pp +20 / +26 %, tg +8 / +22 %**. Ready in ~30 s cold, stop 1-2 s.
+
+The kept knobs above are what moves this lane; the rejected ones (per-card CPU lanes, promotion limits,
+`SPEC_WIN`, `MV_RDNA`, `GU22_TUNED`, DFlash2, a manual split, a 40 GB RAM tier) and the reasons are in
+[notes/glm/5.3-flash.md](../../notes/glm/5.3-flash.md). The layer split is auto on purpose: moving layers
+to the monitor card buys up to +11.6 % pp but costs 6-13 % tg (the pipelined decode costs the slower
+part), and tg is this lane's weak axis.
 
 Because that copy resets whatever changed the live config — dashboard edits, and maya.py's own rewrites after an
 upstream bump (schema migrations) — the entrypoint first **summarizes the difference** in the log, e.g.
