@@ -179,10 +179,10 @@ strata fork's `STRATA_SET` env) and dashboard edits last until the next lane res
 writable straight into `/data/config`: maya.py touches (and may rewrite) the config on every start, which would
 dirty the checkout. The DeepSeek lane's config is `configs/maya-deepseek-2bpw-hip.json` (512k, `--ssd-cache 36
 --reserve-mib 1664 --suffix-draft 0`, env `DS4_INDEX_TC=1 DS4_CHUNK_GFX11=16384 DS4_RING_MB=128 DS4_HC_STREAM=1
-DS4_HC_MIX_SPLIT=2 DS4_ROUTE_FUSE=1 DS4_SPLIT=18,22`; rationale, tuning arms and numbers:
-notes/deepseek/v41f1017.md 20261104/20261105).
+DS4_HC_MIX_SPLIT=2 DS4_ROUTE_FUSE=1 DS4_SPLIT=18,22 MAYA_DS4_SLOT_KEEP=1 MAYA_DS4_SLOT_CAP=8
+MAYA_DS4_SLOT_RAM_GB=6`; rationale, tuning arms and numbers: notes/deepseek/v41f1017.md 20261104/20261105).
 
-The six engine knobs on that lane, in one line each (they exist only as engine environment, not config keys):
+The engine knobs on that lane, in one line each (they exist only as engine environment, not config keys):
 
 | Knob | Why |
 | --- | --- |
@@ -192,6 +192,9 @@ The six engine knobs on that lane, in one line each (they exist only as engine e
 | `DS4_HC_STREAM=1` | keeps the hybrid-cache mix/split on the layer's own stream (HIP defaults to a side stream): +4 % tg, bit-identical math |
 | `DS4_HC_MIX_SPLIT=2` | one launch for a window's hc_mix + hc_split on the side stream (exact, load-checked) |
 | `DS4_ROUTE_FUSE=1` | a decoded token's router gate and the next layer's guess in one launch (exact, load-checked): the largest single tg gain of the decode fusions |
+| `MAYA_DS4_SLOT_KEEP=1` | conversation slots: a conversation another request takes the model from is set aside (state + compressed KV) instead of dropped, so switching back reads only its new tokens; it persists across engine runs in `<pack>/slots` (the engine writes the RAM slots there at QUIT, so a llama-swap stop/restart reads on from them) |
+| `MAYA_DS4_SLOT_CAP=8` | conversations kept in RAM (engine default 4); past it the least recently used spills to the slot folder and is read back from there |
+| `MAYA_DS4_SLOT_RAM_GB=6` | steady-state RAM byte cap for the parked conversations (engine default `0` = count-limited only); a slot is tens to hundreds of MB (V4.1's compressed KV is ~1.1 KB/position per card, ~0.45 GB at 200k tokens on this pair) |
 
 `--reserve-mib 1664` is the headroom knob, not a speed knob: the engine subtracts it per GPU before
 placing experts, and the run-time floor is ~`reserve - 648 MiB - the monitor card's desktop VRAM`

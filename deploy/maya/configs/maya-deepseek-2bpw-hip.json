@@ -28,7 +28,10 @@
     "DS4_HC_STREAM": "1",
     "DS4_HC_MIX_SPLIT": "2",
     "DS4_ROUTE_FUSE": "1",
-    "DS4_SPLIT": "18,22"
+    "DS4_SPLIT": "18,22",
+    "MAYA_DS4_SLOT_KEEP": "1",
+    "MAYA_DS4_SLOT_CAP": "8",
+    "MAYA_DS4_SLOT_RAM_GB": "6"
   },
   "lib_dirs": [],
   "port": 8080,

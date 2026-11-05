@@ -417,3 +417,27 @@ CUDA1 [18,39]+head) frees expert room on the monitor card and lifts **pp +41 % a
 (1,323 / 1,169 t/s), tg flat-to-better (26.65 / 27.10), 4,559 experts in VRAM (auto 4,499), headroom unchanged
 (598 / 1,015 MiB). All splits tested (22/18, auto, 20/20, 19/21, 18/22, 17/23), the control runs and the
 mechanism: [notes/deepseek/v41f1017.md](deepseek/v41f1017.md) 20261105. The deployed config carries it.
+
+# 20261105 Conversation slots on the DeepSeek lane (8 in RAM, 6 GB cap)
+
+The Qwen lane's conversation cache (`conversation-cache-mib=8192 conversation-cache-slots=8`) has a maya-ds4
+analogue, but it is env-only and **off by default**: the engine needs `MAYA_DS4_SLOT_KEEP=1`, and maya's server
+injects no SLOT_* defaults (strata's dsv41 server used to set KEEP/CAP/GB itself). The lane's config now carries
+`MAYA_DS4_SLOT_KEEP=1 MAYA_DS4_SLOT_CAP=8 MAYA_DS4_SLOT_RAM_GB=6`. Knob table: [deploy/maya/README.md](../deploy/maya/README.md);
+semantics (and the defaults they override): upstream `docs/SETTINGS.md`, "DeepSeek: conversations kept aside".
+
+Why these values: the slots hold the conversation's state and compressed KV in RAM/disk, never VRAM, so the
+placement and split tuning are untouched. The 6 GB cap holds the eight RAM slots at their current sizes (a long
+conversation is a few hundred MB) and leaves more for other programs - the engine's 36 GB expert store already
+occupies most of the 62 GiB host's RAM. The slot folder
+(`<pack>/slots` = `/data/pack/maya-ds4/slots`, the engine default) keeps its own 16 GB cap and survives lane
+restarts - llama-swap stops the engine when idle, and the engine's QUIT writes the RAM slots to the folder first
+(it asks for `MAYA_ENGINE_QUIT_S` 50 s; the lane's `docker stop -t 120` covers it). Slot identity is the engine
+version, the pack and the geometry, so an image bump refuses old slots instead of reading a stale state.
+
+Not set: `MAYA_DS4_KEEP_THINKING` (it matters only for tool-less chat, where DeepSeek drops the prior reasoning so
+every next turn's history differs; tool-carrying requests already keep it).
+
+Verification pending (no numbers yet): deploy the lane, confirm the engine log's `ds4 slots: saved/took back/wrote`
+lines (server: `[maya] sessions: ...`), the 6 functional gates, and an A/B alternating two long conversations
+(first read vs switch-back read).
