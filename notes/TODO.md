@@ -7,5 +7,7 @@
   notes/qwen3.8/Flash-Next.md 20261103), and the two cannot be combined. Current arm: MTP +
   pipeline-windows=2 + DRAFTING=mtp; the DFlash2 packs stay on both data trees for the retest.
 + Re-bench longctx on deepseek as it now moves to project maya.
-+ upgrade maya to 1.1.54
++ upgrade maya to 1.1.55 (also, will int8 kv benifit on our setup?)
++ upgrade strata to 0.2.11
 + bench the GLM-5.3-Flash Maya-M-Derisked lane
+  + If INT8 benifit us, first set to INT8? If coding or something not good, switch to F16?
