@@ -785,3 +785,26 @@ int8 slot-identity caveat does not apply.
 llama-swap lane `glm-5.3-flash-iq2s` ("GLM 5.3 Flash Maya-M IQ2_S (vanilla)"), own data tree and config
 folder (`/repo-configs-glm-vanilla`); everything else mirrors the derisked entry in
 `deploy/llama-swap.config.yaml`.
+
+## Verification (2026-11-06, llama-swap production path)
+
+First start: **ready in 28 s** (12:05:02 -> 12:05:30), the entrypoint installed the repo config
+(`installed repo-configs-glm-vanilla/*.json`) and pinned the vision footprint
+(`mmproj-GLM-5.3-Flash-F16.gguf cap 12288: footprint 4711 MiB`); the live `/data/config` copy is byte-equal to
+the repo file. Placement is the derisked lane's, line for line: auto split `[0,24)` / `[24,45)` (predicted
+57.7 ms/token: 56.0/57.7), int8 latent cache (544 B/position/layer; 1.71 GB pinned + 0.11 GB VRAM window a
+card), 16K chunks (borrowing 3,381/3,994 MB), pools 18.31 + 18.96 GB = **2,265 + 2,304 = 4,569 experts**, RAM
+tier 17.57 + 18.41 = **35.98 GB**, MTP NextN block on CUDA1. llama-swap port 10002.
+
+Functional gates through `http://127.0.0.1:8080` (`glm-5.3-flash-iq2s`): **7/7** - `SMOKE-OK`
+(`finish_reason stop`; the default reasoning path produced a reasoning block); declared `get_weather` ->
+`tool_calls {"city":"Paris"}`; `reasoning_effort: none` -> `42` with no reasoning block; first five primes
+`2, 3, 5, 7, 11`; a fenced `sum_list`; the 420x420 red/blue picture ("The left half is red and the right half
+is blue.", 255 prompt tokens); and the **4K test: 3,840x2,160 -> `prompt_tokens` 10,579** (10,549 image + 30
+text - the 137x77 grid, no downscale), i.e. the copied `vision.max_tokens=12288` and the `VISION_FOOTPRINT_MB`
+pin behave exactly like the derisked lane (notes/glm/5.3-flash.md 20261106).
+
+Headroom (5 s sysfs sampler over the whole run; card1 = monitor / CUDA0, card0 = other / CUDA1): min free
+**445 MiB monitor / 286 MiB other**, `MemAvailable` min **13.5 GiB**, swap +0.08 GiB. Against the deployed
+derisked numbers (443 / 279 MiB, 13.0 GiB) the vanilla lane is within noise; the `reserve - 760` /
+`reserve - 380` rules still hold.

@@ -7,3 +7,5 @@
 + Re-bench longctx on deepseek as it now moves to project maya.
 + bench the GLM-5.3-Flash Maya-M-Derisked lane
   + if int8 kv not good, revert with `--kv fp16` and clear `/data/pack/slots` (the slot meta does not record the KV format)
++ bench the vanilla GLM-5.3-Flash Maya-M lane (`glm-5.3-flash-iq2s`): settings copied 1:1 from the
+  derisked lane, functional gates passed 2026-11-06; no speed ladder yet (notes/maya.md 20261106)

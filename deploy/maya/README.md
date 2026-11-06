@@ -261,6 +261,11 @@ encoder lends 4.76 GB from the pool for the ~15 s encode and gives it back. The 
 1.1.55 A/B and the picture budget: [notes/maya.md](../../notes/maya.md) 20261106. Ready in ~30 s cold, stop
 1-2 s.
 
+The vanilla lane's first start (2026-11-06, same config) matches it line for line: auto split `[0,24)` /
+`[24,45)+MTP`, 2,265 + 2,304 = 4,569 experts, int8 KV, 16K chunks, 35.98 GB RAM tier; ready in 28 s; 7/7
+functional gates including the 4K picture (`prompt_tokens` 10,579, no downscale); min free VRAM 445 / 286 MiB,
+13.5 GiB `MemAvailable`, swap flat. Record: [notes/maya.md](../../notes/maya.md) 20261106.
+
 The kept knobs above are what moves this lane; the rejected ones (per-card CPU lanes, promotion limits,
 `SPEC_WIN`, `MV_RDNA`, `GU22_TUNED`, DFlash2, a manual split, a 40 GB RAM tier) and the reasons are in
 [notes/glm/5.3-flash.md](../../notes/glm/5.3-flash.md). The layer split is auto on purpose: moving layers
