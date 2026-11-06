@@ -484,10 +484,10 @@ models:
   # and that flag is our big pp win). The A/B on this pair: DFlash2 60% pp/tg
   # 2100.5/54.80, 85% 2170.9/52.65 vs 1993.1/65.00 and 2119.2/64.30 on the MTP
   # arm the same day (0.2.8: 2038.8/65.50, 2122.1/62.30) — decode 16-18% slower,
-  # prompt within noise. If a later release lets DFlash2 run with
-  # pipeline-windows, re-test: set DRAFTING=dflash2 and drop
-  # pipeline-windows=2/spec-min-p=0.7 (then clean the same keys from the preset's
-  # extra — --set keys persist, notes/strata.md 20261030).
+  # prompt within noise. 0.2.11 lets a named DFlash2 serve several requests (a
+  # drafter per request) but still refuses beside --pipeline-windows. If a later
+  # release lifts that, re-test: set DRAFTING=dflash2 and drop
+  # pipeline-windows=2/spec-min-p=0.7 from STRATA_SET.
   "qwen3.8-flash-next-iq3s":
     name: "Qwen3.8 Flash-Next IQ3_S"
     description: "262144 ctx, F16 KV, Strata layer split over 2x7900XTX, fully resident @28 GiB, MTP, image 1024-8192 tok"
@@ -504,7 +504,7 @@ models:
         -e VISION_MIN_TOKENS=1024
         -e DRAFTING=mtp
         -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1"
-        ghcr.io/hurui200320/llm-ops-strata:0.2.10-rocm-gfx110x
+        ghcr.io/hurui200320/llm-ops-strata:0.2.11-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
@@ -562,7 +562,7 @@ models:
         -e VISION_MIN_TOKENS=1024
         -e DRAFTING=mtp
         -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1"
-        ghcr.io/hurui200320/llm-ops-strata:0.2.10-rocm-gfx110x
+        ghcr.io/hurui200320/llm-ops-strata:0.2.11-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health

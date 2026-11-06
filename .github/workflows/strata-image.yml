@@ -11,7 +11,7 @@ name: strata-image
 #      engine is byte-identical to what upstream puts in its own images;
 #   2. builds the image with upstream's docker/build.sh from the same tag, and smoke-tests it in-image.
 #
-# The result is exactly what an upstream 0.2.10-rocm-gfx110x build assembles: the released package, the Terminal
+# The result is exactly what an upstream 0.2.11-rocm-gfx110x build assembles: the released package, the Terminal
 # from the same tag, nothing added. (Until 2026-11-04 the workflow also compiled a gfx110x `strata-dsv41` DeepSeek
 # engine into the image with the TheRock ROCm wheels; the DeepSeek lane moved to Project Maya that day
 # (notes/maya.md 20261104) and the build was removed — the record: notes/strata.md 20261104.) The Dockerfile's
@@ -43,16 +43,20 @@ env:
   IMAGE: ghcr.io/hurui200320/llm-ops-strata
   STRATA_REPO: Niko1221/Strata
   # Terminal sources and the Dockerfile.
-  STRATA_REF: v0.2.10
-  # The release that carries the signed feed and the Qwen engine packages. v0.2.10 rebuilds EVERY engine package
-  # at 0.1.56: the rx7900 engine folder changes 0.1.55 -> 0.1.56 and every lane re-runs setup once. The package now
-  # also ships the all-cards split engine (strata-split-2/3/4-amd, ~+49 MB), whose Auto rule never selects 2x gfx1100
-  # on IQ3_S. What matters here: 0.1.56 adds the DFlash2 block drafter on gfx1100 (`--draft dflash2`, also on a layer
-  # split, one request at a time), the serve fixes (#4677 conversation park, #4590 penalty window, #4701/#4751 tool
-  # parsing) and #4846 (arena lock under RAM pressure). The packaged gfx1100 hipBLASLt table still reads 100200 and
-  # the rx7900 package keeps TheRock 7.10.0a20251120 (only the rx9070 package moved to 7.13). The package is
-  # re-verified against the feed below (signature, manifest hash).
-  ENGINE_RELEASE: v0.2.10
+  STRATA_REF: v0.2.11
+  # The release that carries the signed feed and the Qwen engine packages. v0.2.11 rebuilds EVERY Qwen engine
+  # package at 0.1.57: the rx7900 engine folder changes 0.1.56 -> 0.1.57 and every lane re-runs setup once. Most of
+  # the release is serve/launch work. What matters here: the serve fixes (#3961 a request that ended without its end
+  # event no longer ends the next request's engine, #4271 a client that stops reading no longer holds the turn, #4479
+  # a blocked console cannot hold a request, #4738 control-line wake-up, #5044 batch admission/non-UTF-8 output,
+  # #4792 start race, #3443 conversation-park log, #2518 a branching follow-up returns to its chat's slot) and the
+  # tool parser (#5040 streamed arguments that list the closing tags). The engine side changes nothing for our pinned
+  # split: the Q5_0 expert-dot offset fix (CUDA/HIP/SYCL), a short-card layer-split spill walk, and gfx12/Strix
+  # Halo/MMQ work that does not apply to 2x gfx1100 with room; the auto CPU/PCIe miss share keeps HIP layer splits
+  # on 0.2.10 behaviour. No HIP toolchain change: packaging/build_hip_linux.sh moves PKGVER only, so the rx7900
+  # package keeps TheRock 7.10.0a20251120 and the gate below re-checks hipBLASLt 100200 + the tuning table. The
+  # package is re-verified against the feed below (signature, manifest hash).
+  ENGINE_RELEASE: v0.2.11
   # hipBLASLt version the package's gfx1100 tuning table must match (BUILD.json hipblaslt_version).
   HIPBLASLT_TABLE_VERSION: "100200"
 

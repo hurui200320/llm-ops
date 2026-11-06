@@ -1,8 +1,8 @@
 # Strata (AMD / HIP) deployment
 
-The Strata image the lanes run is **our own build**, `ghcr.io/hurui200320/llm-ops-strata:0.2.10-rocm-gfx110x`,
+The Strata image the lanes run is **our own build**, `ghcr.io/hurui200320/llm-ops-strata:0.2.11-rocm-gfx110x`,
 made by [`.github/workflows/strata-image.yml`](../../.github/workflows/strata-image.yml). It carries upstream's
-Terminal 0.2.10 (serve + the GGUF preparation tools and the `strata` CLI), upstream's signed-feed 0.1.56 Qwen engine
+Terminal 0.2.11 (serve + the GGUF preparation tools and the `strata` CLI), upstream's signed-feed 0.1.57 Qwen engine
 package, both picture readers (CPU and GPU), and the ROCm runtime for the whole RDNA 3
 dGPU family (gfx1100 = RX 7900 XTX/XT, gfx1101 = RX 7800/7700 XT, gfx1102 = RX 7600) — byte for byte what
 upstream's own `docker/build.sh` assembles from the same tag; nothing is added. The host needs only the `amdgpu`
@@ -16,16 +16,19 @@ also carried our gfx110x `strata-dsv41` DeepSeek engine; the DeepSeek lane moved
 
 ## Pins
 
-Current image: `ghcr.io/hurui200320/llm-ops-strata:0.2.10-rocm-gfx110x` (Terminal `v0.2.10`, engine
-`0.1.56` rx7900). Digests, package hashes, and verification records are in
+Current image: `ghcr.io/hurui200320/llm-ops-strata:0.2.11-rocm-gfx110x` (Terminal `v0.2.11`, engine
+`0.1.57` rx7900). Digests, package hashes, and verification records are in
 [notes/strata.md](../../notes/strata.md); the workflow `env:` block pins the build inputs.
 
-- **Engine folder**: `/opt/strata/components/engine/0.1.56-linux-x86_64-hip-rx7900` (upstream names
+- **Engine folder**: `/opt/strata/components/engine/0.1.57-linux-x86_64-hip-rx7900` (upstream names
   the folder without the `strata-engine-` prefix; reference the engine as `component:strata-engine`,
   never by path).
-- **Other package files**: 0.1.56 also ships the all-cards split engine (`strata-split-2/3/4-amd`,
-  upstream's packaging commit `c75ab765…`). Their Auto rule never selects this pair (gfx1201-only,
-  exactly 4 cards, non-IQ3_S experts, context ≤ 128K), so the lanes keep the layer split.
+- **Other package files**: 0.1.57 also ships the all-cards split engine (`strata-split-2/3/4-amd`,
+  ~+49 MB). Their Auto rule never selects this pair: it requires gfx1201, exactly 4 cards and
+  context ≤ 128K (0.2.11 additionally includes the IQ3_S i-quant set there, because the split now
+  beats the layer split on 4× R9700 — on 2–3 cards upstream still measures the layer split faster),
+  so the lanes keep the layer split. Exact build ids and hashes are in
+  [notes/strata.md](../../notes/strata.md).
 - **hipBLASLt table**: packaged at `tuning/gfx1100-hipblaslt-100200.txt` (TheRock `7.10.0a20251120` /
   hipBLASLt 1.2.0). On gfx1100 the table is **opt-in**: pass `STRATA_HIPBLASLT_TABLE=on` as a
   **container environment variable** (`-e`), **not** inside `STRATA_SET` (see "The hipBLASLt tuning table").
@@ -59,7 +62,7 @@ docker run -d --name strata-init --init --rm \
   -e VISION_TOKENS=8192 -e VISION_MIN_TOKENS=1024 \
   -e DRAFTING=mtp \
   -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1" \
-  ghcr.io/hurui200320/llm-ops-strata:0.2.10-rocm-gfx110x
+  ghcr.io/hurui200320/llm-ops-strata:0.2.11-rocm-gfx110x
 docker logs -f strata-init    # wait for one-time setup to finish, then stop the container
 ```
 
@@ -115,7 +118,7 @@ docker run -it --rm \
   --group-add "$(getent group video | cut -d: -f3)" \
   --group-add "$(getent group render | cut -d: -f3)" \
   -v /mnt/unenc-xfs/strata/ISTA-DASLab-Flash-Next:/data -v /mnt/unenc-xfs/models:/models:z \
-  ghcr.io/hurui200320/llm-ops-strata:0.2.10-rocm-gfx110x sh
+  ghcr.io/hurui200320/llm-ops-strata:0.2.11-rocm-gfx110x sh
 ```
 
 Any command replaces the server start (`docker run … image strata launch --help`, `… image sh`).
@@ -149,11 +152,11 @@ and `docker/build.sh`.
 A plain upstream image (what the workflow now produces too) builds with:
 
 ```sh
-git -C <strata-checkout> worktree add /tmp/strata-v0.2.10 v0.2.10
-tar -xzf strata-engine-0.1.56-linux-x86_64-hip-rx7900.tar.gz -C <empty-dir>
-/tmp/strata-v0.2.10/docker/build.sh --flavor hip \
-  --engine <empty-dir> --repo /tmp/strata-v0.2.10 \
-  --version 0.2.10 --tag strata:0.2.10-rocm-gfx110x-local
+git -C <strata-checkout> worktree add /tmp/strata-v0.2.11 v0.2.11
+tar -xzf strata-engine-0.1.57-linux-x86_64-hip-rx7900.tar.gz -C <empty-dir>
+/tmp/strata-v0.2.11/docker/build.sh --flavor hip \
+  --engine <empty-dir> --repo /tmp/strata-v0.2.11 \
+  --version 0.2.11 --tag strata:0.2.11-rocm-gfx110x-local
 ```
 
 Needs network (base image + the terminal's pinned CPython 3.12 and hash-locked wheels). `--ctx-only` keeps the
@@ -285,23 +288,26 @@ lane mirrors that budget now; see [notes/maya.md](../maya.md) 20261104.)
 ## Drafting (Qwen lanes)
 
 Both Qwen lanes run the model's own **MTP** draft layer (`DRAFTING=mtp`, entrypoint fork change 5;
-`pipeline-windows=2`, `spec-min-p=0.7` in `STRATA_SET`). Upstream 0.2.10 makes **DFlash2** the Auto
-drafter for Qwen3.8-Flash-Next on gfx1100; it cannot run beside `--pipeline-windows` (its plan treats
-that option as "several requests at once"), which is our big prompt-speed win, so **DFlash2 was
-tried and reverted the same day**:
+`pipeline-windows=2`, `spec-min-p=0.7` in `STRATA_SET`). Upstream makes **DFlash2** the Auto
+drafter for Qwen3.8-Flash-Next on gfx1100; it cannot run beside `--pipeline-windows` (the MTP's
+speculative next window, which DFlash2 has no counterpart for), and that flag is our big
+prompt-speed win, so **DFlash2 was tried and reverted the same day**:
 
 - Measured on the vanilla lane, engine 0.1.56, 2026-11-03 (`run_longctx.py --ctx 262144 --reps 2`):
   DFlash2 60% pp 2,100.5 / tg 54.80, 85% pp 2,170.9 / 52.65 — against MTP 1,993.1 / 65.00 and
   2,119.2 / 64.30 on the same engine. Decode is 16–18% slower (draft acceptance 0.42–0.44 vs
   0.65), prompt within noise. The DFlash2 pack (~860 MB) stays on both data trees.
+- 0.2.11 changes the rule around request slots only: a DFlash2 chosen by name now serves several
+  requests at once (a drafter per request, `--draft dflash2 --batch N`); `--pipeline-windows` still
+  blocks it, so the arm stays the MTP.
 - The arm is **pinned**, not left to Auto: `--save-preset` stores `drafting` in the lane's preset,
-  and `STRATA_SET` keys persist in that preset's `extra` (the 2026-10-30 finding). A revert must set
-  the new value explicitly (`DRAFTING=mtp`) and re-add the keys; a stale `pipeline-windows` must be
-  deleted from `extra` or DFlash2 stays blocked. The 0.2.10 migration did exactly that (preset
-  backups `docker.json.bak-0.2.10-*`).
+  and 0.2.11's launch precedence makes the `STRATA_SET` keys explicit launch values (explicit, then
+  persisted overrides, then calibrated, then Auto) — a key left out of a later launch is gone, so
+  the lanes pass the full `STRATA_SET` at every start. The 0.2.10 migration that predates that rule
+  wrote preset backups (`docker.json.bak-0.2.10-*`).
 - **Re-test** if a later release lets DFlash2 run beside `pipeline-windows` or lifts its decode:
-  set `DRAFTING=dflash2`, drop `pipeline-windows=2 spec-min-p=0.7`, and delete those two keys from
-  each lane's `extra` once. Speed records:
+  set `DRAFTING=dflash2` and drop `pipeline-windows=2 spec-min-p=0.7` from the lane's `STRATA_SET`.
+  Speed records:
   [notes/qwen3.8/Flash-Next.md](../../notes/qwen3.8/Flash-Next.md) and
   [notes/strata.md](../../notes/strata.md).
 
