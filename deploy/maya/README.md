@@ -275,7 +275,8 @@ functional gates including the 4K picture (`prompt_tokens` 10,579, no downscale)
 [notes/maya.md](../../notes/maya.md) 20261106/20261107.
 
 The kept knobs above are what moves this lane; the rejected ones (per-card CPU lanes, promotion limits,
-`SPEC_WIN`, `MV_RDNA`, `GU22_TUNED`, DFlash2, no MTP at all (`MAYA_GLM_NO_MTP`, -19 % tg), a manual split, a
+`SPEC_WIN`, `MV_RDNA`, `GU22_TUNED`, DFlash2, no MTP at all (`MAYA_GLM_NO_MTP`, -19 % tg), the disk-skip
+approximation (`DISK_SKIP_W`/`_FROM`, a residency-dependent quality trade, not adopted), a manual split, a
 40 GB RAM tier, `MAYA_GLM_P2P`) and the reasons are in
 [notes/glm/5.3-flash.md](../../notes/glm/5.3-flash.md). The layer split is auto on purpose: moving layers
 to the monitor card buys up to +11.6 % pp but costs 6-13 % tg (the pipelined decode costs the slower
