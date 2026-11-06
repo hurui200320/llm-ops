@@ -463,3 +463,29 @@ arm (`DRAFTING=mtp` + the two keys). Placement with DFlash2 was 16,826 VRAM slot
 GiB) and 21.5 GiB pinned RAM against the MTP arm's 7,959 + 7,849 slots (15,808) and 23.5 GiB —
 the extra ~1,000 slots (+6.4%) do not offset the decode loss. Re-test on a later engine if it can
 run DFlash2 with `pipeline-windows` (tracked in [../TODO.md](../TODO.md)).
+
+# 20261106 Strata 0.2.11 (engine 0.1.57) longctx spot
+
+Same box, same arm (MTP, `--spec 4`, `spec-min-p 0.7`, `pipeline-windows 2`), vanilla lane through
+llama-swap. Matched protocol for the 0.2.10 comparison: `run_longctx.py --ctx 262144 --out-pct 1
+--in-pcts 60,85 --reps 2`, `cache 0` every rep:
+
+| Run | 60% pp / tg | 85% pp / tg | acceptance |
+| --- | --- | --- | --- |
+| 0.2.11 sample 1 | 1966.2 / 63.10 | 2168.0 / 61.00 | 0.656 / 0.634 |
+| 0.2.11 sample 2 | 2067.2 / 64.40 | 2121.5 / 62.65 | 0.678 / 0.660 |
+| 0.2.11 mean | 2016.7 / 63.75 | 2144.7 / 61.83 | — |
+| 0.2.10 MTP (2026-11-03) | 1993.1 / 65.00 | 2119.2 / 64.30 | 0.649 / 0.651 |
+
+Long-decode control on the same build (`--out-pct 10`): 60% 2086.0 / 66.35, 85% 2161.3 / 64.95
+(acceptance 0.690 / 0.687).
+
+Prompt is +1–2% against the 0.2.10 sample. Decode is at/below it by up to ~4% at 85%, but today's
+two matched samples differ by 2.0–2.7% themselves and the 85% decode moved 62.3 → 64.3 between the
+0.2.8 and 0.2.10 samples, so this is within the box's spread; no engine-side change touches the MTP
+decode path (the only main-engine change is the Q5_0 expert-dot offset, and the short-card spill
+walk does not trigger). Watch the 85% decode on the next engine bump. Placement and the rest of the
+upgrade: [../strata.md](../strata.md) 20261106.
+
+Records: `bench/results/longctx/qwen3.8-flash-next-iq3s-20261106-151743.json` (out-pct 10),
+`qwen3.8-flash-next-iq3s-20261106-160835.json` and `-162049.json` (out-pct 1).

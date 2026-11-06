@@ -785,3 +785,81 @@ lane history: [notes/deepseek/v41f1017.md](deepseek/v41f1017.md) 20261104.
 - Runner-side the lane's leftovers are gone: the data tree `/mnt/unenc-xfs/strata/ISTA-DASLab-dsv41f1017` deleted,
   the model folder renamed to `/mnt/unenc-xfs/models/maya/ISTA-DASLab-dsv41f1017/` (a rename; the Maya tree's links
   were the same inodes), the unused dspark GGUF and second mmproj deleted ([notes/maya.md](maya.md) 20261104).
+
+# 20261106 Upgrade to 0.2.11 (engine 0.1.57) — serve/tool-parser round
+
+Upgraded to Terminal/Control `0.2.11`/`0.1.57` on both Qwen lanes. The effective diff for this box is
+`v0.2.10..v0.2.11` (tag commit `c3b3f5035506f3e966f1b4b7b188aeaabae92f1d`; 205 commits, 327 files); the
+engine packages are built from `0bdcef4682c5`. The release is mostly serve/launch work: the engine side
+changes nothing for our pinned layer split (Q5_0 expert-dot offset fix, a short-card spill walk that does
+not trigger here, and gfx12/Strix Halo/MMQ work that does not apply to gfx1100).
+
+## Pins (0.2.11)
+
+| What | Value |
+| --- | --- |
+| Image | `ghcr.io/hurui200320/llm-ops-strata:0.2.11-rocm-gfx110x`, digest `sha256:5afbc76626af68c01fa1c6518149f61b576a56288feba5b1f9c9d3e474f5533d`, 2,350,639,469 B on fedora-tuf |
+| Terminal | tag `v0.2.11`, commit `c3b3f5035506f3e966f1b4b7b188aeaabae92f1d`; `strata 0.2.11 (build 0.1.57; python 3.12.15)` |
+| Engine | `strata-engine-0.1.57-linux-x86_64-hip-rx7900` (314 MiB tarball), 583 files, manifest sha256 `b82bd6738dc9d4487bf69a7cd48b766b35471fa9904ad54ef544531e44deffbd`, build `0bdcef4682c5+rocm`, variant `rx7900`, archs gfx1100/1101/1102, `dsv41: false` |
+| hipBLASLt table | packaged `tuning/gfx1100-hipblaslt-100200.txt`, version `100200`, sha256 `1bb8cd2e…` — unchanged from 0.1.56; the rx7900 toolchain did not move (`build_hip_linux.sh` changes PKGVER only) |
+| Entrypoint | upstream `/opt/strata/entrypoint.sh` sha256 `0c660798…` — byte-identical to 0.2.10's; the fork's five changes re-applied unchanged |
+| Build patch | `deploy/strata/patches/0.2.11-metal-tools-context.patch` = upstream `5d37280d` (`docker/build.sh`): v0.2.11's `package_terminal.py` copies `metal/tools/*.py` into the Terminal bundle but the tag's `build.sh` did not stage them, so run `42175367343` died with `No such file ... '/src/metal/tools/metal_repack.py'`. Run `42176698284` then went green; drop the patch once a release contains `5d37280d` |
+
+## What changes for this box
+
+- **Serve fixes (0.1.57)**: #3961 (a stream that ends without its end event restarts the engine only where it
+  was really ended, and the next request is not killed with it), #4271 (a streaming client that stops reading
+  releases the engine's turn after 60 s, `STRATA_STREAM_WRITE_TIMEOUT_S`), #4479 (a blocked console cannot hold
+  a request), #4738 (control-line wake-up), #5044 (refused batch admission is an error row; non-UTF-8 engine
+  output), #4792 (failed-start race), #3443 (conversation-park log lock), #2518 (a branching follow-up returns
+  to its chat's slot — matters for our 8-slot conversation cache).
+- **Tool parser #5040**: streamed arguments that list the closing tags no longer truncate. Verified with the
+  in-image corpus (`serve.test_tool_corpus`, 4/4 incl. stream-cut invariance).
+- **Launch precedence (`ad142b46`, `strata_control/arg_layers.py`)**: explicit launch values now win over
+  persisted overrides, calibrated values and Auto. Our `STRATA_SET` keys land in `user_args` + `launch_set`
+  and are not remembered when left out; the lanes pass the full set every start, so the arm is stable and the
+  old `extra`-accumulation cleanup is unnecessary. Verified in `docker.json`: `--layer-split 26`,
+  `--pipeline-windows 2`, `--spec-min-p 0.7`, `--kv fp16`, the reserves and both cache flags reach the engine.
+- **DFlash2**: 0.2.11 lets a DFlash2 *chosen by name* serve several requests (a drafter per request,
+  `--draft dflash2 --batch N`) but still refuses beside `--pipeline-windows`, so the MTP arm stays. The
+  TODO re-test is still blocked.
+- **Split engine**: the Auto rule now includes the IQ3_S/i-quant sets, but still only on 4× gfx1201 and
+  ≤128K context; inert on our 2× gfx1100 pair, which keeps the layer split.
+- **Engine side**: Q5_0 expert-dot offset fix (CUDA/HIP/SYCL; not our IQ3_S), short-card layer-split spill
+  walk (no trigger), gfx12/Strix Halo/MMQ changes (not gfx1100). The auto CPU/PCIe miss share keeps HIP layer
+  splits on 0.2.10 behaviour.
+
+## Rollout (2026-11-06)
+
+- **Build**: `strata-image` run `42176698284` green; the gate re-checked engine `0.1.57` variant `rx7900`,
+  **583 files**, manifest `b82bd673…`, `hipblaslt_version 100200`, table sha256 `1bb8cd2e…`; in-image smoke
+  `component inventory OK`. Image digest `sha256:5afbc766…` (above).
+- **Host**: pulled the image on fedora-tuf; `git pull` in `/mnt/unenc-xfs/llm-ops` to `8fc6dbd`
+  ("strata build fix 0.2.11"). `llama-swap -watch-config` reloaded and stopped the loaded Maya DeepSeek lane
+  (expected: same GPUs); no model was serving during the upgrade.
+- **First starts**: both lanes ran setup once (engine folder `0.1.56` → `0.1.57`; packs reused, no downloads;
+  ~1–2 min per lane including the load). The Qwen run settings were remade, so the vision budget applied on
+  the next start (`Vision budget: strata-iq3_s.json: max_tokens=8192, min_tokens=1024` on both). The SC117
+  lane's "looks like swift IQ3_S" setup warning is identical in 0.2.10 — not a regression.
+- **Placement** (second start, vision 8192): vanilla `7,959 + 7,727` slots (14.44 + 15.47 GiB), RAM copy
+  **23.75 GiB**, lend 3,582, 1,818/1,120 MiB free; SC117 `7,905 + 7,691` (15,596 slots), RAM 23.91 GiB,
+  lend 3,582, 1,814/1,120 MiB free. 0.2.10: 7,959 + 7,849 (15,808), 23.5 GiB, lend 3,581. The MTP draft
+  layer takes 1,348 MiB.
+- **Smokes** (all through llama-swap, both lanes): chat "OK", `get_weather{"city":"Paris"}`, `:npt` alias,
+  640×360 vision ("Left: Solid red / Right: Solid blue"), `/upstream/` 200 (23,050 B). The repo template hash
+  equals the pack's copy.
+- **In-image upstream tests**: `serve.test_serve_robustness` 11/11 (incl. `StalledClient` →
+  `done: 5526 tokens ... (disconnect, cancel=True)` and `BlockedConsole`), `serve.test_tool_corpus` 4/4,
+  `serve.test_server.OpenAIChunksTerminal` 10/10 (#3961). A live stalled-reader run released the lane
+  (next request 0.4–13 s, engine starts 76 → 76 — no restart).
+- **Speed** (engine 0.1.57, vanilla, 262144 spot): prompt +1–2% against the 0.2.10 MTP sample; decode
+  within the box's ±2–3% run-to-run spread (today's matched samples differ by 2.0–2.7%). Full record:
+  [qwen3.8/Flash-Next.md](qwen3.8/Flash-Next.md) 20261106.
+- **Observation (not a regression)**: a `write_file` whose content is a multi-line document that lists
+  `</parameter>`, `</function>` and `</tool_call>` is truncated by the *model itself* (deterministic on
+  vanilla: the content stops before the tag block and the model appends extra `</tool_call></invoke>`
+  closers; SC117 varies). Single-tag contents are exact and the parser corpus passes. Worth re-checking
+  with a later template/engine.
+- **Final state**: both lanes on the MTP arm with the same configuration; the Maya DeepSeek lane is unloaded
+  (llama-swap swaps it back on demand; its config now points at `1.1.55`, which the host will pull on the
+  next start).
