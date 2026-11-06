@@ -1,7 +1,7 @@
 # Maya (AMD / HIP) deployment
 
-The Maya image is **our own build** (pushed by the workflow, tag `1.1.53-rocm-gfx1100`), made by
-[`.github/workflows/maya-image.yml`](../../.github/workflows/maya-image.yml). It carries Project Maya `v1.1.53`
+The Maya image is **our own build** (pushed by the workflow, tag `1.1.55-rocm-gfx1100`), made by
+[`.github/workflows/maya-image.yml`](../../.github/workflows/maya-image.yml). It carries Project Maya `v1.1.55`
 with its **GLM-5.3-Flash engine** (`maya`), its **DeepSeek-V4.1-Flash engine** (`maya-ds4`) and the **GPU vision
 encoder** (`maya-vision`), compiled for **gfx1100** (RX 7900 XT / XTX) inside AMD's ROCm `7.2.1` dev container, plus
 the installer's Python environment (`.venv`) and the "already compiled" stamps `maya.py` checks. The host needs only
@@ -15,13 +15,13 @@ model (or uses files you already have), builds its pack and serves. Historical c
 
 ## Pins
 
-Current image: `ghcr.io/hurui200320/llm-ops-maya:1.1.53-rocm-gfx1100` (Maya `v1.1.53`, GLM + DeepSeek engines,
+Current image: `ghcr.io/hurui200320/llm-ops-maya:1.1.55-rocm-gfx1100` (Maya `v1.1.55`, GLM + DeepSeek engines,
 `gfx1100`). The workflow `env:` block pins the build inputs; the image digest of each build is in
 [notes/maya.md](../../notes/maya.md).
 
 | Input | Pin |
 | --- | --- |
-| Maya source | `mw00/project-maya` tag `v1.1.53` |
+| Maya source | `mw00/project-maya` tag `v1.1.55` |
 | llama.cpp | commit `3cf03257f219afbe7334045ff7c6a06ac68c627d` (maya's `setup.py` pin; gated by the workflow) |
 | Base image (build + runtime) | `docker.io/rocm/dev-ubuntu-24.04:7.2.1-complete` |
 | GPU arch | `gfx1100` only |
@@ -51,10 +51,10 @@ docker run -d --name maya --init --restart unless-stopped \
   -v /mnt/unenc-xfs/models/maya/<shard folder>:/data/model:ro \
   -e PACK_BUILD=1 \
   -e PORT=8080 -e GPU=0 \
-  ghcr.io/hurui200320/llm-ops-maya:1.1.53-rocm-gfx1100
+  ghcr.io/hurui200320/llm-ops-maya:1.1.55-rocm-gfx1100
 ```
 
-`1.1.53-rocm-gfx1100` is the image's only tag; `ghcr.io/hurui200320/llm-ops-maya:latest` is not published.
+`1.1.55-rocm-gfx1100` is the image's only tag; `ghcr.io/hurui200320/llm-ops-maya:latest` is not published.
 
 - One **data tree per model** (the strata pattern): `/mnt/unenc-xfs/maya/<model name>` holds everything the lane
   derives — the pack, the vision tower, the installed configs (`/data/config/`) — so lanes never share state. The
@@ -109,7 +109,7 @@ docker run -d --name maya-setup --init --rm \
   --ulimit memlock=-1:-1 --shm-size 2g \
   -v /mnt/unenc-xfs/maya/<model name>:/data \
   -e GPU=0 -e CONTEXT=262144 \
-  ghcr.io/hurui200320/llm-ops-maya:1.1.53-rocm-gfx1100 \
+  ghcr.io/hurui200320/llm-ops-maya:1.1.55-rocm-gfx1100 \
   --setup --backend hip --yes --no-start \
   --model glm-maya-s --gguf-dir /data/models/GLM-5.3-Flash-Maya-S \
   --host 0.0.0.0 --port 8080
@@ -130,7 +130,7 @@ docker logs -f maya-setup    # wait for the setup to finish, then it exits
 ### Serve
 
 ```sh
-docker run -d --name maya ... ghcr.io/hurui200320/llm-ops-maya:1.1.53-rocm-gfx1100
+docker run -d --name maya ... ghcr.io/hurui200320/llm-ops-maya:1.1.55-rocm-gfx1100
 ```
 
 With no arguments the entrypoint serves the newest `/data/config/maya-*-hip.json` (`--backend hip --config … --host
@@ -277,14 +277,14 @@ the named changes into `deploy/maya/configs/<lane>/maya-<quant>-hip.json`, commi
 On a machine with Docker and ~40 GB free (the ROCm SDK, the compile and the image), e.g. fedora-tuf:
 
 ```sh
-git clone --depth 1 --branch v1.1.53 https://github.com/mw00/project-maya.git maya   # next to this repo
+git clone --depth 1 --branch v1.1.55 https://github.com/mw00/project-maya.git maya   # next to this repo
 docker build -f deploy/maya/Dockerfile \
   --build-arg BASE_IMAGE=docker.io/rocm/dev-ubuntu-24.04:7.2.1-complete \
   --build-arg ROCM_VERSION=7.2.1 \
   --build-arg LLAMA_COMMIT=3cf03257f219afbe7334045ff7c6a06ac68c627d \
   --build-arg HIP_ARCH=gfx1100 \
   --build-arg ENGINES=maya,maya-ds4 \
-  --build-arg MAYA_REV=v1.1.53 \
+  --build-arg MAYA_REV=v1.1.55 \
   --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   -t llm-ops-maya:local .
 ```

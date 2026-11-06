@@ -541,3 +541,62 @@ take-two kernels `MAYA_GLM_MLA_ATTN2=h64lvc` / `MAYA_GLM_DSA_SCORE2=rl2b4`. 512k
 turn; 6/6 gates. Rejected: manual split (pp for tg, ~1:1), DFlash2 (-35 % tg), `PROMOTE_MIN=6`,
 `SPEC_WIN=1`, `GU22_TUNED`, `MV_RDNA`, per-card CPU lanes, 40 GB RAM tier, 32K chunk. Config:
 `deploy/maya/configs/glm53f-iq2s-derisked/`; knob-by-knob rationale: `deploy/maya/README.md`.
+
+# 20261106 Maya 1.1.55 (the 1.1.54 + 1.1.55 bump)
+
+Upstream released `v1.1.55` (`c4effee67cb95fb4303720919b075fddf04b4e69`, 52 commits on `v1.1.53`; v1.1.54 and
+v1.1.55 the same day). This is a mechanical parity bump first, like 1.1.53: the kept configs of both lanes carry
+over untouched, and no knob probes or speed A/B are part of this change - the functional gates and the 512k
+ladders follow the image push and are recorded in a later entry.
+
+## Pins after the bump
+
+| What | Value |
+| --- | --- |
+| Maya | tag `v1.1.55`, commit `c4effee67cb95fb4303720919b075fddf04b4e69` |
+| llama.cpp | `3cf03257f219afbe7334045ff7c6a06ac68c627d` (unchanged; `setup.py` did not change) |
+| ROCm base | `docker.io/rocm/dev-ubuntu-24.04:7.2.1-complete` (unchanged) |
+| Arch | `gfx1100` only |
+| hipBLASLt table | `tools/hip/gfx1100-glm-hipblaslt-100202.txt` (unchanged) |
+
+## What changed upstream, and what it means for the image
+
+Checked against the `v1.1.53...v1.1.55` diff, not just the release notes:
+
+- **Build inputs are unchanged.** `setup.py` (llama.cpp pin, `PY_PACKAGES`, the HIP `compile_engine_hip` /
+  `compile_vision` flags) did not change, and `tools/hip/` kept the gfx1100 `100202` table. The Dockerfile,
+  `stamps.py` and the entrypoint needed no changes.
+- **CMakeLists**: the `q5_0` MMQ instances join the CUDA and HIP prefill source lists (Qwen's prompt experts; a
+  slightly longer compile), and `maya-mm3` gains a test target (`STRATA_BUILD_TESTS=OFF` here). No flag or target
+  change for `maya` / `maya-ds4` / `maya-vision`.
+- **`check_hip_pc` relaxations, additive**: Debian/Ubuntu ROCm-6.x layouts (and `MAYA_HIP_ALLOW_ROCM6=1` for
+  them), and CPUs without AVX2 no longer stop the start (the CPU expert lane falls back to ggml's kernels; the
+  check warns). Our image still builds `STRATA_PORTABLE=ON` with the AVX2 baseline asserted at build time, so it
+  stays narrower than upstream's new floor rather than broken; the hipcc/hipBLAS/`c++` requirements are untouched.
+- **Pack tools**: `tools/ds4/pack_gguf.py` and `vision_pack.py` did not change, so the DeepSeek pack is not
+  rebuilt; `tools/iq_pack.py` grew a Qwen-only branch (`arch == "qwen4exp"`), so the GLM pack is unaffected too.
+- **New engine defaults that reach our lanes at equal config** (`0` turns each off): `DS4_AI_RUN` on (indexer
+  slabs sized by the prompt; the same answers, +1.3-4 % prefill upstream), `MAYA_DS4_SPEC_HEAD` on (a layer's
+  first ring-worth of experts copied from pinned RAM before routing; the same sums, +3-7 % prefill),
+  `MAYA_DS4_DRAFT_SPREAD` on (DSpark blocks spread over a TP drafter group), the fast-link ring rule (the lane
+  pins `DS4_RING_MB=128`, so unchanged), `MAYA_DS4_LOAD_INTERLEAVE` on (load only), the server's
+  `MAYA_PROMPT_MEMO` on (the same token ids; ~6 % less per follow-up turn at 115K) and the engine's
+  `--decode-cache-every 1024` (checkpoints inside answers, the last two kept). `DS4_INDEX_TC` is now on by default
+  for gfx11 - the lane already pinned `=1`. GLM: the latent cache defaults to INT8 (`--kv fp16` or
+  `MAYA_GLM_KV_INT8=0` keeps FP16); the lane already pins `--kv int8`.
+- **Kept knobs verified in v1.1.55**: the GLM take-two labels `MAYA_GLM_MLA_ATTN2=h64lvc` /
+  `MAYA_GLM_DSA_SCORE2=rl2b4` still exist in the engine, and so do the DS4 knobs (`DS4_SPLIT`,
+  `DS4_CHUNK_GFX11`, `DS4_RING_MB`, the HC/route fusions, `--suffix-draft`). No lane config changed.
+- **Slot identity includes the engine version**, so each lane refuses its existing conversation slots on the first
+  start after the bump (logged, not an error): the DS4 RAM slots are rewritten at QUIT, the GLM disk slots
+  re-accumulate. `MAYA_PROMPT_MEMO` and the decode checkpoints add some server RAM on the 62 GiB host (watch
+  `MemAvailable` on the DS4 lane).
+- **Responses API**: Codex CLI works (#726: namespace tools, `reasoning.summary`, encrypted reasoning round
+  trip); upstream tested it on GLM-5.3-Flash and DeepSeek-V4.1-Flash. Our lanes do not use it.
+
+## Deployment
+
+`MAYA_REF` -> `v1.1.55` in `maya-image.yml`; `deploy/llama-swap.config.yaml` points both lanes
+(`dsv41f1017-iq2xxs`, `glm53f-iq2s-derisked`) at `ghcr.io/hurui200320/llm-ops-maya:1.1.55-rocm-gfx1100`.
+Dockerfile, `stamps.py`, `entrypoint.sh` and both lane configs are unchanged. The image digest and the lane
+gates/ladders are recorded in the next entry after the workflow push.
