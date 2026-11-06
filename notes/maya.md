@@ -304,3 +304,94 @@ Verified via llama-swap (`glm-5.3-flash-iq2s`, port 10002): ready in 28 s, ident
 4,569 VRAM experts, 35.98 GB RAM tier, NextN MTP on CUDA1), **7/7 gates passed** (chat, tool call, `reasoning_effort:
 none`, primes, fenced `sum_list`, 420×420 picture, and 3840×2160 4K picture → 10,579 prompt tokens), min free **445 MiB
 monitor / 286 MiB other**, `MemAvailable` min 13.5 GiB, swap +0.08 GiB.
+
+# 20261107 Maya 1.1.56 upgrade, #861 GLM repack, and 1.1.55 A/B
+
+Upgraded to `v1.1.56` (commit `22fc101f2c109b7e7174c975ff3c2d8e9ce0a867`, 36 commits over `v1.1.55`; llama.cpp
+`3cf03257…`, ROCm `7.2.1-complete` base, `gfx1100`, and the `100202` hipBLASLt table unchanged). Workflow run
+`42229293542` (30m16s) pushed `ghcr.io/hurui200320/llm-ops-maya:1.1.56-rocm-gfx1100`, digest
+`sha256:93723dbc266e3c309281b1f42ed7c4758009f06b0c9612740199f6d305edc7d4` (30,131,364,031 B). Both build gates
+passed unchanged: `setup.py`, `maya.py`, `pack_gguf.py`, `vision_pack.py`, `glm5next_patch.py` and `tools/hip/` are
+untouched in this release; the only build-relevant change is `tools/iq_pack.py` (#861). The same source/Dockerfile
+was also built locally on fedora-tuf first (30,130,492,108 B, `sha256:9c8ca28a…`) and smoke-tested (engines, ldd,
+stamps, venv) before the CI image landed; everything below ran on the CI image.
+
+## Upstream changes reaching our image and lanes
+
+- **#860 (GLM, two-GPU splits)**: since v1.1.52 the drafting decode could crash ("illegal memory access") or slow to
+  a crawl on some two-GPU PCs; a two-GPU split now drafts as in v1.1.51, and a draft with no valid token can no
+  longer read past its table. Our lanes never crashed on 1.1.53/1.1.55 and the 1.1.56 ladders show the same tg and
+  acceptance (below). The same release makes `MAYA_GLM_NO_SPEC`/`NO_MTP`/`NO_PREFILL` set to `0`/`false`/`off`/`no`/
+  empty mean off (none set in our configs).
+- **#861 (packer)**: `iq_pack.py` no longer rounds `exp_probs_b.bias` to BF16; the noaux_tc selection bias (288
+  values a layer, 42 layers) stays F32. The engine always read it as F32, so a 1.1.55-written pack loads unchanged
+  but keeps the BF16-rounded bias (BF16 left 6-11 distinct values of 288 a layer). Both GLM packs were rebuilt.
+- **#845**: a GLM request without `seed` now draws a fresh seed; a request seed (or `--seed`) still repeats exactly.
+- **#840**: a GLM conversation whose saved slot fails to load tries the next slot and then the checkpoint.
+- **#844**: DeepSeek's tool loop guard now fires on DSML tool calls (before it never did) - automatic, no config.
+- **#809**: on AMD, `DS4_AR_P2P` all-reduce buffers stay host-mapped whatever the BAR (the peer buffers hung the
+  first request on a pair of RX 7900 XTX - our cards); we never enable it.
+- EXL3-only changes (#834/#864 `EXL3_WMMA_SHAPE`, #849/#850/#851 helper knobs, #865/#866 EXL3 in place, #869
+  `MAYA_DS4_PROMPT_F16` on gfx103x, #870 `MAYA_DS4_EXPERT_MMQ` IQ1_S) do not apply: our lanes serve GGUF IQ quants
+  and have no EXL3 packs or third GPU. `MAYA_GLM_P2P` (#853) now takes any pair reporting peer access (was MI50
+  only); measured and rejected (notes/glm/5.3-flash.md 20261107).
+- Server: attachment support (#837: PDF/Word/Excel/... through the chat and the OpenAI/Anthropic file parts) lives in
+  `serve/attach.py`+`pdf*.py` - stdlib only, no new `setup.py` packages, poppler optional (not installed).
+
+## #861 GLM pack repack (both lanes)
+
+Rebuilt `/data/pack` in both GLM data trees with `tools/iq_pack.py --gguf <shard1> --out /data/pack --compat-bf16`
+from the new image (the setup's own invocation; `out.mkdir(exist_ok=True)` keeps `slots/`). Verified on both:
+`compat-bf16.json` 849 -> 807 converted tensors (42 `exp_probs_b.bias` gone), the index row's kind 4 (BF16) -> 2
+(F32), `dense.bin` 943,911,040 -> 943,935,232 B (+24,192 = 42 x 576), tensors 1,257 unchanged. The pre-repack pack
+(index, `dense.bin`, `compat-bf16.json`, `sources.json`, `native_experts.txt`) is kept at
+`<data>/pack-backup-1.1.55/`.
+
+## Slots
+
+- **DeepSeek**: 117 conversations / 7.21 GB from the 1.1.55 runs were reloaded by 1.1.56 unchanged. The DS4 session
+  identity carries the session ABI (`engine=0.1.27`, CMake `PROJECT_VERSION`), not the release version, and the pack
+  did not change.
+- **GLM**: the repack invalidates kept slots: the GLM session identity includes `index.txt`/`dense.bin`/
+  `native_experts.txt` sizes (plus the same ABI string), and `dense.bin` grew by 24,192 B. 1.1.56 removed the stale
+  conversations on first start (derisked 4 / 4.2 GB, vanilla 2 / 227 MB). Without the repack they would have
+  survived; a lane bump alone does not clear them.
+
+## Verification (official CI image)
+
+All three lanes, 7/7 functional gates each (chat `SMOKE-OK`; `get_weather` -> `{"city":"Paris"}`;
+`reasoning_effort: none` -> `42`; first five primes; fenced `def sum_list`; 420x420 picture; 3840x2160 picture). 4K
+pictures: GLM `prompt_tokens` 10,591 (137x77 grid, no downscale; the text part differs from 20261106's 10,579), DS4
+1,185 (1140 budget). Ready: DS4 20 s, GLM-derisked 31 s, GLM-vanilla 29 s. Placement: DS4 2,441 + 2,114 = 4,555
+experts in VRAM (manual [0,17]/[18,39] split, 36 GB store, 3,512 experts); GLM (both lanes) auto split
+[0,24)/[24,45)+MTP, 2,265 + 2,304 = 4,569 experts, RAM tier 17.57 + 18.41 GB, 16K chunks. #845 checked on the GLM
+lane: two unseeded sampled requests differ, `seed: 42` repeats exactly.
+
+## Interleaved 512k A/B (1.1.55 vs 1.1.56)
+
+Direct-container ladders on the repacked GLM packs (`--in-pcts 40,85 --out-pct 1 --reps 1`, `cache_n 0`, A/B/A/B):
+
+| Lane / level | 1.1.55 (r1 / r2) | 1.1.56 (r1 / r2) | Mean delta | VRAM floors (card0 / card1) & RAM |
+| --- | ---: | ---: | ---: | --- |
+| **DeepSeek** pp 40 % | 1,361.4 / 1,352.8 | 1,341.7 / 1,350.6 | -0.8 % | 1,002-1,021 / 626-644 MiB; `MemAvailable` 14 GiB |
+| **DeepSeek** tg 40 % | 26.9 / 27.2 | 26.2 / 26.7 | -2.2 % | - |
+| **DeepSeek** pp 85 % | 1,183.4 / 1,159.2 | 1,167.8 / 1,137.2 | -1.6 % | - |
+| **DeepSeek** tg 85 % | 27.6 / 27.9 | 27.3 / 27.7 | -0.9 % | - |
+| **GLM (derisked)** pp 40 % | 900.7 / 898.7 | 902.8 / 903.1 | +0.4 % | 273-286 / 437-449 MiB; `MemAvailable` 12-13 GiB |
+| **GLM (derisked)** tg 40 % | 18.9 / 18.9 | 19.1 / 18.8 | +0.3 % | - |
+| **GLM (derisked)** pp 85 % | 940.9 / 941.8 | 937.0 / 935.3 | -0.6 % | - |
+| **GLM (derisked)** tg 85 % | 19.3 / 17.9 | 18.2 / 20.0 | +2.7 % | - |
+
+All deltas are inside the run-to-run spread (+-3 %); no regression on either lane. GLM draft acceptance stayed in
+its usual band (1.1.55 0.740-0.785, 1.1.56 0.700-0.796): the #860 two-GPU drafting restore neither helps nor hurts
+this pair.
+
+## Tuning arms
+
+- **`DS4_CHUNK_GFX11=0`** (the new SETTINGS.md recommendation for a discrete RDNA 3 card): the engine still picks
+  the borrowed `prompt chunk 16384`, exactly as with our `16384` cap - on this two-GPU split the cap is not the
+  binding constraint. Ladder 1,358.7 / 1,180.7 pp and 26.7 / 28.1 tg at 40/85 % = the deployed cap within noise. No
+  change; `16384` stays (record: notes/deepseek/v41f1017.md 20261107).
+- **`MAYA_GLM_P2P=1`**: no gain (896.8 / 933.5 pp, 19.1 / 17.5 tg) and SETTINGS.md warns consumer-AMD peer access can
+  be unreliable (#809 hung on this card pair in the DS4 all-reduce path). Rejected (notes/glm/5.3-flash.md
+  20261107).

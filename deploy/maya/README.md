@@ -207,7 +207,7 @@ The engine knobs on that lane, in one line each (they exist only as engine envir
 | Knob | Why |
 | --- | --- |
 | `DS4_SPLIT=18,22` | layer split (maya CUDA0 gets layers [0,17], CUDA1 [18,39]+head). The auto planner balances *streamed expert bytes* and assumes both links are equal; on this pair the monitor card also carries the desktop's ~460 MiB, so it ends 21/19 and pays a lot for the marginal experts. Spreading towards the x4 card frees expert room on the monitor card: 4,559 experts in VRAM (auto 4,499), pp +41 % at 40 % and +44 % at 85 % |
-| `DS4_CHUNK_GFX11=16384` | raises gfx11's hard 4096 chunk cap so the engine's **borrowed** 16K prompt chunk engages: the chunk's row buffers overlay expert slots between prompts, so pp gains ~40 % at 210K *and* the resident chunk buffer shrinks (4,500 experts in VRAM instead of 4,076) |
+| `DS4_CHUNK_GFX11=16384` | raises gfx11's hard 4096 chunk cap so the engine's **borrowed** 16K prompt chunk engages: the chunk's row buffers overlay expert slots between prompts, so pp gains ~40 % at 210K *and* the resident chunk buffer shrinks (4,500 experts in VRAM instead of 4,076). Upstream now recommends `0` (the default chunk) for a discrete card; measured 2026-11-07 it resolves to the same borrowed 16K chunk on this split (same pp/tg within noise), so the explicit cap is equivalent here ([notes/deepseek/v41f1017.md](../../notes/deepseek/v41f1017.md) 20261107) |
 | `DS4_RING_MB=128` | caps the prompt ring (the default sizes it from the card's link: 394 MB on the x16 monitor card); pp-neutral, +28 experts |
 | `DS4_HC_STREAM=1` | keeps the hybrid-cache mix/split on the layer's own stream (HIP defaults to a side stream): +4 % tg, bit-identical math |
 | `DS4_HC_MIX_SPLIT=2` | one launch for a window's hc_mix + hc_split on the side stream (exact, load-checked) |
@@ -250,25 +250,33 @@ both lanes. Baseline is the setup's own config
 | `vision.max_tokens=12288` | the picture budget (prompt tokens) `maya-vision` resizes each image to. GLM's tower is 1 token per 28x28 px (patch 14 x merge 2 = 784 px), so a naive 4K (3840x2160) needs **10,549** tokens and 4096x2160 needs 11,244; 12288 feeds both un-downscaled. Unset, the server auto-fits 4096/2048/1024 by the encoder's measured VRAM (15% rule) - 4096 on these cards, which downscales 4K to ~2380x1344. The Qwen3.8-Flash-Next strata reference (`VISION_TOKENS=8192`) is **not** enough here: its tower is 1 token per 1024 px (patch 16), GLM's is ~30% denser |
 | `VISION_FOOTPRINT_MB=4711` | the episode's other half: the encoder's VRAM lend. The server sizes it from `maya-vision --measure`, whose warm-up is a fixed 2048x2048 picture (**5,329 tokens** here), so at 12288 the measurement covers only half a 4K picture's patches and under-covers the peak by ~750 MiB - the encoder then dips into the monitor reserve (28-35 MiB free at a 4K turn). The entrypoint pins the cached footprint to **4711 MiB** (a real 4K picture's peak measured ~4.14 GB plus slack) under the key the server would use, so the engine lends ~4.6 GiB from the expert pool's tail only while a picture encodes: the 4K turn then keeps **1164 MiB** free on the monitor card and the reserve stays 1200 (the monitor pool keeps 2,265 experts, +90 over the 1950 reserve, back to the 1.1.55 level). Drop the pin when the upstream warm-up scales with the budget ([notes/TODO.md](../../notes/TODO.md)) |
 
-Measured on the deployed config (2026-11-06, Maya 1.1.55, 512k ladder, `cache_n 0`, interleaved A/B against
-1.1.53): pp/tg unchanged within the run-to-run spread (pp ~901 / ~935 t/s, tg ~19.4 / ~20.0 t/s at 40 / 85 %),
-auto split [0,24) / [24,45)+MTP, int8 KV, 16K chunks, **min free VRAM 437-453 MiB monitor / 271-274 MiB
-other**, 13.0 GiB MemAvailable, swap flat, 6/6 functional gates. The 4K picture turn (2026-11-06, camera
-check): `prompt_tokens` 10,579 = the 137x77 grid with no downscale, answer correct, **527 MiB monitor free
-idle, 1164 MiB during the turn** (349 MiB on the other card), 2,265 + 2,304 = 4,569 experts in VRAM; the
-encoder lends 4.76 GB from the pool for the ~15 s encode and gives it back. The tuning arms, the
-1.1.53 numbers and the against-setup deltas: [notes/glm/5.3-flash.md](../../notes/glm/5.3-flash.md); the
-1.1.55 A/B and the picture budget: [notes/maya.md](../../notes/maya.md) 20261106. Ready in ~30 s cold, stop
-1-2 s.
+Kept slots and pack rebuilds: the GLM session identity carries the session ABI (`engine=0.1.27`) **and the pack
+files' sizes** (`index.txt`, `dense.bin`, `native_experts.txt`), so an engine bump alone keeps the conversations but a
+pack rebuild clears them - the #861 F32-bias repack made 1.1.56 remove 4 stale conversations (4.2 GB) on the derisked
+lane and 2 (227 MB) on the vanilla one. The DeepSeek identity carries the ABI plus `ds4.txt`/`engram.bin`/
+`tensors.txt` and the shard sizes (no pack rebuilds in practice): its 117 conversations (7.21 GB) survived the
+1.1.55 -> 1.1.56 bump. Records: [notes/maya.md](../../notes/maya.md) 20261107.
 
-The vanilla lane's first start (2026-11-06, same config) matches it line for line: auto split `[0,24)` /
+Measured on the deployed config (2026-11-07, Maya 1.1.56, 512k ladder, `cache_n 0`, interleaved A/B against
+1.1.55): pp/tg unchanged within the run-to-run spread (pp ~903 / ~936 t/s, tg ~19.0 / ~19.1 t/s at 40 / 85 %),
+auto split [0,24) / [24,45)+MTP, int8 KV, 16K chunks, **min free VRAM 437-449 MiB monitor / 273-286 MiB
+other**, 12-13 GiB MemAvailable, swap flat, 7/7 functional gates. The 4K picture turn (2026-11-06, camera
+check; config unchanged): `prompt_tokens` 10,579 = the 137x77 grid with no downscale, answer correct, **527 MiB
+monitor free idle, 1164 MiB during the turn** (349 MiB on the other card), 2,265 + 2,304 = 4,569 experts in VRAM;
+the encoder lends 4.76 GB from the pool for the ~15 s encode and gives it back (the 1.1.56 gate run repeats it at
+10,591 tokens, no downscale). The tuning arms, the 1.1.53 numbers and the against-setup deltas:
+[notes/glm/5.3-flash.md](../../notes/glm/5.3-flash.md); the 1.1.56 A/B, the #861 repack and the picture budget:
+[notes/maya.md](../../notes/maya.md) 20261107. Ready in ~31 s cold, stop 1-2 s.
+
+The vanilla lane (2026-11-06 bring-up, same config) matches it line for line: auto split `[0,24)` /
 `[24,45)+MTP`, 2,265 + 2,304 = 4,569 experts, int8 KV, 16K chunks, 35.98 GB RAM tier; ready in 28 s; 7/7
 functional gates including the 4K picture (`prompt_tokens` 10,579, no downscale); min free VRAM 445 / 286 MiB,
-13.5 GiB `MemAvailable`, swap flat. Record: [notes/maya.md](../../notes/maya.md) 20261106.
+13.5 GiB `MemAvailable`, swap flat. Its 1.1.56 restart repeats 7/7 gates and 10,591 picture tokens. Record:
+[notes/maya.md](../../notes/maya.md) 20261106/20261107.
 
 The kept knobs above are what moves this lane; the rejected ones (per-card CPU lanes, promotion limits,
-`SPEC_WIN`, `MV_RDNA`, `GU22_TUNED`, DFlash2, a manual split, a 40 GB RAM tier) and the reasons are in
-[notes/glm/5.3-flash.md](../../notes/glm/5.3-flash.md). The layer split is auto on purpose: moving layers
+`SPEC_WIN`, `MV_RDNA`, `GU22_TUNED`, DFlash2, a manual split, a 40 GB RAM tier, `MAYA_GLM_P2P`) and the reasons are
+in [notes/glm/5.3-flash.md](../../notes/glm/5.3-flash.md). The layer split is auto on purpose: moving layers
 to the monitor card buys up to +11.6 % pp but costs 6-13 % tg (the pipelined decode costs the slower
 part), and tg is this lane's weak axis.
 
