@@ -665,9 +665,21 @@ models:
   # each maya lane mounts only its own config folder and points CONFIG_SRC at it (the macro mounts none), so a
   # second config can never take the other lane over on its next restart. The -e and the mount below are the
   # lane's own declared state.
+  #
+  # Picture budget: the lane config sets vision.max_tokens=12288 (the server passes it to maya-vision as
+  # --max-tokens, overriding the mmproj's 8000). GLM's tower is 1 token per 28x28 px (784 px), so a naive 4K
+  # 3840x2160 = 10,549 tokens and 4096x2160 = 11,244; 12288 feeds both without downscaling. The Qwen3.8
+  # Flash-Next strata lanes' VISION_TOKENS=8192 sits on a 1024-px/token tower (8160 tokens for the same 4K)
+  # and is not enough for GLM's denser one. Unset, the server auto-fits 4096/2048/1024 by VRAM (15% rule).
+  # The budget also needs the encoder's lend to cover a real 4K picture: maya-vision's measurement warm-up is a
+  # fixed 2048x2048 picture (5,329 tokens here), so above that the measurement under-covers by ~750 MiB and the
+  # encoder would dip into the monitor card's reserve. VISION_FOOTPRINT_MB=4711 (the repo entrypoint) pins the
+  # cached footprint to a real 4K picture's peak instead; the lend then comes out of the expert pool's tail only
+  # while a picture encodes, and the reserve stays the desktop's headroom (notes/maya.md 20261106). Drop the
+  # pin with the upstream warm-up fix (notes/TODO.md).
   "glm-5.3-flash-iq2s-derisked":
     name: "GLM 5.3 Flash Maya-M-Derisked IQ2_S"
-    description: "524288 ctx, maya GLM engine, int8 KV, 36 GB RAM expert tier, 4 disk slots, vision, MTP drafting"
+    description: "524288 ctx, maya GLM engine, int8 KV, 36 GB RAM expert tier, 4 disk slots, vision 12288 tok (4K un-downscaled), MTP drafting"
     cmd: |
       ${docker-server-maya-rocm}
         -v /mnt/unenc-xfs/maya/glm53f-iq2s-derisked:/data
@@ -676,6 +688,7 @@ models:
         -v /mnt/unenc-xfs/models/maya/glm53f-maya-m-derisked/GLM-5.3-Flash-Maya-M-Derisked-IQ2_S-00003-of-00003.gguf:/data/GLM-5.3-Flash-Maya-M-Derisked-IQ2_S-00003-of-00003.gguf:ro
         -v /mnt/unenc-xfs/llm-ops/deploy/maya/configs/glm53f-iq2s-derisked:/repo-configs-glm:ro
         -e CONFIG_SRC=/repo-configs-glm
+        -e VISION_FOOTPRINT_MB=4711
         ghcr.io/hurui200320/llm-ops-maya:1.1.55-rocm-gfx1100
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}

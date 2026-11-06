@@ -45,7 +45,8 @@
     "exe": "/opt/maya/build-vision/bin/maya-vision",
     "mmproj": "/data/vision/mmproj-GLM-5.3-Flash-F16.gguf",
     "model": "/data/vision/GLM-5.3-Flash-vocab.gguf",
-    "gpu": true
+    "gpu": true,
+    "max_tokens": 12288
   },
   "log": "/opt/maya/maya-glm53f-iq2s-derisked-hip.log",
   "installer": {

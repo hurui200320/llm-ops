@@ -662,3 +662,82 @@ defaults are the plausible source; 40 % is flat) with decode unchanged; the GLM 
 spread. Floors and host RAM are untouched on both. `deploy/llama-swap.config.yaml` points both lanes at
 `1.1.55-rocm-gfx1100`; no lane config changed; the runner is left with no container running (llama-swap starts
 the lanes on demand).
+
+# 20261106 GLM picture budget: vision.max_tokens=12288 (4K un-downscaled) and the idle reserve reclaimed
+
+**Goal**: feed the same naive 4K picture the Qwen3.8-Flash-Next lanes already read un-downscaled. Those lanes
+pin `VISION_TOKENS=8192` / `VISION_MIN_TOKENS=1024` on a patch-16 x merge-2 tower (32-px cells = **1024 px per
+token**), so 3840x2160 = 8160 tokens fits 8192 (notes/strata.md 20261027). GLM's tower is patch-14 x merge-2
+(28-px cells = **784 px per token**, `glm5next_mmproj.py` + `glm5next_patch.py`), i.e. ~30 % denser: 3840x2160
+needs **10,549** tokens (3836x2156 after 28-px alignment, 137x77 grid) and 4096x2160 needs 11,244. Copying
+8192 verbatim would still downscale. **Chosen: 12288** (covers both, ~9-16 % headroom).
+
+## The knob
+
+The lane config's `vision.max_tokens` is the only setting: `serve/server.py` passes it to `maya-vision` as
+`--max-tokens`, which lands in mtmd's `image_max_tokens` and overrides the mmproj metadata default (8000;
+`glm5next_mmproj.py` writes `clip.vision.image_max_tokens`). Without it the server auto-fits the largest of
+4096/2048/1024 whose measured footprint fits 15 % of the card - 4096 here, which downscaled 4K to ~2380x1344.
+`deploy/maya/configs/glm53f-iq2s-derisked/maya-glm53f-iq2s-derisked-hip.json` now carries `"max_tokens": 12288`
+(the entrypoint's diff summary on the first restart showed the added key and replaced the live copy).
+
+## Verified (llama-swap, production path, fedora-tuf)
+
+A 3840x2160 left-red/right-blue PNG through `/v1/chat/completions`: `usage.prompt_tokens` **10,579**
+(10,549 image + 30 text, exactly the predicted grid - no downscale), answer "The left half is red and the
+right half is blue."; the server measured the encoder as **2.96 GB at up to 12288 image tokens** and lends
+**3.40 GB** on demand (`glm fast: CUDA0 the vision encoder borrows the pool's tail (3.40 GB) while it
+encodes` ... `are back in the expert pool`). Encode + 10.5K-token prefill: ~15 s encode, ~17 s prompt read.
+
+## Found: the lend under-covers caps above 5,329 tokens
+
+`maya-vision --measure` warms up with a 2048x2048 picture (5,329 tokens after the 28-px alignment). At the old
+auto caps (<=4096) the warm-up is above `max_pixels`, so mtmd scales it down to exactly the cap and the lend is
+right. At 12288 the warm-up stays at 2048x2048 (no scale-up path), while a real 4K picture is 42,196 patches vs
+the warm-up's 21,316 - the encoder's peak is ~**755 MiB** past the measured 3.40 GB lend, and it comes out of
+the monitor card's reserve, not the pool. Measured 4K-turn floors on sysfs `mem_info_vram_used` (card1 =
+monitor / CUDA0, card0 = other / CUDA1):
+
+| state | idle free monitor | 4K picture turn | text prompt (9K) |
+|---|---:|---:|---:|
+| reserve 1200, measured lend 3.40 GB | 527 | **35** | 437-453 (1.1.55 ladder) |
+| reserve 1650, measured lend | 977 | 222 | - |
+| reserve 1950, measured lend | 1277 | 522 | 1193 |
+| **reserve 1200 + pinned 4.76 GB lend** | **527** | **1164** | **443** |
+
+The first three sizes the reserve around the shortfall (522/349 met the 400/200 target at 1950) but leave
+~750 MiB idle on the monitor card whenever no picture is encoded - most of the time. The kept solution is the
+last row: **pin the encoder's footprint instead of padding the reserve**.
+
+## The pin: `VISION_FOOTPRINT_MB=4711`
+
+The server caches the measured footprint in `/data/config/vision-memory.json`, keyed by the mmproj (path, size,
+mtime), the first GPU, the picture budget and flash attention; the engine lends the encoder that many bytes from
+the expert pool's tail while it encodes. `deploy/maya/entrypoint.sh` now accepts `VISION_FOOTPRINT_MB` and
+writes that entry at every start - the same pattern as the DeepSeek budget rewrite - and the lane passes
+`-e VISION_FOOTPRINT_MB=4711` (a real 4K picture's peak: ~4.14 GB measured, plus slack). The engine then lends
+**4.76 GB** (`210 experts moved to colder slots, 378 dropped` for the ~15 s encode, all back after), instead of
+3.40 GB. Verified on the production path:
+
+- 3840x2160 through `/v1/chat/completions`: `prompt_tokens` **10,579** (10,549 image + 30 text - the 137x77
+  grid, no downscale), answer "The left half is red and the right half is blue."; ~15 s encode, ~17 s read.
+- Headroom (targets >=400 monitor / >=200 other during inference): **527 MiB idle, 1164 MiB during the 4K
+  turn, 443 / 279 MiB on a fresh 9K text prompt** (349 MiB on the other card during the turn).
+- Pool back to **2,265 + 2,304 = 4,569 experts** (`CUDA0 18.31 GB`, split still auto `[0,24)`/`[24,45)`) -
+  +90 on the monitor card against the 1950 reserve, i.e. the idle reserve is now VRAM the model uses.
+- The server prints `the vision encoder needs 4.60 GB ... at up to 12288 image tokens`; the entrypoint prints
+  `vision footprint pinned: mmproj-GLM-5.3-Flash-F16.gguf cap 12288: footprint 4711 MiB`.
+
+Caveats: 4711 MiB is measured for this tower/budget (GLM-5.3-Flash, 12288) - another model or budget needs its
+own value, and the pin must be dropped if `vision.max_tokens`/the mmproj/flash-attention changes (its cache key
+would miss, the server would re-measure and the shortfall returns: with reserve 1200 the 4K turn dipped to
+28-35 MiB, no crash).
+
+## Follow-up (TODO.md)
+
+`tools/vision/strata_vision.cpp` should warm up at the configured cap (side = 28 x ceil(sqrt(max_tokens)) or
+similar) instead of a fixed 2048, so `--measure` sees the true peak and the lend covers it; `VISION_FOOTPRINT_MB`
+could then go. Needs a Maya image rebuild - not done here.
+
+Config: `deploy/maya/configs/glm53f-iq2s-derisked/`; lane description/comment: `deploy/llama-swap.config.yaml`;
+knob rows: `deploy/maya/README.md`.

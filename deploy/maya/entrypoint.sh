@@ -31,6 +31,13 @@
 #                      (pack_gguf.py writes Maya's default 1024). The strata fork's change 6, mirrored.
 #   DS4_VISION_MIN_PIXELS  DeepSeek: upscale a small picture to at least this many pixels (the pack's
 #                      vision.min_pixels). Unset: the pack keeps its own value.
+#   VISION_FOOTPRINT_MB  the on-demand GPU vision encoder's footprint (MiB): pinned into
+#                      /data/config/vision-memory.json under the key the server would measure at this config's
+#                      picture budget, so the engine lends the encoder that much from the expert pool's tail
+#                      while it encodes. Needed when vision.max_tokens exceeds the encoder's fixed 2048x2048
+#                      measurement warm-up (5,329 tokens on GLM-5.3-Flash's tower): the measurement then
+#                      under-covers a real picture and the encoder dips into the card's reserve
+#                      (notes/maya.md 20261106). Unset: the server measures.
 #
 # Everything the container writes lives in /data: configs in /data/config (maya.py writes them into its own
 # folder, which is the container layer), the derived pack and vision tower beside the read-only shards at
@@ -283,6 +290,64 @@ PY
             "-v <shards folder>:$MODEL_MOUNT:ro (deploy/maya/README.md). Nothing was started." >&2
         exit 2
     fi
+fi
+
+# ---- The on-demand vision encoder's footprint. The server measures it once (`maya-vision --measure`) and caches
+# it in /data/config/vision-memory.json under a key of mmproj (path, size, mtime), first GPU, picture budget and
+# flash attention; the engine lends the encoder that many bytes from the expert pool's tail while it encodes.
+# The warm-up is a fixed 2048x2048 picture - 5,329 tokens on GLM-5.3-Flash's tower (1 token per 28x28 px) - so a
+# picture budget above that is never exercised: the measured footprint under-covers a real picture by the extra
+# work buffers, and the encoder takes the difference from the card's reserve (measured ~750 MiB at 12288:
+# 2.96 GB measured vs ~4.14 GB for a real 4K picture; notes/maya.md 20261106). VISION_FOOTPRINT_MB pins the
+# cached entry to that many MiB instead - the lend covers the real picture, the reserve stays the desktop's
+# headroom, and the pool keeps the experts a larger permanent reserve would have cost. Remove the pin when the
+# upstream warm-up scales with the budget (notes/TODO.md).
+if [ -n "${VISION_FOOTPRINT_MB:-}" ] && [ -n "$cfg" ]; then
+    case "$VISION_FOOTPRINT_MB" in *[!0-9]*) echo "maya: VISION_FOOTPRINT_MB=$VISION_FOOTPRINT_MB is not a whole number. Nothing was started." >&2; exit 2 ;; esac
+    if ! pinned="$(python3 - "$cfg" "$CONFIG_DIR/vision-memory.json" "$VISION_FOOTPRINT_MB" <<'PY'
+import json, os, sys
+
+cfg_path, cache_path, mb = sys.argv[1], sys.argv[2], int(sys.argv[3])
+try:
+    cfg = json.load(open(cfg_path, encoding="utf-8-sig"))
+except (OSError, ValueError):
+    raise SystemExit(0)
+v = cfg.get("vision") or {}
+mmproj = v.get("mmproj")
+if not mmproj:
+    raise SystemExit(0)                      # images off: the server measures no encoder
+st = os.stat(mmproj)
+g = cfg.get("gpu")
+gpu = 0
+if isinstance(g, (list, tuple)):
+    gpu = int(g[0]) if g else 0
+elif g not in (None, ""):
+    gpu = int(str(g).split(",")[0])
+cap = int(v.get("max_tokens") or 0)
+fa = 0 if v.get("no_flash_attn") else 1
+key = f"{os.path.realpath(mmproj)}|{st.st_size}|{int(st.st_mtime)}|gpu{gpu}|cap{cap}|fa{fa}"
+try:
+    cache = json.load(open(cache_path, encoding="utf-8"))
+except (OSError, ValueError):
+    cache = {}
+if not isinstance(cache, dict):
+    cache = {}
+entry = cache.get(key)
+if not isinstance(entry, dict):
+    entry = {"total": 1}                     # (read only for the budget fit, which an explicit cap skips)
+entry["bytes"] = mb << 20
+cache[key] = entry
+tmp = cache_path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(cache, f, indent=1)
+os.replace(tmp, cache_path)
+print(f"{os.path.basename(mmproj)} cap {cap}: footprint {mb} MiB")
+PY
+    )"; then
+        echo "maya: could not pin the vision encoder's footprint in $CONFIG_DIR/vision-memory.json. Nothing was started." >&2
+        exit 2
+    fi
+    [ -n "$pinned" ] && echo "maya: vision footprint pinned: $pinned (VISION_FOOTPRINT_MB)"
 fi
 
 # ---- DeepSeek picture budget (the strata fork's change 6, mirrored). The engine carries its own vision tower and
