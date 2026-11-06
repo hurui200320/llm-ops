@@ -587,9 +587,9 @@ Checked against the `v1.1.53...v1.1.55` diff, not just the release notes:
 - **Kept knobs verified in v1.1.55**: the GLM take-two labels `MAYA_GLM_MLA_ATTN2=h64lvc` /
   `MAYA_GLM_DSA_SCORE2=rl2b4` still exist in the engine, and so do the DS4 knobs (`DS4_SPLIT`,
   `DS4_CHUNK_GFX11`, `DS4_RING_MB`, the HC/route fusions, `--suffix-draft`). No lane config changed.
-- **Slot identity includes the engine version**, so each lane refuses its existing conversation slots on the first
-  start after the bump (logged, not an error): the DS4 RAM slots are rewritten at QUIT, the GLM disk slots
-  re-accumulate. `MAYA_PROMPT_MEMO` and the decode checkpoints add some server RAM on the 62 GiB host (watch
+- **Slots across the bump**: the engine version is not part of the slot identity in 1.1.55 - both lanes read
+  their existing slots back on the first start (DS4 13 conversations / 2.69 GB, GLM 1 / 1.78 GB; verified at
+  deployment). `MAYA_PROMPT_MEMO` and the decode checkpoints add some server RAM on the 62 GiB host (watch
   `MemAvailable` on the DS4 lane).
 - **Responses API**: Codex CLI works (#726: namespace tools, `reasoning.summary`, encrypted reasoning round
   trip); upstream tested it on GLM-5.3-Flash and DeepSeek-V4.1-Flash. Our lanes do not use it.
@@ -600,3 +600,65 @@ Checked against the `v1.1.53...v1.1.55` diff, not just the release notes:
 (`dsv41f1017-iq2xxs`, `glm53f-iq2s-derisked`) at `ghcr.io/hurui200320/llm-ops-maya:1.1.55-rocm-gfx1100`.
 Dockerfile, `stamps.py`, `entrypoint.sh` and both lane configs are unchanged. The image digest and the lane
 gates/ladders are recorded in the next entry after the workflow push.
+
+# 20261106 Maya 1.1.55: image, gates and the 1.1.53 A/B (deployment verified)
+
+The workflow (run 42174794939, 30m, success) pushed `ghcr.io/hurui200320/llm-ops-maya:1.1.55-rocm-gfx1100`,
+digest `sha256:04ac792dac37ebe7768df1a433e4bc3bf644ad149bc3ac09a69cd7b86c759463` (30,126,717,744 B; base
+`rocm/dev-ubuntu-24.04@sha256:3db551c4e1229aac1857ac44fcb6141bb749f41348eb572452f11279153c13c3`, unchanged).
+Both lanes ran it through llama-swap on fedora-tuf, and the runner checkout stayed clean.
+
+## Functional gates (llama-swap, production path)
+
+**6/6 on each lane**: `SMOKE-OK` (`finish_reason stop`); `get_weather` -> `tool_calls {"city": "Paris"}`;
+`reasoning_effort: none` -> `42` with no reasoning block; the first five primes `2, 3, 5, 7, 11`; a fenced
+`sum_list`; the 420x420 red/blue picture -> "left: red, right: blue".
+
+Startup logs: `maya-ds4 1.1.55 (build c4effee67cb95fb4303720919b075fddf04b4e69)`; the GLM banner `Project
+Maya v1.1.55`; the DS4 indexer's WMMA line on both gfx1100s; prompt chunk 16384; RAM store 3,512 / 36.0 GB;
+10,823 CPU-lane experts; **4,537 experts in VRAM** against 4,557 on 1.1.53 (-20, -0.4 %: the 128-row
+`DS4_AI_RUN` indexer buffers and the spec-head staging), load free 1,642 / 1,640 MiB. **The slots survived the
+bump**: the DS4 lane read back its 13 conversations (2.69 GB) and the GLM lane its 1 (1.78 GB) - the engine
+version is not part of the slot identity.
+
+## A/B: 512k ladder, interleaved
+
+Method: direct containers on the production data trees with the exact lane recipe (macro, mounts, `CONFIG_SRC`,
+`PACK_BUILD`, `DS4_VISION_TOKENS`), 1.1.53 vs 1.1.55, two passes per arm interleaved (A, B, A, B), `--reps 1`,
+`--in-pcts 40,85 --out-pct 1`, `cache_n 0` verified on every rep, VRAM/RAM/swap sampled every 5 s. Host
+fedora-tuf, the same session.
+
+DeepSeek (`DS4_SPLIT=18,22`, chunk 16384, ring 128, reserve 1664, slots 8 / 6 GB):
+
+| level | 1.1.53 r1 / r2 | 1.1.55 r1 / r2 | mean delta |
+|---|---:|---:|---:|
+| pp 40 % | 1,339.1 / 1,331.4 | 1,331.0 / 1,335.3 | -0.2 % |
+| tg 40 % | 27.0 / 27.1 | 26.6 / 27.0 | -0.9 % |
+| pp 85 % | 1,130.8 / 1,125.8 | 1,176.9 / 1,159.9 | **+3.6 %** |
+| tg 85 % | 27.4 / 27.8 | 27.5 / 27.8 | +0.2 % |
+
+Floors (card0 / card1 free): 1,005 / 632 and 1,004 / 633 MiB (1.1.53) against 1,014 / 645 and 1,005 / 640
+(1.1.55); `MemAvailable` 14.4-14.7 GiB on every arm. The swap spikes (4.5-19.8 GiB) are host noise and do not
+follow the arm. The 1.1.53 post-split reference (1,323 / 1,169 pp, 26.65 / 27.10 tg) is confirmed by arm A.
+
+GLM (`MAYA_GLM_RESERVE_MB=1200` / `LATER=650`, int8 KV, prefill 16384 / 6144, take-two, RAM tier 36):
+
+| level | 1.1.53 r1 / r2 | 1.1.55 r1 / r2 | mean delta |
+|---|---:|---:|---:|
+| pp 40 % | 895.6 / 899.8 | 900.2 / 902.5 | +0.4 % |
+| tg 40 % | 19.6 / 19.3 | 19.5 / 19.2 | -0.5 % |
+| pp 85 % | 925.3 / 932.1 | 937.4 / 932.4 | +0.7 % |
+| tg 85 % | 18.8 / 19.8 | 19.7 / 20.2 | +3.4 % (inside the +-5 % spread; 1.1.53 r2 19.8 overlaps) |
+
+Floors: 271 / 434 and 274 / 437 MiB (1.1.53) against 274 / 437 and 274 / 453 (1.1.55) at the deployed
+1200 / 650 - the monitor card (card1) ~437-453 MiB, the other (card0) ~271-274 MiB, i.e. ~50-70 and ~26-30
+MiB under the old >=500 / >=300 targets since the 1500/700 -> 1200/650 tweak (both arms alike).
+`MemAvailable` min 13.05-13.10 GiB; swap flat (1.36-1.39 GiB).
+
+## Verdict
+
+A parity+ bump: the DeepSeek lane gains **+3.6 % prefill at 85 % of 512k** (the `DS4_AI_RUN` / spec-head
+defaults are the plausible source; 40 % is flat) with decode unchanged; the GLM lane is unchanged within the
+spread. Floors and host RAM are untouched on both. `deploy/llama-swap.config.yaml` points both lanes at
+`1.1.55-rocm-gfx1100`; no lane config changed; the runner is left with no container running (llama-swap starts
+the lanes on demand).

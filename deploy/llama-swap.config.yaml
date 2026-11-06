@@ -667,7 +667,7 @@ models:
   # lane's own declared state.
   "glm-5.3-flash-iq2s-derisked":
     name: "GLM 5.3 Flash Maya-M-Derisked IQ2_S"
-    description: "524288 ctx, maya GLM engine, fp16 KV, 36 GB RAM expert tier, 4 disk slots, vision, MTP drafting"
+    description: "524288 ctx, maya GLM engine, int8 KV, 36 GB RAM expert tier, 4 disk slots, vision, MTP drafting"
     cmd: |
       ${docker-server-maya-rocm}
         -v /mnt/unenc-xfs/maya/glm53f-iq2s-derisked:/data
@@ -686,7 +686,7 @@ models:
     concurrencyLimit: 20
     # Declared, not probed: maya's /v1/models omits `owned_by` (same as the DS4/Strata lanes). Tools on: the server
     # translates GLM's tool calls into OpenAI tool_calls and Anthropic tool_use (the smoke gate checks one).
-    # Context: the GLM engine's 512k, fp16 KV (the engine's default; no --kv in the config), streamed past 32768.
+    # Context: the GLM engine's 512k, int8 KV, streamed past 32768.
     capabilities:
       in: [text, image]
       out: [text]

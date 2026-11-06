@@ -1,6 +1,6 @@
 ---
 name: Upgrade Inference Engine
-description: Standard operating procedure for upgrading inference engines (such as llama.cpp and Strata). Use whenever checking for updates, evaluating new releases/commits, or upgrading inference engine images and version pins.
+description: Standard operating procedure for upgrading inference engines. Use whenever checking for updates, evaluating new releases/commits, or upgrading inference engine images and version pins.
 ---
 
 # Skill: upgrade-inference-engine
