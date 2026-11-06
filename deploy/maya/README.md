@@ -190,8 +190,8 @@ Per-start settings (context, expert cache…) live in the config; the dashboard 
 ### Configs from the repo (lanes)
 
 `deploy/maya/configs/` holds version-controlled configs for lanes, **one subfolder per lane** named after the
-llama-swap model id (`dsv41f1017-iq2xxs/`, `glm53f-iq2s-derisked/`), each holding one `maya-*-hip.json` so the
-entrypoint's glob finds it. Each lane mounts **its own** folder read-only and points `CONFIG_SRC` at it (the
+llama-swap model id (`dsv41f1017-iq2xxs/`, `glm53f-iq2s-derisked/`, `glm53f-iq2s/`), each holding one `maya-*-hip.json`
+so the entrypoint's glob finds it. Each lane mounts **its own** folder read-only and points `CONFIG_SRC` at it (the
 llama-swap macro mounts none): the entrypoint serves the newest copied JSON, so a shared folder would let one
 lane's config take over the other on its next restart. The entrypoint copies the JSON into `/data/config` at
 **every** start, so the repo file is the declared state (the equivalent of the strata fork's `STRATA_SET` env)
@@ -221,15 +221,20 @@ placing experts, and the run-time floor is ~`reserve - 648 MiB - the monitor car
 (measured with the split: 598 MiB free on the monitor, 1,015 on the other card during the 85 % prefill).
 Raising it costs ~12 experts a card per 100 MiB; lowering it eats the desktop's headroom first.
 
-### GLM lane (Maya-M-Derisked)
+### GLM lanes (Maya-M and Maya-M-Derisked)
 
-`configs/glm53f-iq2s-derisked/maya-glm53f-iq2s-derisked-hip.json` is the lane's config, in its own subfolder
-like every lane (see "Configs from the repo"): the lane mounts only that folder and points `CONFIG_SRC` at it.
-Baseline is the setup's own config
+Two GLM-5.3-Flash lanes share one tuned configuration, one quant each:
+`configs/glm53f-iq2s-derisked/maya-glm53f-iq2s-derisked-hip.json` (llama-swap `glm-5.3-flash-iq2s-derisked`,
+Maya-M-Derisked) and `configs/glm53f-iq2s/maya-glm53f-iq2s-hip.json` (llama-swap `glm-5.3-flash-iq2s`, the vanilla
+Maya-M). Each config sits in its own subfolder like every lane (see "Configs from the repo"): a lane mounts only
+its folder and points `CONFIG_SRC` at it. The vanilla lane is the derisked lane's configuration copied 1:1 -
+same args, env and vision values; only the shards, the lane data tree, the config folder and the config's
+`model_name`/`log` differ (the quant has identical shard sizes and pack layout) - so the table below applies to
+both lanes. Baseline is the setup's own config
 (`maya.py --setup --backend hip --gpus 0,1 --gguf-dir /data --context 524288`), ported with the knobs below:
 `--glm-pack /data/pack --max-context 524288 --expert-cache auto --prefill 16384 --kv-streaming on
 --expert-profile /opt/maya/data/expert-profile-glm.bin`. Tuning record, arms and numbers:
-[notes/glm/5.3-flash.md](../../notes/glm/5.3-flash.md).
+[notes/glm/5.3-flash.md](../../notes/glm/5.3-flash.md), deployment records: [notes/maya.md](../../notes/maya.md).
 
 | Setting | Why |
 | --- | --- |

@@ -741,3 +741,47 @@ could then go. Needs a Maya image rebuild - not done here.
 
 Config: `deploy/maya/configs/glm53f-iq2s-derisked/`; lane description/comment: `deploy/llama-swap.config.yaml`;
 knob rows: `deploy/maya/README.md`.
+
+# 20261106 GLM-5.3-Flash Maya-M (vanilla) lane: `glm-5.3-flash-iq2s`
+
+Second GLM lane on the GLM engine, next to the derisked one: the **vanilla** Maya-M quant
+(`peasantsmith/GLM-5.3-Flash-Maya-GGUF`, folder `Maya-M`, `GLM-5.3-Flash-Maya-M-IQ2_S`, 3 shards,
+47.68 + 47.82 + 20.50 = 116.0 GB - identical sizes to Maya-M-Derisked and the same IQ2_S gate/up + IQ3_XXS
+down mix, MTP block inside the shards). User direction: the derisked lane's tuned settings copied 1:1, one
+quant over; no new tuning pass.
+
+## Provisioning (setup one-shot, per-file binds)
+
+Same layout as the derisked lane (20261105 entry above): the GLM engine opens the shards as siblings of the
+pack, so the 3 production files are bound READ-ONLY per file at `/data/<shard>.gguf` in the lane tree
+`/mnt/unenc-xfs/maya/glm53f-iq2s`, and the setup runs with `--gguf-dir /data`:
+
+    docker run ... -v /mnt/unenc-xfs/maya/glm53f-iq2s:/data \
+      -v /mnt/unenc-xfs/models/maya/glm53f-maya-m/GLM-…-0000X-of-00003.gguf:/data/GLM-…-0000X-of-00003.gguf:ro (x3) \
+      ghcr.io/hurui200320/llm-ops-maya:1.1.55-rocm-gfx1100 \
+      --setup --backend hip --gpus 0,1 --yes --no-start --gguf-dir /data --context 524288 --host 0.0.0.0 --port 8080
+
+- Quant identified from the files (`Maya-M: 3 file(s), 116.0 GB in /data`); all three sha256 verified against
+  maya.py 1.1.55's published list for Maya-M (the HF sidecars are byte-equal: `3f740d1b…`, `285951d2…`,
+  `ebf1ce71…`). ~2.4 min of hashing on the runner's NVMe.
+- Pack `/data/pack`: `iq_pack.py --compat-bf16`, 1257 tensors (317 native, arena 0.88 GiB), tokenizer vocab
+  154880 / merges 321649, blk.45's 26 tensors left to the engine's MTP read - the same pack geometry as the
+  derisked lane.
+- Vision tower `/data/vision` (1.14 GB: mmproj F16 + vocab) downloaded from the same HF repo.
+- The setup's own config (`/opt/maya/maya-maya-m-hip.json`; 1.1.55 defaults: `--prefill auto`,
+  `MAYA_GLM_RESERVE_MB=3072`, `MAYA_GLM_PREFILL_MB=4096`, no explicit `--kv`) was not used as the lane config -
+  it was `docker cp`'d out for the diff only.
+
+## Config: derisked settings copied 1:1
+
+`deploy/maya/configs/glm53f-iq2s/maya-glm53f-iq2s-hip.json` is byte-identical to the derisked config
+(`configs/glm53f-iq2s-derisked/…`) except `model_name` -> `glm-5.3-flash-iq2s`, the log file name, and the
+`installer` block (`Maya-M`, written 2026-11-06). So: 512k, `--kv int8` pinned, `--prefill 16384` +
+`MAYA_GLM_PREFILL_MB=6144`, RAM tier 36 GB, reserves 1200/650, take-two kernels, 4 x 16 GB disk slots with
+KEEP, `vision.max_tokens=12288`; the lane sets `VISION_FOOTPRINT_MB=4711` like the derisked one. Per-knob
+rationale: `deploy/maya/README.md` (its GLM table applies to both lanes). A fresh tree has no slots, so the
+int8 slot-identity caveat does not apply.
+
+llama-swap lane `glm-5.3-flash-iq2s` ("GLM 5.3 Flash Maya-M IQ2_S (vanilla)"), own data tree and config
+folder (`/repo-configs-glm-vanilla`); everything else mirrors the derisked entry in
+`deploy/llama-swap.config.yaml`.

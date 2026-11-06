@@ -713,3 +713,46 @@ models:
       responseHeader: 0
       tlsHandshake: 10
       idleConn: 90
+
+
+  # GLM-5.3-Flash Maya-M (the vanilla quant) IQ2_S, maya's GLM engine. The derisked lane's pattern and settings, one
+  # quant over: identical shard sizes and pack layout (IQ2_S gate/up + IQ3_XXS down, Q6_K attention, MTP in the
+  # shards), so the derisked lane's tuned config is copied 1:1 into its own lane config folder
+  # (deploy/maya/configs/glm53f-iq2s/). See the derisked entry above for the per-file bind, CONFIG_SRC and
+  # picture-budget rationale - not repeated here; only the shard names, the lane data tree, the config folder and
+  # the config's model_name/log differ. Quant source: peasantsmith/GLM-5.3-Flash-Maya-GGUF (Maya-M folder); the
+  # downloaded shards' sha256 match maya.py 1.1.55's published list (notes/maya.md 20261106).
+  "glm-5.3-flash-iq2s":
+    name: "GLM 5.3 Flash Maya-M IQ2_S (vanilla)"
+    description: "524288 ctx, maya GLM engine, int8 KV, 36 GB RAM expert tier, 4 disk slots, vision 12288 tok (4K un-downscaled), MTP drafting"
+    cmd: |
+      ${docker-server-maya-rocm}
+        -v /mnt/unenc-xfs/maya/glm53f-iq2s:/data
+        -v /mnt/unenc-xfs/models/maya/glm53f-maya-m/GLM-5.3-Flash-Maya-M-IQ2_S-00001-of-00003.gguf:/data/GLM-5.3-Flash-Maya-M-IQ2_S-00001-of-00003.gguf:ro
+        -v /mnt/unenc-xfs/models/maya/glm53f-maya-m/GLM-5.3-Flash-Maya-M-IQ2_S-00002-of-00003.gguf:/data/GLM-5.3-Flash-Maya-M-IQ2_S-00002-of-00003.gguf:ro
+        -v /mnt/unenc-xfs/models/maya/glm53f-maya-m/GLM-5.3-Flash-Maya-M-IQ2_S-00003-of-00003.gguf:/data/GLM-5.3-Flash-Maya-M-IQ2_S-00003-of-00003.gguf:ro
+        -v /mnt/unenc-xfs/llm-ops/deploy/maya/configs/glm53f-iq2s:/repo-configs-glm-vanilla:ro
+        -e CONFIG_SRC=/repo-configs-glm-vanilla
+        -e VISION_FOOTPRINT_MB=4711
+        ghcr.io/hurui200320/llm-ops-maya:1.1.55-rocm-gfx1100
+    cmdStop: docker stop -t 120 ${MODEL_ID}
+    proxy: http://127.0.0.1:${PORT}
+    checkEndpoint: /health
+    # The lane tree is already provisioned (pack + vision built by the 20261106 setup); a start loads the pack and
+    # pre-fills the 36 GB RAM tier. llama-swap bounds the graceful stop by this value too, so -t 120 fits.
+    healthCheckTimeout: 600
+    concurrencyLimit: 20
+    # Declared, not probed: maya's /v1/models omits `owned_by` (same as the derisked lane); same values there.
+    capabilities:
+      in: [text, image]
+      out: [text]
+      tools: true
+      context: 524288
+      disableAuto: true
+    timeouts:
+      connect: 30
+      keepalive: 30
+      # experts stream from the RAM tier/SSD; no header timeout
+      responseHeader: 0
+      tlsHandshake: 10
+      idleConn: 90
