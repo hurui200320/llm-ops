@@ -1,0 +1,21 @@
+commit 5d37280db1f70ef6b55d69ac1d9ad8630d7a62f0
+Author: Niko1221 <Niko1221@users.noreply.github.com>
+Date:   Thu Nov 5 14:02:27 2026 +0100
+
+    Docker: build.sh copies metal/tools/metal_repack.py and stream_experts.py into the build context (the Terminal bundle carries them since the Mac Unsloth sets; the v0.2.11 image build stopped at the missing metal_repack.py); the context test checks every INSTALLER_METAL_TOOLS name
+
+diff --git a/docker/build.sh b/docker/build.sh
+index 94f820b3..bd6ac05b 100755
+--- a/docker/build.sh
++++ b/docker/build.sh
+@@ -64,7 +64,9 @@ case "$commit" in *[!0-9a-f]*|"") commit="" ;; esac
+ # tools/: every .py at any depth, because the bundle's DeepSeek scripts are nested (INSTALLER_SCRIPTS in package_terminal.py names dsv41/*:
+ # the Dockerfile's terminal stage stops at "installer tool missing: tools/dsv41/tune.py" when only the top-level modules are in the context)
+ cd "$repo"
+-paths="packaging bin strata.py strata_control strata_cli serve requirements.txt requirements-monitor.txt docs/MANAGEMENT_PROTOCOL.md docs/TERMINAL_LAUNCH.md data bench/prompts/standard-v1 setup.py ref/load.py CMakeLists.txt"
++# metal/tools/: the two repack scripts the bundle carries (INSTALLER_METAL_TOOLS in package_terminal.py; without them the terminal stage
++# stops at "No such file or directory: '/src/metal/tools/metal_repack.py'", as the v0.2.11 image build did)
++paths="packaging bin strata.py strata_control strata_cli serve requirements.txt requirements-monitor.txt docs/MANAGEMENT_PROTOCOL.md docs/TERMINAL_LAUNCH.md data bench/prompts/standard-v1 setup.py ref/load.py CMakeLists.txt metal/tools/metal_repack.py metal/tools/stream_experts.py"
+ if git rev-parse --git-dir >/dev/null 2>&1; then
+   # shellcheck disable=SC2086
+   { git ls-files -z -- $paths ':(glob)tools/**/*.py'; } | tar --null -T - -cf - | tar -xf - -C "$ctx/terminal-src"

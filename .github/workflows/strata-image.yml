@@ -12,8 +12,9 @@ name: strata-image
 #   2. builds the image with upstream's docker/build.sh from the same tag, and smoke-tests it in-image.
 #
 # The result is exactly what an upstream 0.2.11-rocm-gfx110x build assembles: the released package, the Terminal
-# from the same tag, nothing added. (Until 2026-11-04 the workflow also compiled a gfx110x `strata-dsv41` DeepSeek
-# engine into the image with the TheRock ROCm wheels; the DeepSeek lane moved to Project Maya that day
+# from the same tag, nothing added. (The one build-context patch below only makes the tag's docker/build.sh stage the
+# sources its own package_terminal.py copies.) Until 2026-11-04 the workflow also compiled a gfx110x `strata-dsv41`
+# DeepSeek engine into the image with the TheRock ROCm wheels; the DeepSeek lane moved to Project Maya that day
 # (notes/maya.md 20261104) and the build was removed — the record: notes/strata.md 20261104.) The Dockerfile's
 # verify stage re-checks the package (every listed file, binary_deps on every ELF, ldd in the image).
 #
@@ -21,9 +22,12 @@ name: strata-image
 # and one released engine package. The package gate is written against exactly that combination, so moving any of
 # them is a reviewed code change.
 #
-# No source patch is applied: the nested-tools build-context gap that v0.2.4.1 introduced (the Terminal stage died with
-# "installer tool missing: tools/dsv41/tune.py") was fixed upstream in v0.2.7 by PR #3974 by hurui200320, and
-# docker/build.sh in this tag stages tools/**/*.py by itself.
+# One source patch is applied, and only to docker/build.sh: v0.2.11's packaging/package_terminal.py copies the Mac
+# repack scripts into the Terminal bundle, but the tag's docker/build.sh does not stage metal/tools/ into the build
+# context, so the terminal stage dies with "No such file or directory: '/src/metal/tools/metal_repack.py'". The patch
+# is upstream's fix 5d37280d (committed after the tag) and is applied to the checkout below; drop it once a release
+# contains that commit. (The nested-tools gap v0.2.4.1 introduced — "installer tool missing: tools/dsv41/tune.py" —
+# was fixed upstream in v0.2.7 by PR #3974, and docker/build.sh stages tools/**/*.py itself.)
 #
 # Manual trigger only. See deploy/strata/README.md for the run recipe and deploy/strata/entrypoint-local.sh for the
 # entrypoint fork that must be re-diffed on every image bump.
@@ -87,6 +91,15 @@ jobs:
           path: strata
           fetch-depth: 1
           persist-credentials: false
+
+      - name: Apply the v0.2.11 build-context fix (upstream 5d37280d)
+        run: |
+          set -euo pipefail
+          # package_terminal.py copies metal/tools/*.py into the Terminal bundle, but this tag's docker/build.sh does
+          # not stage metal/ into the build context (upstream fixed it after v0.2.11): the terminal stage dies with
+          # "No such file or directory: '/src/metal/tools/metal_repack.py'" without the patch. Paths are absolute
+          # because `git -C strata` changes the directory before resolving the patch argument.
+          git -C strata apply --verbose "$GITHUB_WORKSPACE/deploy/strata/patches/0.2.11-metal-tools-context.patch"
 
       - name: Derive the image tag and record the commit
         run: |
