@@ -6,6 +6,7 @@
     "--expert-cache", "auto",
     "--prefill", "16384",
     "--kv-streaming", "on",
+    "--kv", "int8",
     "--expert-profile", "/opt/maya/data/expert-profile-glm.bin"
   ],
   "cwd": "/opt/maya",
