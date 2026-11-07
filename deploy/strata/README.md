@@ -57,7 +57,7 @@ docker run -d --name strata-init --init --rm \
   -e MODEL=IQ3_S -e CONTEXT=256k -e GPUS=0,1 -e PARALLEL=1 \
   -e MODEL_PATH=/models/strata/ISTA-DASLab-Flash-Next \
   -e STRATA_HIPBLASLT_TABLE=on \
-  -e CHAT_TEMPLATE_PATH=/templates/qwen3.8/Flash-Next-chat-template.jinja \
+  -e CHAT_TEMPLATE_PATH=/templates/qwen3.8/Flash-Next-chat-template-fixed.jinja \
   -e VISION_TOKENS=8192 -e VISION_MIN_TOKENS=1024 \
   -e DRAFTING=mtp \
   -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1" \
@@ -250,14 +250,23 @@ on every start:
 - The macro mounts the repo's `templates/` at `/templates:ro` — a directory mount, like the llama.cpp
   lanes: a single-file mount would go stale because `fetch-templates.sh` replaces the file by rename —
   and each Qwen model entry names its own `CHAT_TEMPLATE_PATH`
-  (`/templates/qwen3.8/Flash-Next-chat-template.jinja`).
+  (`/templates/qwen3.8/Flash-Next-chat-template-fixed.jinja`, the serving copy — see the next bullet).
+- **Keep the template renderable by the serving runtimes.** Hugging Face's current Qwen3.8-Flash-Next
+  template carries `{% generation %}` / `{% endgeneration %}` markers (assistant-token masks for
+  training; they render nothing). Strata compiles the template with plain Jinja and has no such
+  extension, so a template carrying them stops the server at start (`TemplateSyntaxError:
+  Encountered unknown tag 'generation'`) before any request is served. The lanes therefore point at
+  `templates/qwen3.8/Flash-Next-chat-template-fixed.jinja`, the fetched template with those whole-line
+  markers removed; `templates/fetch-templates.sh` regenerates that copy after every fetch (its header
+  says so). Never point `CHAT_TEMPLATE_PATH` at the fetched file directly.
 
-Updating the template: run `templates/fetch-templates.sh`, commit, `git pull` in
-`/mnt/unenc-xfs/llm-ops`, then restart the lane. Nothing is repacked and no GGUF is re-downloaded. A
-start that runs setup (fresh pack, repack) serves the GGUF's template once (the fork warns only when
-no pack exists yet); the next start installs the repo copy. After a template change on a Qwen lane,
-verify a short chat, a declared tool call and the `:npt` alias (its
-`chat_template_kwargs.preserve_thinking` must still be honoured).
+Updating the template: run `templates/fetch-templates.sh` (it re-syncs the fetched files and
+regenerates the `-fixed.jinja` serving copies), commit both, `git pull` in `/mnt/unenc-xfs/llm-ops`,
+then restart the lane. Nothing is repacked and no GGUF is re-downloaded. A start that runs setup
+(fresh pack, repack) serves the GGUF's template once (the fork warns only when no pack exists yet);
+the next start installs the repo copy. After a template change on a Qwen lane, verify a short chat, a
+declared tool call and the `:npt` alias (its `chat_template_kwargs.preserve_thinking` must still be
+honoured).
 
 ## Vision token budget
 
