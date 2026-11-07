@@ -1,4 +1,3 @@
-+ Try `--spec-draft-n-max 3` for Qwen 3.8 27B
 + Test muse glimmer extend to 256K, community and unsloth reports 256K fine, but meta suggest 128k
   + Or maybe considering remove it?
 + Re-test DFlash2 on the Flash-Next lanes when a later Strata engine can run it beside
@@ -9,3 +8,5 @@
   + if int8 kv not good, revert with `--kv fp16` and clear `/data/pack/slots` (the slot meta does not record the KV format)
 + bench the vanilla GLM-5.3-Flash Maya-M lane (`glm-5.3-flash-iq2s`): settings copied 1:1 from the
   derisked lane, functional gates passed 2026-11-06; no speed ladder yet (notes/maya.md 20261106)
++ Upgrade strata 0.2.12
++ Apply chat template from this repo for qwen3.8fn and glm53f, maybe also ds?

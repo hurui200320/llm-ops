@@ -136,13 +136,6 @@ macros:
     --checkpoint-min-step 8192
     --no-cache-idle-slots
 
-  # Each MTP checkpoint includes growing draft-attention state (~1 GiB at 225K).
-  # A 16-checkpoint cap preserved recent-edit reuse without exceeding 32 GiB.
-  "qwen38-ctx-ckpt": >
-    --cache-ram 40960
-    --ctx-checkpoints 16
-    --checkpoint-min-step 8192
-
   # Strata on the 2x7900XTX pair: HIP engine, bind mounts only.
   # No --memory cap: upstream advises none (the engine plans from the host's
   # meminfo and the entrypoint warns on memory.max); the engine's 28 GiB resident
@@ -340,90 +333,6 @@ models:
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
     concurrencyLimit: 10
-    timeouts:
-      connect: 30
-      keepalive: 30
-      # pp may take a long time so we don't set a timeout here
-      responseHeader: 0
-      tlsHandshake: 10
-      idleConn: 90
-
-
-  # Qwen3.8 27B with built-in mtp
-  "qwen3.8-27b-q80-vision":
-    name: "Qwen3.8 27B Q8_0 vision"
-    description: "256K context, vision on CPU"
-    cmd: |
-      ${docker-server-rocm}
-        ${qwen38-ctx-ckpt}
-        --model                 /models/qwen3.8/unsloth-27B/Qwen3.8-27B-Q8_0.gguf
-        --mmproj                /models/qwen3.8/unsloth-27B/mmproj-BF16.gguf
-        --chat-template-file /templates/qwen3.8/27B-chat-template.jinja
-        --spec-type draft-mtp --spec-draft-n-max 2
-        --jinja --reasoning on --reasoning-preserve
-        -b 2048 -ub 256 --no-mmproj-offload
-        --image-min-tokens 1024 --image-max-tokens 8192
-        -ngl 99
-        --main-gpu 0 --split-mode layer --tensor-split 35,31
-        --ctx-size 262144
-        --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --repeat-penalty 1.0 --presence-penalty 0.0
-        --load-mode dio
-        --no-kv-unified
-        --flash-attn on
-        --parallel 1
-    cmdStop: docker stop ${MODEL_ID}
-    proxy: http://127.0.0.1:${PORT}
-    checkEndpoint: /health
-    concurrencyLimit: 5
-    filters:
-      # :npt alias strips historical <think> blocks via per-request
-      # chat_template_kwargs. Base ID keeps the preserve default.
-      setParamsByID:
-        "${MODEL_ID}:npt":
-          chat_template_kwargs:
-            preserve_thinking: false
-    timeouts:
-      connect: 30
-      keepalive: 30
-      # pp may take a long time so we don't set a timeout here
-      responseHeader: 0
-      tlsHandshake: 10
-      idleConn: 90
-
-
-  # Qwen3.8 27B uncensored with built-in mtp
-  "qwen3.8-27b-uncensored-q80-vision":
-    name: "Qwen3.8 27B uncensored Q8_0 vision"
-    description: "256K context, vision on CPU, uncensored"
-    cmd: |
-      ${docker-server-rocm}
-        ${qwen38-ctx-ckpt}
-        --model                 /models/qwen3.8/orcarouter-27B-uncensored/Qwen3.8-27B-Uncensored-Q8_0.gguf
-        --mmproj                /models/qwen3.8/orcarouter-27B-uncensored/mmproj-Qwen3.8-27B-Uncensored-f16.gguf
-        --chat-template-file /templates/qwen3.8/27B-chat-template.jinja
-        --spec-type draft-mtp --spec-draft-n-max 2
-        --jinja --reasoning on --reasoning-preserve
-        -b 2048 -ub 256 --no-mmproj-offload
-        --image-min-tokens 1024 --image-max-tokens 8192
-        -ngl 99
-        --main-gpu 0 --split-mode layer --tensor-split 35,31
-        --ctx-size 262144
-        --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 --repeat-penalty 1.0 --presence-penalty 0.0
-        --load-mode dio
-        --no-kv-unified
-        --flash-attn on
-        --parallel 1
-    cmdStop: docker stop ${MODEL_ID}
-    proxy: http://127.0.0.1:${PORT}
-    checkEndpoint: /health
-    concurrencyLimit: 5
-    filters:
-      # :npt alias strips historical <think> blocks via per-request
-      # chat_template_kwargs. Base ID keeps the preserve default.
-      setParamsByID:
-        "${MODEL_ID}:npt":
-          chat_template_kwargs:
-            preserve_thinking: false
     timeouts:
       connect: 30
       keepalive: 30

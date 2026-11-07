@@ -52,20 +52,18 @@ docker build \
 | Gemma 4 26B | 262144 | 2 | 20 | 40960 MiB |
 | Gemma 4 31B QAT | 262144 | 1 | 16 | 40960 MiB |
 | Muse Glimmer | 131072 | 4 | 32 | 40960 MiB |
-| Qwen3.8 27B, both variants | 262144 | 1 | 16 | 40960 MiB |
 | OpenJev | 16384 | 8 | 0 | 0 MiB |
 
 Muse and OpenJev disable eager idle-slot RAM copies (`--no-cache-idle-slots`);
 Muse's private slots still retain prefixes in VRAM, and saved-prompt caching
 remains available when a slot is replaced. Every chat model family shares one
-40960 MiB (40 GiB) saved-prompt budget, large enough to hold a full-length
-conversation's saved state (KV plus retained checkpoints): a 225K-token Qwen3.8
-conversation saves about 31 GiB and a full 256K one about 35 GiB, per the
-`prompt state size` log lines. The budget is an LRU ceiling, not an allocation:
-states above it are rejected (logged as "exceeds cache size limit") and
-re-prefill on return, and states that do not fit in the 32 GiB RAM cap may sit
-in swap until a restore (see "Memory and cache tuning"). See the corresponding
-model notes for measured sizes, latency and the tradeoff for older-history edits.
+40960 MiB (40 GiB) saved-prompt budget, sized to hold a full-length 256K
+conversation's saved state (KV plus retained checkpoints). The budget is an LRU
+ceiling, not an allocation: states above it are rejected (logged as "exceeds
+cache size limit") and re-prefill on return, and states that do not fit in the
+32 GiB RAM cap may sit in swap until a restore (see "Memory and cache tuning").
+See the corresponding model notes for measured sizes, latency and the tradeoff
+for older-history edits.
 
 ## Memory and cache tuning
 

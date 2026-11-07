@@ -278,8 +278,8 @@ config that has a `"vision"` section before the server starts:
 
 - Both Qwen lanes run `VISION_TOKENS=8192 VISION_MIN_TOKENS=1024`: at most 8192 image tokens per
   picture, smaller ones scaled up to 1024. The reader sizes a picture into that budget at one token
-  per 1024 px, so 8192 ≈ an 8.4 MP picture (a 4K screenshot fits) — the same 1024–8192 budget the
-  Qwen3.8 27B llama.cpp lanes use. Background and token math: [notes/strata.md](../../notes/strata.md).
+  per 1024 px, so 8192 ≈ an 8.4 MP picture (a 4K screenshot fits). Background and token math:
+  [notes/strata.md](../../notes/strata.md).
 - A config this image has to make from nothing (first install, an engine-folder change, a changed
   `GPUS`) serves setup's default once; the next start applies the budget. Setup keeps the value when
   it writes the config again (same reader device for `max_tokens`; `min_tokens` is carried over), so
