@@ -210,10 +210,10 @@ model:
     # substituted from API_KEY (default dummy) by run_agentic.sh.
     api_key: "__API_KEY__"
     drop_params: true
-    # [LOCAL] upstream is true; forced sequential because llama-swap serves
-    # one request at a time and Muse Glimmer supports one tool call per turn
-    # (see notes/bench.md synbad section). Pinned for all models so results
-    # stay comparable; revisit if it becomes the bottleneck.
-    parallel_tool_calls: false
+    # Upstream is true; keep it true. This only caps how many tool calls one
+    # assistant turn may carry. Batched calls still run serially in the same
+    # container (mini-SWE-agent executes actions in order), and a turn is one
+    # completion, so this is unrelated to llama-swap's --parallel 1 slot.
+    parallel_tool_calls: true
   # [LOCAL] local models have no price registry; without this every run errors.
   cost_tracking: "ignore_errors"

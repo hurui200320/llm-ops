@@ -379,8 +379,8 @@ runs as `uvx --from swebench==<pin>` because a uv-tool venv isn't importable by
 system python3 — both tools are version-pinned in the runner so a silent
 upgrade can't change grading behavior between runs), renders [bench/agentic-swebench.yaml](agentic-swebench.yaml)
 per model (`openai/<alias>` → `$LLAMA_SWAP_URL/v1`, server-side sampling,
-sequential tool calls, cost tracking off), then for every model in
-`deploy/llama-swap.config.yaml` (positional args subset it) runs
+parallel tool calls (executed serially), cost tracking off), then for every
+model in `deploy/llama-swap.config.yaml` (positional args subset it) runs
 `mini-extra swebench --workers 1` with the frozen `--filter`, followed by the
 local eval harness on `preds.json` inside the run dir. Per-model output lands
 in `bench/results/agentic/<model>-<stamp>/` (gitignored): `preds.json` (the
@@ -407,9 +407,10 @@ unsupervised, so keep it in the container.
 Agent loop settings live in `agentic-swebench.yaml` (pinned copy of
 upstream's prompts; local deviations marked `[LOCAL]`): `step_limit: 75`
 (down from upstream 250 — bounds worst-case wall on slow local inference),
-env `timeout: 600` (Maven/Gradle exceed upstream's 60s), sequential tool
-calls (single-request serving). Pin these across compared models, or don't
-compare.
+env `timeout: 600` (Maven/Gradle exceed upstream's 60s), parallel tool calls
+(batched calls still execute serially in one container; a batched turn is one
+request, so it does not use more serving slots). Pin these across compared
+models, or don't compare.
 
 `verdict.txt` answers "which model is best at which language" (resolved/total
 overall + per language + id lists); record it in `notes/bench.md`.
