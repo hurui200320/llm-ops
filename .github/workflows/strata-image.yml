@@ -11,23 +11,17 @@ name: strata-image
 #      engine is byte-identical to what upstream puts in its own images;
 #   2. builds the image with upstream's docker/build.sh from the same tag, and smoke-tests it in-image.
 #
-# The result is exactly what an upstream 0.2.11-rocm-gfx110x build assembles: the released package, the Terminal
-# from the same tag, nothing added. (The one build-context patch below only makes the tag's docker/build.sh stage the
-# sources its own package_terminal.py copies.) Until 2026-11-04 the workflow also compiled a gfx110x `strata-dsv41`
-# DeepSeek engine into the image with the TheRock ROCm wheels; the DeepSeek lane moved to Project Maya that day
+# The result is exactly what an upstream 0.2.12-rocm-gfx110x build assembles: the released package, the Terminal
+# from the same tag, nothing added and no source patch. (v0.2.11 needed one build-context patch — upstream fix
+# 5d37280d, which makes docker/build.sh stage the metal/tools/ sources its own package_terminal.py copies;
+# v0.2.12 contains that commit. Until 2026-11-04 the workflow also compiled a gfx110x `strata-dsv41` DeepSeek
+# engine into the image with the TheRock ROCm wheels; the DeepSeek lane moved to Project Maya that day
 # (notes/maya.md 20261104) and the build was removed — the record: notes/strata.md 20261104.) The Dockerfile's
 # verify stage re-checks the package (every listed file, binary_deps on every ELF, ldd in the image).
 #
 # The upstream versions are PINNED in `env:` below, not workflow inputs: the image is bound to one Strata source tag
 # and one released engine package. The package gate is written against exactly that combination, so moving any of
 # them is a reviewed code change.
-#
-# One source patch is applied, and only to docker/build.sh: v0.2.11's packaging/package_terminal.py copies the Mac
-# repack scripts into the Terminal bundle, but the tag's docker/build.sh does not stage metal/tools/ into the build
-# context, so the terminal stage dies with "No such file or directory: '/src/metal/tools/metal_repack.py'". The patch
-# is upstream's fix 5d37280d (committed after the tag) and is applied to the checkout below; drop it once a release
-# contains that commit. (The nested-tools gap v0.2.4.1 introduced — "installer tool missing: tools/dsv41/tune.py" —
-# was fixed upstream in v0.2.7 by PR #3974, and docker/build.sh stages tools/**/*.py itself.)
 #
 # Manual trigger only. See deploy/strata/README.md for the run recipe and deploy/strata/entrypoint-local.sh for the
 # entrypoint fork that must be re-diffed on every image bump.
@@ -46,21 +40,23 @@ on:
 env:
   IMAGE: ghcr.io/hurui200320/llm-ops-strata
   STRATA_REPO: Niko1221/Strata
-  # Terminal sources and the Dockerfile.
-  STRATA_REF: v0.2.11
-  # The release that carries the signed feed and the Qwen engine packages. v0.2.11 rebuilds EVERY Qwen engine
-  # package at 0.1.57: the rx7900 engine folder changes 0.1.56 -> 0.1.57 and every lane re-runs setup once. Most of
-  # the release is serve/launch work. What matters here: the serve fixes (#3961 a request that ended without its end
-  # event no longer ends the next request's engine, #4271 a client that stops reading no longer holds the turn, #4479
-  # a blocked console cannot hold a request, #4738 control-line wake-up, #5044 batch admission/non-UTF-8 output,
-  # #4792 start race, #3443 conversation-park log, #2518 a branching follow-up returns to its chat's slot) and the
-  # tool parser (#5040 streamed arguments that list the closing tags). The engine side changes nothing for our pinned
-  # split: the Q5_0 expert-dot offset fix (CUDA/HIP/SYCL), a short-card layer-split spill walk, and gfx12/Strix
-  # Halo/MMQ work that does not apply to 2x gfx1100 with room; the auto CPU/PCIe miss share keeps HIP layer splits
-  # on 0.2.10 behaviour. No HIP toolchain change: packaging/build_hip_linux.sh moves PKGVER only, so the rx7900
-  # package keeps TheRock 7.10.0a20251120 and the gate below re-checks hipBLASLt 100200 + the tuning table. The
+  # Terminal sources and the Dockerfile. v0.2.12 contains the metal/tools build-context fix (5d37280d) that
+  # v0.2.11 needed as a source patch, so this tag needs none.
+  STRATA_REF: v0.2.12
+  # The release that carries the signed feed and the Qwen engine packages. v0.2.12 rebuilds EVERY Qwen engine
+  # package at 0.1.58: the rx7900 engine folder changes 0.1.57 -> 0.1.58 and every lane re-runs setup once. Most of
+  # the release is Mac / Strix Halo / gfx12 / CUDA work that does not apply to 2x gfx1100. What matters here: the
+  # tool-parser round (#5409 <function=tools NAME>, #5276 misspelt openers, #5281 an MCP tool by its last segment,
+  # #4828 forced tool_choice with several tools, #4832 Anthropic tool results by tool_use_id, #4622 the
+  # undeclared_tool_calls setting) and the #5149/#5147 fix for a first-request hang with --pipeline-windows 2 on two
+  # AMD cards (our lane shape: automatic, tokens unchanged). The engine stays speed-neutral for us (upstream's
+  # closest measurement: 2x A6000 IQ3_S layer split +0.38%); the server's reported timing figures now count
+  # admission time, so short requests read lower t/s without being slower. No HIP toolchain change:
+  # packaging/build_hip_linux.sh moves PKGVER only, so the rx7900 package keeps TheRock 7.10.0a20251120 and the
+  # gate below re-checks hipBLASLt 100200 + the tuning table. Upstream did NOT run the Linux rx7900 package on
+  # hardware this release, so the in-image smoke and the lanes' own smokes carry more weight than usual. The
   # package is re-verified against the feed below (signature, manifest hash).
-  ENGINE_RELEASE: v0.2.11
+  ENGINE_RELEASE: v0.2.12
   # hipBLASLt version the package's gfx1100 tuning table must match (BUILD.json hipblaslt_version).
   HIPBLASLT_TABLE_VERSION: "100200"
 
@@ -91,15 +87,6 @@ jobs:
           path: strata
           fetch-depth: 1
           persist-credentials: false
-
-      - name: Apply the v0.2.11 build-context fix (upstream 5d37280d)
-        run: |
-          set -euo pipefail
-          # package_terminal.py copies metal/tools/*.py into the Terminal bundle, but this tag's docker/build.sh does
-          # not stage metal/ into the build context (upstream fixed it after v0.2.11): the terminal stage dies with
-          # "No such file or directory: '/src/metal/tools/metal_repack.py'" without the patch. Paths are absolute
-          # because `git -C strata` changes the directory before resolving the patch argument.
-          git -C strata apply --verbose "$GITHUB_WORKSPACE/deploy/strata/patches/0.2.11-metal-tools-context.patch"
 
       - name: Derive the image tag and record the commit
         run: |
