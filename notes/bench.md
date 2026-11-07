@@ -79,6 +79,18 @@ time ./bench/run_longctx.sh
   + 40%: pp 1288.95 t/s  tg 26.05 t/s
   + 60%: pp 1229.25 t/s  tg 26.50 t/s
   + 85%: pp 1150.25 t/s  tg 25.95 t/s
++ `glm-5.3-flash-iq2s`, 512k, maya 1.1.56, OUT_PCT=2
+  + 20%: pp  830.00 t/s  tg 19.80 t/s  accept_rate 0.8056
+  + 40%: pp  966.45 t/s  tg 21.15 t/s  accept_rate 0.8213
+  + 60%: pp 1002.15 t/s  tg 19.45 t/s  accept_rate 0.7851
+  + 85%: pp  992.85 t/s  tg 19.75 t/s  accept_rate 0.776
++ `glm-5.3-flash-iq2s-derisked`, 512k, maya 1.1.56, OUT_PCT=2
+  + 20%: pp  823.30 t/s  tg 18.15 t/s  accept_rate 0.8043
+  + 40%: pp  971.60 t/s  tg 18.85 t/s  accept_rate 0.7721
+  + 60%: pp 1000.80 t/s  tg 20.45 t/s  accept_rate 0.7852
+  + 85%: pp  991.40 t/s  tg 20.20 t/s  accept_rate 0.777
+
+Note: with GLM, I set the output limit to 2% of the ctx as it tg speed is too slow.
 
 
 ## Tool calling
@@ -91,8 +103,6 @@ time ./bench/run_tooleval.sh
 ```
 
 tool-eval-bench version: `v2.6.1.dev72+gd84fce442`.
-
-Duration: 183m38.059s
 
 ### Common issues
 
