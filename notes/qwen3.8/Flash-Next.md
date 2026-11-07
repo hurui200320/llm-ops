@@ -489,3 +489,22 @@ upgrade: [../strata.md](../strata.md) 20261106.
 
 Records: `bench/results/longctx/qwen3.8-flash-next-iq3s-20261106-151743.json` (out-pct 10),
 `qwen3.8-flash-next-iq3s-20261106-160835.json` and `-162049.json` (out-pct 1).
+
+# 20261108 Strata 0.2.12 (engine 0.1.58) longctx spot
+
+Same box, same arm (MTP, `--spec 4`, `spec-min-p 0.7`, `pipeline-windows 2`), vanilla lane, fixed template.
+Matched protocol for the 0.2.11 long-decode control: `run_longctx.py --ctx 262144 --out-pct 10
+--in-pcts 60,85 --reps 2`, `cache 0` every rep:
+
+| Run | 60% pp / tg | 85% pp / tg | acceptance |
+| --- | --- | --- | --- |
+| 0.2.12 (2026-11-08) | 2080.2 / 66.40 | 2161.3 / 64.20 | 0.685 / 0.681 |
+| 0.2.11 long-decode control (2026-11-06) | 2086.0 / 66.35 | 2161.3 / 64.95 | 0.690 / 0.687 |
+
+Speed-neutral within noise, as predicted for this box (the 0.2.12 engine work is Mac/Strix Halo/gfx12/CUDA;
+upstream's closest arm, 2× A6000 IQ3_S layer split, measured +0.38%). The 85% decode is 1.2% below the 0.2.11
+control, inside this box's sample-to-sample spread (2.0–2.7% on the 0.2.11 samples). The four reps ran with
+`cache 0`; the bench also re-verified the #5149 path: the first request after each fresh start answered normally.
+
+Records: `bench/results/longctx/qwen3.8-flash-next-iq3s-20261108-002850.json` and `.log` (runner). Upgrade,
+pins, placement and the template incident: [../strata.md](../strata.md) 20261108.
