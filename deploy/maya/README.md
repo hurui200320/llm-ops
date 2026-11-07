@@ -241,6 +241,7 @@ both lanes. Baseline is the setup's own config
 | `--max-context 524288` | 512k. KV streaming (`--kv-streaming on`, setup default) keeps 32768 positions a layer in VRAM and the latent cache in pinned RAM: 1.71 GB a card at 512k with the deployed int8 KV (3.22 GB with fp16) |
 | `--kv int8` | **int8 KV** (deployed 2026-11-06): halves the latent cache to 544 B/position/layer (3.22 -> 1.71 GB a card) and the VRAM window (0.20 -> 0.11 GB), freeing 3 GiB of pinned RAM (`MemAvailable` ~10 -> ~13 GiB) and ~11 more experts. Measured pp identical and tg unchanged within +-3 %. **The slot identity does not include the KV format**, so clear `<pack>/slots` when switching (`--kv fp16` reverts). 1.1.55 defaults GLM to int8, so the flag is pinned here explicitly |
 | `--prefill 16384`, `MAYA_GLM_PREFILL_MB=6144` | the prompt chunk. Auto caps a split at 8192; the engine's chunk buffers overlay expert slots between prompts, so a bigger chunk costs nothing at decode. 16K measured **+16 % pp at 40 % and +23 % at 85 %**; 32K added only ~2 % more and cost 2.7 GiB of MemAvailable plus swap. `PREFILL_MB=6144` is the loan cap that lets a 16K chunk fit (the measured borrow is 3.6-4.2 GB a card) |
+| `MAYA_GLM_PRESTAGE=160` | the prompt **prestage ring** (deployed 2026-11-07). The engine skips it on a split by default (`ring_max = has_moe && n_parts_ == 1 ? kPreSlots : 0`); 160 experts of the next layer's most routed RAM-tier ones are copied into a pool-tail buffer while attention runs, when the PCIe link is otherwise idle. Costs 1,371 MB of the prompt borrow (3,381/3,994 -> 4,751/5,365 MB a card, still under the 6,144 cap) and nothing at decode: **+8.0 % pp at 40 % and +5.4-7.3 % at 85 %** (screening 973.7 / 1012.7 t/s, 2-rep final 968.5 / 994.9, controls 901.7 / 944.2); tg, floors (271 MiB other / 434 MiB monitor) and `MemAvailable` (12.8-13.1 GiB) unchanged, swap flat. 240 experts brushes CUDA1's borrow cap and measures 0.6 % slower. Mechanism: RAM-sourced demand staging 17.5 -> 0.10 GB a chunk, total PCIe 33.7 -> 17.7 GB |
 | `MAYA_GLM_RESERVE_MB=1200` | headroom kept free on the **monitor** card, sizing its expert pool. The measured run-time floor is ~`reserve - 760 MiB` (engine buffers + the desktop's ~460 MiB): 437-453 MiB free at the deployed 1200 on the 1.1.55 ladder (the setup's 3072 left 2.2 GiB idle; the tuning pass's 1500 kept ~736 MiB). It stays 1200 because the picture turn is lent from the pool, not the reserve: **527 MiB idle, 1164 MiB during a 4K picture turn** (with `VISION_FOOTPRINT_MB` below; without it the encoder's shortfall dipped the turn to 28-35 MiB) |
 | `MAYA_GLM_RESERVE_LATER_MB=650` | the same for the later (x4, no-display) card: `~reserve - 380 MiB` (271-274 measured at the deployed 650), i.e. ~270 MiB free. The asymmetric reserve is why the x4 card's pool can grow without over-reserving the monitor |
 | `MAYA_GLM_MLA_ATTN2=h64lvc`, `MAYA_GLM_DSA_SCORE2=rl2b4` | the decode-only "take-two" kernels for the F32 MLA split attention and the sparse indexer (MLA_MMA is compiled out on HIP). **Bit-exact**; +1 % at 52K and +5-10 % tg at 200-450K, pp untouched |
@@ -257,14 +258,16 @@ lane and 2 (227 MB) on the vanilla one. The DeepSeek identity carries the ABI pl
 `tensors.txt` and the shard sizes (no pack rebuilds in practice): its 117 conversations (7.21 GB) survived the
 1.1.55 -> 1.1.56 bump. Records: [notes/maya.md](../../notes/maya.md) 20261107.
 
-Measured on the deployed config (2026-11-07, Maya 1.1.56, 512k ladder, `cache_n 0`, interleaved A/B against
-1.1.55): pp/tg unchanged within the run-to-run spread (pp ~903 / ~936 t/s, tg ~19.0 / ~19.1 t/s at 40 / 85 %),
-auto split [0,24) / [24,45)+MTP, int8 KV, 16K chunks, **min free VRAM 437-449 MiB monitor / 273-286 MiB
-other**, 12-13 GiB MemAvailable, swap flat, 7/7 functional gates. The 4K picture turn (2026-11-06, camera
-check; config unchanged): `prompt_tokens` 10,579 = the 137x77 grid with no downscale, answer correct, **527 MiB
-monitor free idle, 1164 MiB during the turn** (349 MiB on the other card), 2,265 + 2,304 = 4,569 experts in VRAM;
-the encoder lends 4.76 GB from the pool for the ~15 s encode and gives it back (the 1.1.56 gate run repeats it at
-10,591 tokens, no downscale). The tuning arms, the 1.1.53 numbers and the against-setup deltas:
+Measured on the deployed config (2026-11-07, Maya 1.1.56): the 1.1.56 A/B against 1.1.55 was unchanged within
+the run-to-run spread (pp ~903 / ~936 t/s, tg ~19.0 / ~19.1 t/s at 40 / 85 %). With the prestage ring
+(deployed 2026-11-07, 2-rep final): **pp 968.5 / 994.9 t/s, tg 19.75 / 20.65 t/s at 40 / 85 %**, `cache_n` 0 on
+every rep, acceptance 0.760 / 0.788; auto split [0,24) / [24,45)+MTP, int8 KV, 16K chunks, **min free VRAM
+434 MiB monitor / 271 MiB other** (targets 400 / 200), 12.8 GiB MemAvailable, swap flat, 6/6 functional gates
+(chat, tool call, `reasoning_effort: none`, primes, fenced code, a picture turn). The 4K picture turn (2026-11-06,
+camera check; the vision budget unchanged): `prompt_tokens` 10,579 = the 137x77 grid with no downscale, answer
+correct, **527 MiB monitor free idle, 1164 MiB during the turn** (349 MiB on the other card), 2,265 + 2,304 = 4,569
+experts in VRAM; the encoder lends 4.76 GB from the pool for the ~15 s encode and gives it back (the 1.1.56 gate run
+repeats it at 10,591 tokens, no downscale). The tuning arms, the 1.1.53 numbers and the against-setup deltas:
 [notes/glm/5.3-flash.md](../../notes/glm/5.3-flash.md); the 1.1.56 A/B, the #861 repack and the picture budget:
 [notes/maya.md](../../notes/maya.md) 20261107. Ready in ~31 s cold, stop 1-2 s.
 
@@ -277,8 +280,10 @@ functional gates including the 4K picture (`prompt_tokens` 10,579, no downscale)
 The kept knobs above are what moves this lane; the rejected ones (per-card CPU lanes, promotion limits,
 `SPEC_WIN`, `MV_RDNA`, `GU22_TUNED`, DFlash2, no MTP at all (`MAYA_GLM_NO_MTP`, -19 % tg), the disk-skip
 approximation (`DISK_SKIP_W`/`_FROM`, a residency-dependent quality trade, not adopted), a manual split, a
-40 GB RAM tier, `MAYA_GLM_P2P`) and the reasons are in
-[notes/glm/5.3-flash.md](../../notes/glm/5.3-flash.md). The layer split is auto on purpose: moving layers
+40 GB RAM tier, `MAYA_GLM_P2P`, the decode lookahead (`MAYA_GLM_AHEAD`, -9 to -20 % tg in a dose-dependent
+sweep), `MAYA_GLM_PREFETCH_N`, the prompt CPU gate (`MAYA_GLM_PREFILL_CPU_GATE=0`, neutral), a traffic-traced
+expert profile (-2.7 % vs the shipped one) and 32K chunks on the prestage base (-2 to -3 % pp)) and the reasons
+are in [notes/glm/5.3-flash.md](../../notes/glm/5.3-flash.md). The layer split is auto on purpose: moving layers
 to the monitor card buys up to +11.6 % pp but costs 6-13 % tg (the pipelined decode costs the slower
 part), and tg is this lane's weak axis.
 

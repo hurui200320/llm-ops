@@ -43,6 +43,11 @@ models in coding.
 
 `dsv41f1017-iq2xxs` passed ALL tests for both non-streaming and streaming.
 
+`glm-5.3-flash-iq2s` and `glm-5.3-flash-iq2s-derisked` failed with non-streaming reasoning
+tests, not because the project maya failed to parse, but non-streaming mode timeout hardcoded
+to 10 minutes and the model can't finish the request in 10 minutes, so it get an timeout error.
+Streaming path got all tests passed
+
 ## Speed
 
 ```
@@ -64,16 +69,6 @@ time ./bench/run_longctx.sh
   + 40%: pp 1061.42 t/s  tg 29.22 t/s  accept_rate 0.5345
   + 60%: pp 1015.98 t/s  tg 28.29 t/s  accept_rate 0.5192
   + 85%: pp  959.03 t/s  tg 27.52 t/s  accept_rate 0.5047
-+ `ornith-1.5-35b-a3b-q80-vision`, 256k
-  + 20%: pp 4122.67 t/s  tg 44.07 t/s
-  + 40%: pp 3137.96 t/s  tg 38.83 t/s
-  + 60%: pp 2500.75 t/s  tg 34.96 t/s
-  + 85%: pp 1995.09 t/s  tg 30.92 t/s
-+ `ornith-1.5-35b-a3b-abliterated-q80-vision`, 256k
-  + 20%: pp 4059.53 t/s  tg 43.62 t/s 
-  + 40%: pp 3073.43 t/s  tg 38.55 t/s
-  + 60%: pp 2457.76 t/s  tg 34.30 t/s
-  + 85%: pp 1971.75 t/s  tg 30.73 t/s
 + `qwen3.8-27b-q80-vision`, 256k, vision on CPU
   + 20%: pp 1134.18 t/s  tg 30.24 t/s  accept_rate 0.6381
   + 40%: pp  945.62 t/s  tg 26.64 t/s  accept_rate 0.6597
