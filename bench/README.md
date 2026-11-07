@@ -86,7 +86,6 @@ One tool, through llama-swap so it measures the deployed config itself
 ```bash
 cd speed
 python3 run_longctx.py --model google-gemma-4-26b-a4b-q80-vision                   # ctx auto-detected from /props
-python3 run_longctx.py --model meta-muse-glimmer-30b-kquant-vision               # 128K per slot, also auto-detected
 python3 run_longctx.py --model <alias> --ctx 262144                              # override (warns if /props disagrees)
 python3 run_longctx.py --model <alias> --in-pcts 20,40,60,85 --out-pct 10        # explicit (these are the defaults)
 python3 run_longctx.py --model <alias> --base-url http://127.0.0.1:8080 \
@@ -409,8 +408,8 @@ Agent loop settings live in `agentic-swebench.yaml` (pinned copy of
 upstream's prompts; local deviations marked `[LOCAL]`): `step_limit: 75`
 (down from upstream 250 — bounds worst-case wall on slow local inference),
 env `timeout: 600` (Maven/Gradle exceed upstream's 60s), sequential tool
-calls (single-request serving + Glimmer one-tool-per-turn). Pin these across
-compared models, or don't compare.
+calls (single-request serving). Pin these across compared models, or don't
+compare.
 
 `verdict.txt` answers "which model is best at which language" (resolved/total
 overall + per language + id lists); record it in `notes/bench.md`.

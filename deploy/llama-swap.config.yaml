@@ -127,15 +127,6 @@ macros:
     --ctx-checkpoints 16
     --checkpoint-min-step 13107
 
-  # Four private KV slots already retain their prefixes in VRAM. Eagerly copying
-  # idle slots to RAM added seconds to each short turn; save only on replacement.
-  # Measured with all four 128K slots populated; see notes/muse-glimmer/30B.md.
-  "muse-ctx-ckpt": >
-    --cache-ram 40960
-    --ctx-checkpoints 32
-    --checkpoint-min-step 8192
-    --no-cache-idle-slots
-
   # Strata on the 2x7900XTX pair: HIP engine, bind mounts only.
   # No --memory cap: upstream advises none (the engine plans from the host's
   # meminfo and the entrypoint warns on memory.max); the engine's 28 GiB resident
@@ -296,43 +287,6 @@ models:
         "${MODEL_ID}:npt":
           chat_template_kwargs:
             preserve_thinking: false
-    timeouts:
-      connect: 30
-      keepalive: 30
-      # pp may take a long time so we don't set a timeout here
-      responseHeader: 0
-      tlsHandshake: 10
-      idleConn: 90
-
-
-  # Muse Glimmer 30B kquant-dynamic with vision + DFlash speculative draft.
-  # Max context 131072 per slot; ctx-size 524288 / parallel 4 = 131072 per slot.
-  "meta-muse-glimmer-30b-kquant-vision":
-    name: "Meta Muse Glimmer 30B kquant-dynamic vision"
-    description: "128K context x 4 slots, vision on GPU, DFlash draft"
-    cmd: |
-      ${docker-server-rocm}
-        ${muse-ctx-ckpt}
-        --model                 /models/muse-glimmer/meta-30b/Muse-Glimmer-30B-KQuant-Dynamic-Q4_K_XL.gguf
-        --mmproj                /models/muse-glimmer/meta-30b/mmproj-Muse-Glimmer-30B-Q4_K_M.gguf
-        --model-draft           /models/muse-glimmer/meta-30b/dflash-Muse-Glimmer-30B-Q4_K_M.gguf
-        --chat-template-file /templates/muse-glimmer/30B-chat-template.jinja
-        --spec-type draft-dflash --spec-draft-n-max 2
-        --jinja --reasoning on --reasoning-preserve
-        -b 4096 -ub 2048
-        --image-min-tokens 512 --image-max-tokens 4096
-        -ngl 53
-        --main-gpu 0 --split-mode layer --tensor-split 26,27
-        --ctx-size 524288
-        --temp 1.0 --top-p 0.95 --top-k 64 --min-p 0.0 --repeat-penalty 1.0
-        --load-mode dio
-        --no-kv-unified
-        --flash-attn on
-        --parallel 4
-    cmdStop: docker stop ${MODEL_ID}
-    proxy: http://127.0.0.1:${PORT}
-    checkEndpoint: /health
-    concurrencyLimit: 10
     timeouts:
       connect: 30
       keepalive: 30

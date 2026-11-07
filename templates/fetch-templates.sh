@@ -19,7 +19,6 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "$0")" && pwd)
 entries=(
     "gemma-4/26B-chat-template.jinja|https://huggingface.co/google/gemma-4-26B-A4B-it/resolve/main/chat_template.jinja"
     "gemma-4/31B-chat-template.jinja|https://huggingface.co/google/gemma-4-31B-it/resolve/main/chat_template.jinja"
-    "muse-glimmer/30B-chat-template.jinja|https://huggingface.co/meta-models/Muse-Glimmer-30B/resolve/main/chat_template.jinja"
     "qwen3.8/Flash-Next-chat-template.jinja|https://huggingface.co/Qwen/Qwen3.8-Flash-Next/resolve/main/chat_template.jinja"
     "openjev/chat-template.jinja|https://huggingface.co/openjev/openjev/resolve/main/chat_template.jinja"
     # ds v41f 1017 use py script, so we use unsloth's port of chat template

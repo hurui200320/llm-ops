@@ -51,19 +51,17 @@ docker build \
 | --- | ---: | ---: | ---: | ---: |
 | Gemma 4 26B | 262144 | 2 | 20 | 40960 MiB |
 | Gemma 4 31B QAT | 262144 | 1 | 16 | 40960 MiB |
-| Muse Glimmer | 131072 | 4 | 32 | 40960 MiB |
 | OpenJev | 16384 | 8 | 0 | 0 MiB |
 
-Muse and OpenJev disable eager idle-slot RAM copies (`--no-cache-idle-slots`);
-Muse's private slots still retain prefixes in VRAM, and saved-prompt caching
-remains available when a slot is replaced. Every chat model family shares one
-40960 MiB (40 GiB) saved-prompt budget, sized to hold a full-length 256K
-conversation's saved state (KV plus retained checkpoints). The budget is an LRU
-ceiling, not an allocation: states above it are rejected (logged as "exceeds
-cache size limit") and re-prefill on return, and states that do not fit in the
-32 GiB RAM cap may sit in swap until a restore (see "Memory and cache tuning").
-See the corresponding model notes for measured sizes, latency and the tradeoff
-for older-history edits.
+OpenJev disables eager idle-slot RAM copies (`--no-cache-idle-slots`); its private
+slots still retain prefixes in VRAM, but saved-prompt caching is off
+(`--cache-ram 0`). The llama.cpp Gemma lanes share one 40960 MiB (40 GiB)
+saved-prompt budget, sized to hold a full-length 256K conversation's saved state
+(KV plus retained checkpoints). The budget is an LRU ceiling, not an allocation:
+states above it are rejected (logged as "exceeds cache size limit") and re-prefill
+on return, and states that do not fit in the 32 GiB RAM cap may sit in swap until
+a restore (see "Memory and cache tuning"). See the corresponding model notes for
+measured sizes, latency and the tradeoff for older-history edits.
 
 ## Memory and cache tuning
 
@@ -115,7 +113,7 @@ but can make edits to older conversation history require more re-prefill.
 Keep both target and draft K/V caches at their original F16 precision. Do not
 trade coding or agentic-loop reliability for KV-cache quantization. Changes to
 host-side caches should be checked with repeated turns, recent-history edits,
-and all four Muse slots populated, in addition to the cold-prefill speed test.
+and every private slot populated, in addition to the cold-prefill speed test.
 
 Raw synthetic tuning results belong in the gitignored `bench/results/` tree;
 dated findings belong in the corresponding model notes. Never record real
