@@ -540,6 +540,13 @@ models:
   # cached footprint to a real 4K picture's peak instead; the lend then comes out of the expert pool's tail only
   # while a picture encodes, and the reserve stays the desktop's headroom (notes/maya.md 20261106). Drop the
   # pin with the upstream warm-up fix (notes/TODO.md).
+  #
+  # Chat template: Maya renders a GLM-5 pack with the image's serve/glm5_chat_template.jinja, not the pack's
+  # tokenizer/chat_template.jinja. The bind below mounts the repo's templates/ checkout over that image path,
+  # so templates/glm-5.3-flash/ is the source of truth for both GLM lanes. 
+  # Keep MAYA_PACK_TEMPLATE unset: `=1` uses the pack's stale copy and ignores the mount. 
+  # The target is Maya-internal (serve/server.py's chat_template_path()); when bumping Maya, check that path
+  # still matches before trusting this mount.
   "glm-5.3-flash-iq2s-derisked":
     name: "GLM 5.3 Flash Maya-M-Derisked IQ2_S"
     description: "524288 ctx, maya GLM engine, int8 KV, 36 GB RAM expert tier, 4 disk slots, vision 12288 tok (4K un-downscaled), MTP drafting"
@@ -549,6 +556,7 @@ models:
         -v /mnt/unenc-xfs/models/maya/glm53f-maya-m-derisked/GLM-5.3-Flash-Maya-M-Derisked-IQ2_S-00001-of-00003.gguf:/data/GLM-5.3-Flash-Maya-M-Derisked-IQ2_S-00001-of-00003.gguf:ro
         -v /mnt/unenc-xfs/models/maya/glm53f-maya-m-derisked/GLM-5.3-Flash-Maya-M-Derisked-IQ2_S-00002-of-00003.gguf:/data/GLM-5.3-Flash-Maya-M-Derisked-IQ2_S-00002-of-00003.gguf:ro
         -v /mnt/unenc-xfs/models/maya/glm53f-maya-m-derisked/GLM-5.3-Flash-Maya-M-Derisked-IQ2_S-00003-of-00003.gguf:/data/GLM-5.3-Flash-Maya-M-Derisked-IQ2_S-00003-of-00003.gguf:ro
+        -v /mnt/unenc-xfs/llm-ops/templates/glm-5.3-flash/chat-template.jinja:/opt/maya/serve/glm5_chat_template.jinja:ro
         -v /mnt/unenc-xfs/llm-ops/deploy/maya/configs/glm53f-iq2s-derisked:/repo-configs-glm:ro
         -e CONFIG_SRC=/repo-configs-glm
         -e VISION_FOOTPRINT_MB=4711
@@ -581,10 +589,11 @@ models:
   # GLM-5.3-Flash Maya-M (the vanilla quant) IQ2_S, maya's GLM engine. The derisked lane's pattern and settings, one
   # quant over: identical shard sizes and pack layout (IQ2_S gate/up + IQ3_XXS down, Q6_K attention, MTP in the
   # shards), so the derisked lane's tuned config is copied 1:1 into its own lane config folder
-  # (deploy/maya/configs/glm53f-iq2s/). See the derisked entry above for the per-file bind, CONFIG_SRC and
-  # picture-budget rationale - not repeated here; only the shard names, the lane data tree, the config folder and
-  # the config's model_name/log differ. Quant source: peasantsmith/GLM-5.3-Flash-Maya-GGUF (Maya-M folder); the
-  # downloaded shards' sha256 match maya.py 1.1.55's published list (notes/maya.md 20261106).
+  # (deploy/maya/configs/glm53f-iq2s/). See the derisked entry above for the per-file bind, CONFIG_SRC,
+  # chat-template mount and picture-budget rationale - not repeated here; only the shard names, the lane
+  # data tree, the config folder and the config's model_name/log differ. Quant source:
+  # peasantsmith/GLM-5.3-Flash-Maya-GGUF (Maya-M folder); the downloaded shards' sha256 match maya.py
+  # 1.1.55's published list (notes/maya.md 20261106).
   "glm-5.3-flash-iq2s":
     name: "GLM 5.3 Flash Maya-M IQ2_S (vanilla)"
     description: "524288 ctx, maya GLM engine, int8 KV, 36 GB RAM expert tier, 4 disk slots, vision 12288 tok (4K un-downscaled), MTP drafting"
@@ -594,6 +603,7 @@ models:
         -v /mnt/unenc-xfs/models/maya/glm53f-maya-m/GLM-5.3-Flash-Maya-M-IQ2_S-00001-of-00003.gguf:/data/GLM-5.3-Flash-Maya-M-IQ2_S-00001-of-00003.gguf:ro
         -v /mnt/unenc-xfs/models/maya/glm53f-maya-m/GLM-5.3-Flash-Maya-M-IQ2_S-00002-of-00003.gguf:/data/GLM-5.3-Flash-Maya-M-IQ2_S-00002-of-00003.gguf:ro
         -v /mnt/unenc-xfs/models/maya/glm53f-maya-m/GLM-5.3-Flash-Maya-M-IQ2_S-00003-of-00003.gguf:/data/GLM-5.3-Flash-Maya-M-IQ2_S-00003-of-00003.gguf:ro
+        -v /mnt/unenc-xfs/llm-ops/templates/glm-5.3-flash/chat-template.jinja:/opt/maya/serve/glm5_chat_template.jinja:ro
         -v /mnt/unenc-xfs/llm-ops/deploy/maya/configs/glm53f-iq2s:/repo-configs-glm-vanilla:ro
         -e CONFIG_SRC=/repo-configs-glm-vanilla
         -e VISION_FOOTPRINT_MB=4711

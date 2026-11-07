@@ -21,8 +21,6 @@ entries=(
     "gemma-4/31B-chat-template.jinja|https://huggingface.co/google/gemma-4-31B-it/resolve/main/chat_template.jinja"
     "qwen3.8/Flash-Next-chat-template.jinja|https://huggingface.co/Qwen/Qwen3.8-Flash-Next/resolve/main/chat_template.jinja"
     "openjev/chat-template.jinja|https://huggingface.co/openjev/openjev/resolve/main/chat_template.jinja"
-    # ds v41f 1017 use py script, so we use unsloth's port of chat template
-    "deepseek/v4.1-flash-1017-chat-template.jinja|https://huggingface.co/unsloth/DeepSeek-V4.1-Flash-1017/resolve/main/chat_template.jinja"
     "glm-5.3-flash/chat-template.jinja|https://huggingface.co/zai-org/GLM-5.3-Flash/resolve/main/chat_template.jinja"
 )
 
