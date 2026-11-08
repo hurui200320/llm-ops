@@ -320,6 +320,13 @@ time ./bench/run_reasoning.sh
   + All passed, including aime26-15
 + `dsv41f1017-iq2xxs`:
   + Failed: aime26-15
++ `glm-5.3-flash-iq2s`:
+  + timeout: aime26-11, aime26-15
+  + Failed: zebra-6x6-01 (39%)
+  + Rerun 3 failed with longer timeout: aime26-11 and aime26-15 failed, zebra-6x6-01 89%
++ `glm-5.3-flash-iq2s-derisked`:
+  + timeout: aime26-11, aime26-15
+  + Rerun 3 failed with longer timeout: aime26-15 still failed, zebra-6x6-01 100% again
 
 About timeout, especially for `aime26-15`: When timeout happens, llamacpp still generates text (82k token),
 either it's reasoning, or it get itself into loops. Either way, it suggests the model failed to figure it out in the
