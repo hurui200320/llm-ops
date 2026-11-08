@@ -34,6 +34,7 @@ Run an interactive maintenance shell on the NAS (models assumed under `/mnt/user
 
 ```bash
 docker run -it --rm --pull=always -v /mnt/user/archive/LLM:/data \
+    -e HTTPS_PROXY=http://10.233.1.8:7897 \
     ghcr.io/hurui200320/llm-ops-toolbox:latest
 ```
 
