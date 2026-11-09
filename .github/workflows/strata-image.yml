@@ -11,13 +11,14 @@ name: strata-image
 #      engine is byte-identical to what upstream puts in its own images;
 #   2. builds the image with upstream's docker/build.sh from the same tag, and smoke-tests it in-image.
 #
-# The result is exactly what an upstream 0.2.12-rocm-gfx110x build assembles: the released package, the Terminal
+# The result is exactly what an upstream 0.2.13-rocm-gfx110x build assembles: the released package, the Terminal
 # from the same tag, nothing added and no source patch. (v0.2.11 needed one build-context patch — upstream fix
 # 5d37280d, which makes docker/build.sh stage the metal/tools/ sources its own package_terminal.py copies;
-# v0.2.12 contains that commit. Until 2026-11-04 the workflow also compiled a gfx110x `strata-dsv41` DeepSeek
-# engine into the image with the TheRock ROCm wheels; the DeepSeek lane moved to Project Maya that day
-# (notes/maya.md 20261104) and the build was removed — the record: notes/strata.md 20261104.) The Dockerfile's
-# verify stage re-checks the package (every listed file, binary_deps on every ELF, ldd in the image).
+# v0.2.12 contains that commit and v0.2.13's docker/ is unchanged from v0.2.12's. Until 2026-11-04 the workflow
+# also compiled a gfx110x `strata-dsv41` DeepSeek engine into the image with the TheRock ROCm wheels; the DeepSeek
+# lane moved to Project Maya that day (notes/maya.md 20261104) and the build was removed — the record:
+# notes/strata.md 20261104.) The Dockerfile's verify stage re-checks the package (every listed file, binary_deps on
+# every ELF, ldd in the image).
 #
 # The upstream versions are PINNED in `env:` below, not workflow inputs: the image is bound to one Strata source tag
 # and one released engine package. The package gate is written against exactly that combination, so moving any of
@@ -40,23 +41,28 @@ on:
 env:
   IMAGE: ghcr.io/hurui200320/llm-ops-strata
   STRATA_REPO: Niko1221/Strata
-  # Terminal sources and the Dockerfile. v0.2.12 contains the metal/tools build-context fix (5d37280d) that
-  # v0.2.11 needed as a source patch, so this tag needs none.
-  STRATA_REF: v0.2.12
-  # The release that carries the signed feed and the Qwen engine packages. v0.2.12 rebuilds EVERY Qwen engine
-  # package at 0.1.58: the rx7900 engine folder changes 0.1.57 -> 0.1.58 and every lane re-runs setup once. Most of
-  # the release is Mac / Strix Halo / gfx12 / CUDA work that does not apply to 2x gfx1100. What matters here: the
-  # tool-parser round (#5409 <function=tools NAME>, #5276 misspelt openers, #5281 an MCP tool by its last segment,
-  # #4828 forced tool_choice with several tools, #4832 Anthropic tool results by tool_use_id, #4622 the
-  # undeclared_tool_calls setting) and the #5149/#5147 fix for a first-request hang with --pipeline-windows 2 on two
-  # AMD cards (our lane shape: automatic, tokens unchanged). The engine stays speed-neutral for us (upstream's
-  # closest measurement: 2x A6000 IQ3_S layer split +0.38%); the server's reported timing figures now count
-  # admission time, so short requests read lower t/s without being slower. No HIP toolchain change:
-  # packaging/build_hip_linux.sh moves PKGVER only, so the rx7900 package keeps TheRock 7.10.0a20251120 and the
-  # gate below re-checks hipBLASLt 100200 + the tuning table. Upstream did NOT run the Linux rx7900 package on
-  # hardware this release, so the in-image smoke and the lanes' own smokes carry more weight than usual. The
-  # package is re-verified against the feed below (signature, manifest hash).
-  ENGINE_RELEASE: v0.2.12
+  # Terminal sources and the Dockerfile. v0.2.13's docker/ is byte-identical to v0.2.12's, which contains the
+  # metal/tools build-context fix (5d37280d) that v0.2.11 needed as a source patch, so this tag needs none.
+  STRATA_REF: v0.2.13
+  # The release that carries the signed feed and the Qwen engine packages. v0.2.13 rebuilds EVERY engine package
+  # at 0.1.59: the rx7900 engine folder changes 0.1.58 -> 0.1.59 and every lane re-runs setup once. Most of the
+  # release is Qwen4 groundwork (signed-feed model list, strata-q4-<shape> components) and Mac / Strix Halo /
+  # Windows / gfx12 / CUDA work that does not apply to 2x gfx1100. What matters here: the tool parser is now
+  # picked from the chat template (serve/toolformat.py) — the XML form every Strata model ships, our fixed Qwen
+  # template included, keeps the same OutputParser; only JSON-form templates (Qwen3, Hermes) get JsonOutputParser.
+  # The engine now finds tuning/<arch>-hipblaslt-<version>.txt beside itself (gfx1151 on its own, another card
+  # needs STRATA_HIPBLASLT_TABLE=on — the container env the lanes already pass), so the server no longer writes a
+  # table path into the run config. The parallel/GDN stack env the server used to set is gone (it never applied
+  # to HIP: those are the engine's defaults now). Linux #5327 / PR #5531 credits free pages + the file cache for
+  # an expert-arena shortfall again (the refusal stays for anonymous-RAM shortfalls and cgroup caps;
+  # STRATA_ARENA_FILE_CACHE=0 opts out), and the fused_gr dynamic-shared-memory opt-in is set per device instead
+  # of per process (our 2-card layer split runs that kernel on both). DFlash2 default changes are Strix Halo /
+  # Blackwell >= 48 GB only; gfx1100 is unchanged and the lanes stay on MTP. Upstream did NOT run the Linux
+  # rx7900 package on hardware this release, and the DFlash2 defaults were measured before the final 0.1.59
+  # packages, so the in-image smoke and the lanes' own longctx spot carry more weight than usual. No HIP
+  # toolchain change: the gate below re-checks hipBLASLt 100200 + the tuning table. The package is re-verified
+  # against the feed below (signature, manifest hash).
+  ENGINE_RELEASE: v0.2.13
   # hipBLASLt version the package's gfx1100 tuning table must match (BUILD.json hipblaslt_version).
   HIPBLASLT_TABLE_VERSION: "100200"
 

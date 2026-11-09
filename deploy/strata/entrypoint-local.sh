@@ -1,12 +1,12 @@
 #!/bin/sh
 # Fork of upstream's /opt/strata/entrypoint.sh for the llm-ops llama-swap lane.
 #
-# Changes from upstream v0.2.12 (image
-# ghcr.io/hurui200320/llm-ops-strata:0.2.12-rocm-gfx110x, terminal 0.2.12 / engine
-# 0.1.58; sha256
-# 0c660798a51cedb2352847cc91c8c90c59aaec22ca4294a13456c00fb6a6e9b1, byte-identical to
-# the v0.2.11 entrypoint — which was the 0.2.10 one, itself the 0.2.9 one (sha256
-# 10fe9c4f…) plus upstream's `--retune` line (#4779) and one comment; that 0.2.9
+# Changes from upstream v0.2.13 (image
+# ghcr.io/hurui200320/llm-ops-strata:0.2.13-rocm-gfx110x, terminal 0.2.13 / engine
+# 0.1.59; sha256
+# 0c660798a51cedb2352847cc91c8c90c59aaec22ca4294a13456c00fb6a6e9b1, still byte-identical to
+# the v0.2.12 entrypoint — itself the v0.2.11 one, which was the 0.2.10 one, itself the 0.2.9
+# one (sha256 10fe9c4f…) plus upstream's `--retune` line (#4779) and one comment; that 0.2.9
 # entrypoint was byte-identical to v0.2.8's, which was byte-identical to v0.2.7's
 # (which added only legacy_models_guard (#3421) to the v0.2.6 entrypoint, sha256
 # 7c74cfd3…)). The fork carries those upstream lines unchanged:
@@ -37,7 +37,7 @@
 #      argv flags and the engine exits 2 on an unknown `--drafting`. The Qwen lanes
 #      pin mtp: DFlash2 was tried on 0.1.56 and reverted (16-18% slower decode, and
 #      it cannot run beside pipeline-windows; see deploy/llama-swap.config.yaml).
-# The script below is upstream v0.2.12 apart from the five changes above and the
+# The script below is upstream v0.2.13 apart from the five changes above and the
 # comment updates that describe them. A key given through API_KEY / API_KEY_FILE
 # still wins and is used exactly as upstream.
 #

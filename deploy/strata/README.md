@@ -1,8 +1,8 @@
 # Strata (AMD / HIP) deployment
 
-The Strata image the lanes run is **our own build**, `ghcr.io/hurui200320/llm-ops-strata:0.2.12-rocm-gfx110x`,
+The Strata image the lanes run is **our own build**, `ghcr.io/hurui200320/llm-ops-strata:0.2.13-rocm-gfx110x`,
 made by [`.github/workflows/strata-image.yml`](../../.github/workflows/strata-image.yml). It carries upstream's
-Terminal 0.2.12 (serve + the GGUF preparation tools and the `strata` CLI), upstream's signed-feed 0.1.58 Qwen engine
+Terminal 0.2.13 (serve + the GGUF preparation tools and the `strata` CLI), upstream's signed-feed 0.1.59 Qwen engine
 package, both picture readers (CPU and GPU), and the ROCm runtime for the whole RDNA 3
 dGPU family (gfx1100 = RX 7900 XTX/XT, gfx1101 = RX 7800/7700 XT, gfx1102 = RX 7600) — byte for byte what
 upstream's own `docker/build.sh` assembles from the same tag; nothing is added. The host needs only the `amdgpu`
@@ -16,14 +16,14 @@ also carried our gfx110x `strata-dsv41` DeepSeek engine; the DeepSeek lane moved
 
 ## Pins
 
-Current image: `ghcr.io/hurui200320/llm-ops-strata:0.2.12-rocm-gfx110x` (Terminal `v0.2.12`, engine
-`0.1.58` rx7900). Digests, package hashes, and verification records are in
+Current image: `ghcr.io/hurui200320/llm-ops-strata:0.2.13-rocm-gfx110x` (Terminal `v0.2.13`, engine
+`0.1.59` rx7900). Digests, package hashes, and verification records are in
 [notes/strata.md](../../notes/strata.md); the workflow `env:` block pins the build inputs.
 
-- **Engine folder**: `/opt/strata/components/engine/0.1.58-linux-x86_64-hip-rx7900` (upstream names
+- **Engine folder**: `/opt/strata/components/engine/0.1.59-linux-x86_64-hip-rx7900` (upstream names
   the folder without the `strata-engine-` prefix; reference the engine as `component:strata-engine`,
   never by path).
-- **Other package files**: 0.1.58 also ships the all-cards split engine (`strata-split-2/3/4-amd`,
+- **Other package files**: 0.1.59 also ships the all-cards split engine (`strata-split-2/3/4-amd`,
   ~+49 MB). Their Auto rule never selects this pair: it requires gfx1201, exactly 4 cards, context
   ≤ 128K and the IQ3_S i-quant expert set (the split beats the layer split on 4× R9700; on 2–3
   cards upstream still measures the layer split faster), so the lanes keep the layer split. Exact
@@ -61,7 +61,7 @@ docker run -d --name strata-init --init --rm \
   -e VISION_TOKENS=8192 -e VISION_MIN_TOKENS=1024 \
   -e DRAFTING=mtp \
   -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1" \
-  ghcr.io/hurui200320/llm-ops-strata:0.2.12-rocm-gfx110x
+  ghcr.io/hurui200320/llm-ops-strata:0.2.13-rocm-gfx110x
 docker logs -f strata-init    # wait for one-time setup to finish, then stop the container
 ```
 
@@ -117,7 +117,7 @@ docker run -it --rm \
   --group-add "$(getent group video | cut -d: -f3)" \
   --group-add "$(getent group render | cut -d: -f3)" \
   -v /mnt/unenc-xfs/strata/ISTA-DASLab-Flash-Next:/data -v /mnt/unenc-xfs/models:/models:z \
-  ghcr.io/hurui200320/llm-ops-strata:0.2.12-rocm-gfx110x sh
+  ghcr.io/hurui200320/llm-ops-strata:0.2.13-rocm-gfx110x sh
 ```
 
 Any command replaces the server start (`docker run … image strata launch --help`, `… image sh`).
@@ -139,13 +139,13 @@ compiler in the image: engine updates are new packages, or a local package built
 
 Run **Actions → strata-image → Run workflow**. [`.github/workflows/strata-image.yml`](../../.github/workflows/strata-image.yml)
 is the source of truth: its header says why the image exists and what it changes against an upstream one (nothing
-since v0.2.12: the tag contains the `metal/tools` build-context fix that v0.2.11 needed as an after-tag patch), its
-`env:` block pins the Strata tag, the engine release and the hipBLASLt table, and its steps are the build and its
-gates (signed fetch, package checks, the in-image smoke tests). The one switch: `push` (off builds and smoke-tests
-without publishing). The run summary carries the digests, which are recorded in
-[notes/strata.md](../../notes/strata.md).
+since v0.2.12: the tag contains the `metal/tools` build-context fix that v0.2.11 needed as an after-tag patch, and
+v0.2.13's `docker/` is unchanged from v0.2.12's), its `env:` block pins the Strata tag, the engine release and the
+hipBLASLt table, and its steps are the build and its gates (signed fetch, package checks, the in-image smoke
+tests). The one switch: `push` (off builds and smoke-tests without publishing). The run summary carries the
+digests, which are recorded in [notes/strata.md](../../notes/strata.md).
 
-**No source patch.** v0.2.12's `docker/build.sh` stages the Terminal's `metal/tools` scripts itself (upstream
+**No source patch.** v0.2.13's `docker/build.sh` stages the Terminal's `metal/tools` scripts itself (upstream
 `5d37280d`), so the image is upstream's own build.
 
 A local build is those same steps run by hand (Docker + network, no GPU): run upstream's
@@ -154,11 +154,11 @@ A local build is those same steps run by hand (Docker + network, no GPU): run up
 A plain upstream image (what the workflow produces) builds with:
 
 ```sh
-git -C <strata-checkout> worktree add /tmp/strata-v0.2.12 v0.2.12
-tar -xzf strata-engine-0.1.58-linux-x86_64-hip-rx7900.tar.gz -C <empty-dir>
-/tmp/strata-v0.2.12/docker/build.sh --flavor hip \
-  --engine <empty-dir> --repo /tmp/strata-v0.2.12 \
-  --version 0.2.12 --tag strata:0.2.12-rocm-gfx110x-local
+git -C <strata-checkout> worktree add /tmp/strata-v0.2.13 v0.2.13
+tar -xzf strata-engine-0.1.59-linux-x86_64-hip-rx7900.tar.gz -C <empty-dir>
+/tmp/strata-v0.2.13/docker/build.sh --flavor hip \
+  --engine <empty-dir> --repo /tmp/strata-v0.2.13 \
+  --version 0.2.13 --tag strata:0.2.13-rocm-gfx110x-local
 ```
 
 Needs network (base image + the terminal's pinned CPython 3.12 and hash-locked wheels). `--ctx-only` keeps the
@@ -327,24 +327,23 @@ prompt-speed win, so **DFlash2 was tried and reverted the same day**:
 The gfx1100 table routes the dense prompt GEMMs through hipBLASLt (`docs/AMD_HIP.md`: +40–60% prompt
 speed on the 7900 XTX); its solution ids are valid only for the hipBLASLt version the engine runs
 with. The AMD engine package carries `tuning/gfx1100-hipblaslt-100200.txt` (listed and
-hashed in `engine-component.json`) and records `hipblaslt_version: 100200` in `BUILD.json`. The
-server resolves the table for the card at start (`serve/server.py` with
-`strata_control/hipblaslt_tuning.py`) and passes it to the engine; the engine validates
-magic/arch/version itself and also falls back to the table beside its own exe when
-`STRATA_HIPBLASLT_TUNING` is absent (`STRATA_HIPBLASLT_TABLE=off` still turns it off). The workflow
+hashed in `engine-component.json`) and records `hipblaslt_version: 100200` in `BUILD.json`. Since
+0.2.13 (engine 0.1.59) the **engine** finds that file beside itself at start (`src/prefill/gemm.cu`):
+by itself on gfx1151 only, on another card with `STRATA_HIPBLASLT_TABLE=on`; it validates
+magic/arch/version itself. The server no longer writes a `STRATA_HIPBLASLT_TUNING` path into the run
+config (`strata_control/hipblaslt_tuning.py`); a run config's `"hipblaslt_table": true/false` is
+copied to the engine as `STRATA_HIPBLASLT_TABLE=on/off` unless the shell already chose. The workflow
 gate verifies the packaged table against the manifest and records its hash in
 [notes/strata.md](../../notes/strata.md).
 
-- On gfx1100 the packaged table is **opt-in**: set `STRATA_HIPBLASLT_TABLE=on`. Without it the start
-  logs `... is in this package and not used by default (faster prompts, but answers can differ in
-  the last digits)` and the prompt GEMMs run plain hipBLAS.
-  **The switch is read from the server process's environment** (`strata_control/hipblaslt_tuning.py`
-  `mode()`: `os.environ` first, then a top-level `"hipblaslt_table"` key of the run config). So it
-  must be a container env var (`-e STRATA_HIPBLASLT_TABLE=on`); putting it inside `STRATA_SET`
-  silently does nothing — the key is saved into the preset's `env` and only forwarded to the engine,
-  which reads `STRATA_HIPBLASLT_TUNING` (a path), not the switch.
+- On gfx1100 the packaged table is **opt-in**: set `STRATA_HIPBLASLT_TABLE=on` as a container env var
+  (`-e`), the route both lanes use. Without it the start logs `... is in this package and not used by
+  default (faster prompts, but answers can differ in the last digits)` and the prompt GEMMs run plain
+  hipBLAS. The engine reads the switch from its own environment (it inherits the container env), so
+  the server-side `mode()` switch of 0.2.12 is no longer the decision point; a config-level
+  `"hipblaslt_table"` boolean still reaches the engine through the server's `apply()` copy.
 - `STRATA_HIPBLASLT_TABLE=off` never uses a table; `auto` uses it by default only on gfx1151.
-- A `STRATA_HIPBLASLT_TUNING` you set yourself always wins (the same table is fine); it remains the
+- A `STRATA_HIPBLASLT_TUNING` you set yourself still wins (the same table is fine) and stays the
   fallback for a package whose table is missing. Copy one out of the image if ever needed:
   `docker run --rm IMAGE sh -c 'cat /opt/strata/components/engine/*/tuning/gfx1100-hipblaslt-100200.txt'`.
 - Start log lines to check:
