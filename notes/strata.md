@@ -371,3 +371,66 @@ With `maya-ds4` serving the ISTA set faster on every axis ([notes/maya.md](maya.
   the `:npt` alias and vision ("Red" on the 1×1 PNG); SC117 answered a tool call and vision; both containers
   `(healthy)` on `0.2.12-rocm-gfx110x`. The pack templates are already the fixed copy, so the lane start logs no
   further swap.
+
+# 20261110 Upgrade to 0.2.13 (engine 0.1.59) — parser from the template, engine-side hipBLASLt, #5327 file-cache credit
+
+- **Pins (0.2.13)**: `ghcr.io/hurui200320/llm-ops-strata:0.2.13-rocm-gfx110x`, digest
+  `sha256:a93ef7902bc52c68ab164e3d3581121dc3f18552befc55c7d3d881196e7ae3e0` (2,348,902,878 B on host, CI run
+  `42657519003`); tag `v0.2.13`, commit `d2f096475817d4666c364c820b0ca830f751cfc5` (Control `0.1.59`);
+  `strata-engine-0.1.59-linux-x86_64-hip-rx7900` (asset sha256
+  `9ba0e3e33a1dad14870df46d9fc70e7cd2e5d5690196c8e4b39cc3aa1b261059`, 583 files, manifest sha256
+  `df4a624b9493086e57e8195fb59a994e26c3b38226c456a7d4d0859a79493367`, `BUILD.json` source `f-0213-rc
+  712fec6b4297`, `build_id 712fec6b4297+rocm`, variant `rx7900`, `dsv41: false`). hipBLASLt table bytes unchanged
+  (`1bb8cd2e232ce1dec5dc0f303e5bd3b32abd9444330a4428a995ad4db8fb97be`, 845 B, version `100200`) and upstream
+  `docker/` (entrypoint.sh `0c660798…`, build.sh, Dockerfile, fetch-engines.py) unchanged from v0.2.12, so the
+  five fork changes and the workflow's build steps carried over untouched.
+- **What changes for this box**:
+  - **Tool parser is picked from the chat template (`serve/toolformat.py`, `parser_for_template`)**: the XML
+    form every Strata model ships — our `Flash-Next-chat-template-fixed.jinja` included — keeps the same
+    `OutputParser`; only JSON-form templates (Qwen3/Hermes) get the new `JsonOutputParser`, and DSML stays
+    family-selected. No behavior change on either lane (declared/multi-turn tool smokes pass).
+  - **hipBLASLt table discovery moved into the engine (`src/prefill/gemm.cu`, 343b8eae)**: the server no longer
+    writes `STRATA_HIPBLASLT_TUNING` into the run config; the engine takes
+    `tuning/<arch>-hipblaslt-<version>.txt` beside itself on gfx1151 by itself and on another card with
+    `STRATA_HIPBLASLT_TABLE=on` (the container env both lanes already pass, inherited by the engine). Verified in
+    the engine log on both lanes: `prefill gemm: hipBLASLt tuning enabled (26 rows, gfx1100, version 100200)`.
+    The server's own `hipBLASLt tuning table: …` line is no longer visible in either the container log or
+    `docker.engine.log`.
+  - **Engine-owned defaults (d1121b89, f-clean-1c)**: the parallel stack, GDN stack, Q8_0 hyper-connection read,
+    Metal fp16 windows and the gfx1151 table path are no longer injected by the server; none of them ever
+    applied to HIP gfx1100 (Linux-CUDA / gfx12 / Metal only), so the lanes are unaffected.
+  - **#5327 / PR #5531 (28bd0185…)**: on Linux an expert-arena shortfall the free pages + file cache can cover
+    loads again (the #4051/#4846 refusal stays for anonymous-RAM shortfalls and cgroup caps;
+    `STRATA_ARENA_FILE_CACHE=0` opts out). The start log shows the credit in action: `the file tier reads through
+    the file cache (55.4 GiB available, 28.0 GiB of it still to be taken by the RAM copy, …)`.
+  - **fused_gr dynamic-shared-memory opt-in set per device, not per process** (269f3385 + b4e9ac7c): the 2-card
+    layer split runs the single-token down kernel on both cards; Flash-Next's hidden size makes the dynamic-smem
+    path inert, so no placement change.
+  - DFlash2 per-device defaults (window 8 / conf 0.55) are Strix Halo and Blackwell ≥48 GB only; gfx1100 keeps
+    the 0.2.12 values and both lanes stay on MTP (`--pipeline-windows 2` still blocks DFlash2).
+  - Qwen4 groundwork (signed-feed model list, `strata-q4-<shape>` components, `strata --geometry`): inert — the
+    0.2.13 feed carries neither a model list nor a shape engine; `strata --geometry` prints `flash_next` for the
+    rx7900 engine. Upstream did **not** run the Linux rx7900 package on hardware this release.
+- **Rollout (2026-11-10)**: pulled on fedora-tuf (`6f5e30f` → `4945b57`); llama-swap watchconfig reloaded the
+  config at 00:53:12. Both lanes ran one setup pass (`0.1.58` → `0.1.59`): the install record was remade because
+  its `vision.exe` named the 0.1.58 folder, packs and MTP were reused (no download), and the first start warned
+  that `VISION_TOKENS` is applied on the next start — the reload for the longctx run then logged
+  `Vision budget: strata-iq3_s.json: max_tokens=8192, min_tokens=1024`, and the reader warmed at 4096 tokens.
+  Vanilla first request 200 in 44 s (setup+load), SC117 in 49 s; a later stop/start reload took 45 s.
+- **Placement (with the 8192 vision budget applied)**: vanilla `7,959 + 7,727` slots (14.44 + 15.47 GiB), 23.75
+  GiB RAM copy, lend 3,582, 1,818/1,120 MiB free — the 0.2.12 figures exactly; SC117 `8,253 + 7,691` (14.97 +
+  15.40 GiB), 23.3 GiB RAM copy, lend 3,584, 1,812/1,120 MiB free (0.2.12: 8,252 + 7,691 / 23.28 / 3,584). (The
+  setup start, still on setup's default 1024-token reader, placed 8,304 slots on CUDA0; the serving start with
+  the lane's own config returns to 7,959.)
+- **Verification**: both lanes 6/6 llama-swap smokes (chat with the reasoning split, declared tool call,
+  multi-turn tool result, vision "Red" on a 1×1 PNG, `:npt`, `/props` n_ctx 262144 + all caps true); pack
+  templates equal the repo `-fixed.jinja` (sha256 `94c3110e…`, no swap logged); in-image suites
+  (`serve.test_serve_robustness` + `serve.test_tool_corpus` + `OpenAIChunksTerminal` 24/24, tool/accounting
+  family 124/124, `serve.test_tool_format` 12/12 with the source fixtures mounted); graceful stop 2.7 s (0.2.12:
+  2.9 s). **Image gap (upstream)**: `serve/test_tool_format.py` reads `tools/qwen4_intake_fixtures/*.json.gz`,
+  which `packaging/package_terminal.py` does not copy into the image, so 7 of its tests error in-image without
+  the fixtures; runtime serving does not read them.
+- **Longctx spot (speed record: [qwen3.8/Flash-Next.md](qwen3.8/Flash-Next.md) 20261110)**: 60% pp 2,100.9 / tg
+  66.85, 85% pp 2,185.9 / tg 64.90 (accept 0.68) against the 0.2.12 control 2,080.2/66.40 and 2,161.3/64.20 —
+  speed-neutral, within +1%. `deploy/strata/README.md` was updated in place (pins, engine-side table discovery,
+  engine-log check line).

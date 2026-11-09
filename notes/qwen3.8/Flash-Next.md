@@ -508,3 +508,21 @@ control, inside this box's sample-to-sample spread (2.0–2.7% on the 0.2.11 sam
 
 Records: `bench/results/longctx/qwen3.8-flash-next-iq3s-20261108-002850.json` and `.log` (runner). Upgrade,
 pins, placement and the template incident: [../strata.md](../strata.md) 20261108.
+
+# 20261110 Strata 0.2.13 (engine 0.1.59) longctx spot
+
+Same box, same arm (MTP, `--spec 4`, `spec-min-p 0.7`, `pipeline-windows 2`), vanilla lane, fixed template.
+Matched protocol for the 0.2.12 control: `run_longctx.py --ctx 262144 --out-pct 10 --in-pcts 60,85 --reps 2`,
+`cache 0` every rep:
+
+| Run | 60% pp / tg | 85% pp / tg | acceptance |
+| --- | --- | --- | --- |
+| 0.2.13 (2026-11-10) | 2100.9 / 66.85 | 2185.9 / 64.90 | 0.682 / 0.684 |
+| 0.2.12 control (2026-11-08) | 2080.2 / 66.40 | 2161.3 / 64.20 | 0.685 / 0.681 |
+
+Speed-neutral (+0.7% to +1.1% on both axes, inside the box's run-to-run spread), as expected: the 0.1.59 work is
+Qwen4 geometry groundwork and Mac / Strix Halo / Windows / CUDA changes; upstream did not run the rx7900 package
+on hardware this release and re-measured only the DFlash2 defaults on other cards.
+
+Records: `bench/results/longctx/qwen3.8-flash-next-iq3s-20261110-010029.json` and `.log` (runner). Upgrade,
+pins, rollout and placement: [../strata.md](../strata.md) 20261110.

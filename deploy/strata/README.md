@@ -346,10 +346,13 @@ gate verifies the packaged table against the manifest and records its hash in
 - A `STRATA_HIPBLASLT_TUNING` you set yourself still wins (the same table is fine) and stays the
   fallback for a package whose table is missing. Copy one out of the image if ever needed:
   `docker run --rm IMAGE sh -c 'cat /opt/strata/components/engine/*/tuning/gfx1100-hipblaslt-100200.txt'`.
-- Start log lines to check:
+- Start log line to check (the engine's own; it proves the table loaded):
 
-      hipBLASLt tuning table: gfx1100-hipblaslt-100200.txt (faster prompts; STRATA_HIPBLASLT_TABLE=off turns it off)
       prefill gemm: hipBLASLt tuning enabled (26 rows, gfx1100, version 100200)
+
+  The server-side `hipBLASLt tuning table: gfx1100-hipblaslt-100200.txt (faster prompts; …)` line is not
+  in the lane logs (neither the container log nor `docker.engine.log`) on 0.2.13; with the container
+  switch set, the engine picks the table by itself, so the engine line above is the check.
 
   A mismatch (`version mismatch: file=100200 runtime=<N>`) means the package's `BUILD.json`/table
   pairing is wrong; pick the matching `gfx1100-hipblaslt-<N>.txt` (or none) and re-check.
