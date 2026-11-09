@@ -290,7 +290,7 @@ Failures:
 - **Agentic Coding**:
   - Best choice: `qwen3.8-flash-next-iq3s` (100% across all core tool and coding categories, 3.6s median turn latency on Strata, full resistance to TC-59/TC-60, and 18/20 & 19/20 resolved across two SWE-bench Multilingual pilot runs — 19/20 in both after accounting for a Gradle log-interleaving parser false negative in run 1). 
     - `dsv41f1017-iq2xxs`, `glm-5.3-flash-iq2s`, and `glm-5.3-flash-iq2s-derisked` are strong high-precision deliberative alternatives: `dsv41f1017-iq2xxs` scored 94% excl. TC-65..69 (100% across 12/15 categories, full TC-42/TC-59/TC-60 safety, and 16/20 resolved with 20/20 submitted on the SWE-bench pilot), while the two GLM 5.3 Flash models achieved the highest raw tool scores (93/100, 128/138 on vanilla and 129/138 on derisked; 100% on Code Patterns, Multi-Step Chains, and Error Recovery, and working `tools` + `response_format` structured output on Project Maya, with derisked also clearing the 52-tool TC-38 chain at `2/2`).
-    - On the SWE-bench pilot, vanilla `glm-5.3-flash-iq2s` resolved 15/20 (15/16 submitted patches resolved — losing only `axios-6539` to the upstream `#6543` revert — plus 4 step-capped tasks where it had already written a working fix in `/testbed` before exhausting the 75-step budget on ad-hoc test harnesses), though its heavier verification loops (851 API calls vs 453 on DeepSeek) and ~20 t/s expert streaming stretched its 20-task runtime to 7:20:27 (vs 3:57:45 on `dsv41f1017-iq2xxs` and 1:27:17–1:41:59 on `qwen3.8-flash-next-iq3s`).
+    - On the SWE-bench pilot, both `glm-5.3-flash-iq2s` and `glm-5.3-flash-iq2s-derisked` resolved 15/20: vanilla resolved 15/16 submitted patches (losing only `axios-6539` to the upstream `#6543` revert, plus 4 step-capped tasks where it had already written a working fix in `/testbed` before exhausting the 75-step budget on ad-hoc test harnesses), while derisked cut the step-capped rate in half (18/20 submitted, rescuing `lucene-12196` and `fmt-3272` and leaving a working fix in `/testbed` on `fmt-2457`, while missing subclass/sibling coverage on `gson-2061` and `three-26589`). However, their heavier verification loops (851 and 740 API calls vs 453 on DeepSeek) and ~20 t/s expert streaming stretched their 20-task runtimes to 7:20:27 and 6:55:07 (vs 3:57:45 on `dsv41f1017-iq2xxs` and 1:27:17–1:41:59 on `qwen3.8-flash-next-iq3s`).
     - `qwen3.8-flash-next-sc117-iq3s` resolved 17/20 & 18/20, but trailed vanilla due to step-cap over-verification on `fmt-2457` and weaker safety boundaries (TC-42, TC-59).
   - Lighter `llama.cpp` alternative: `google-gemma-4-31b-qat-q40-vision` resolved 12/20 on the coding pilot, with solid injection resistance and no grammar-sampler failures. See the Coding section for the small-sample caveat.
 - **Agentic Assistant**:
@@ -387,6 +387,7 @@ uses each model's full 20-task agent batches without substituting single-task re
 | `qwen3.8-flash-next-sc117-iq3s` (run 2, `135144`) | 18/20 | **8** | **7** | 3 | 1 | 1 | 1:50:29 |
 | `qwen3.8-flash-next-sc117-iq3s` (run 1, `002033`) | 17/20 | 7 | **7** | 3 | 2 | 1 | 2:20:44 |
 | `dsv41f1017-iq2xxs` | 16/20 | 6 | **7** | 3 | 4 | **0** | 3:57:45 |
+| `glm-5.3-flash-iq2s-derisked` | 15/20 | 7 | 5 | 3 | 3 | 2 | 6:55:07 |
 | `glm-5.3-flash-iq2s` | 15/20 | 7 | 6 | 2 | 1 | 4 | 7:20:27 |
 | `google-gemma-4-31b-qat-q40-vision` | 12/20 | 5 | 5 | 2 | 7 | 1 | 2:48:41 |
 | `google-gemma-4-26b-a4b-q80-vision` | 9/20 | 2 | 5 | 2 | 6 | 5 | 5:26:18 |
@@ -417,8 +418,8 @@ newline onto the end of `... > testStopWordSearching PASSED`, preventing
 `testStopWordSearching`. Counting that passing test run, vanilla
 `qwen3.8-flash-next-iq3s` solved **19/20 in both runs**.
 
-**Per-instance failures.** Across the 160 attempts (8 full batches): 124
-resolved, 24 graded unresolved, and 12 had no submission. IDs below abbreviate
+**Per-instance failures.** Across the 180 attempts (9 full batches): 139
+resolved, 27 graded unresolved, and 14 had no submission. IDs below abbreviate
 their repo prefix (`gson-1100` = `google__gson-1100`, `three-25687` =
 `mrdoob__three.js-25687`, etc.). **U** = a submitted patch rejected by the
 repo tests or compilation (or the `lucene-12196` log-interleaving parser bug²);
@@ -431,91 +432,112 @@ repo tests or compilation (or the `lucene-12196` log-interleaving parser bug²);
 | Qwen Flash Next SC117 (run 2) | `axios-6539` | `fmt-2457` |
 | Qwen Flash Next SC117 (run 1) | `axios-6539`, `gson-2061` | `fmt-2457` |
 | DeepSeek V4.1 Flash | `axios-6539`, `fmt-1683`, `gson-1100`, `gson-2061` | — |
+| GLM 5.3 Flash Derisked | `axios-6539`, `gson-2061`, `three-26589` | `fmt-2457`, `vue-11739` |
 | GLM 5.3 Flash | `axios-6539` | `lucene-12196`, `fmt-2457`, `fmt-3272`, `vue-11739` |
 | Gemma 4 31B | `axios-6539`, `fmt-1683`, `gson-1100`, `gson-2061`, `gson-2158`, `three-25687`, `vue-11739` | `fmt-3272` |
 | Gemma 4 26B | `fmt-1683`, `gson-1100`, `gson-2061`, `gson-2311`, `three-25687`, `preact-4316` | `lucene-12196`, `fmt-3272`, `gson-2024`, `gson-2158`, `vue-11739` |
 
 Why some submitted patches lost credit:
-- **Flash Next, DeepSeek V4.1 Flash & GLM 5.3 Flash (`axios-6539` in all 6 runs; `gson-2061` in SC117 run 1 and DeepSeek;
-  `gson-1100` and `fmt-1683` in DeepSeek):** For `axios-6539` (CVE-2024-39338), upstream initially merged PR `#6539` (`07a661a`,
+- **Flash Next, DeepSeek V4.1 Flash & GLM 5.3 Flash (`axios-6539` in all 7 runs; `gson-2061` in SC117 run 1, DeepSeek, and GLM Derisked;
+  `three-26589` in GLM Derisked; `gson-1100` and `fmt-1683` in DeepSeek):** For `axios-6539` (CVE-2024-39338), upstream initially merged PR `#6539` (`07a661a`,
   changing `isAbsoluteURL('//...')` to `false` so `//localhost:4667` joins onto `baseURL` and hits `goodServer`), then immediately
   reverted `#6539` before releasing `v1.7.4` in PR `#6543` (`6b6b605`, changing `lib/adapters/http.js` to pass
   `utils.hasBrowserEnv ? platform.origin : undefined` to `new URL(...)` so server-side protocol-relative URLs throw
-  `TypeError: Invalid URL`, matching the issue description's primary expected output). All six 100B+ MoE runs implemented the
+  `TypeError: Invalid URL`, matching the issue description's primary expected output). All seven 100B+ MoE runs implemented the
   final `v1.7.4` (`#6543`) `http.js` fix, which throws `TypeError: Invalid URL` against SWE-bench's frozen `#6539` test expecting
   `response.data === 'good'`.
-  Every other patch submitted by `glm-5.3-flash-iq2s` (15/16) passed, including the three tasks where DeepSeek V4.1 Flash lost credit:
-  on `gson-2061`, SC117 run 1 and DeepSeek updated `JsonReader.hasNext()` (`p != PEEKED_EOF`) without checking subclasses, missing
-  `JsonTreeReader.hasNext()` (`token != JsonToken.END_DOCUMENT`), whereas SC117 run 2, both vanilla Flash Next runs, and GLM 5.3 Flash
-  patched both classes; on `gson-1100`, DeepSeek added the `value == null` guard in `DefaultDateTypeAdapter.write()` (fixing the
+  Every other patch submitted by vanilla `glm-5.3-flash-iq2s` (15/16) and 15/18 submitted by `glm-5.3-flash-iq2s-derisked` passed:
+  on `gson-2061`, SC117 run 1, DeepSeek, and `glm-5.3-flash-iq2s-derisked` updated `JsonReader.hasNext()` (`p != PEEKED_EOF`) without checking subclasses, missing
+  `JsonTreeReader.hasNext()` (`token != JsonToken.END_DOCUMENT`), whereas SC117 run 2, both vanilla Flash Next runs, and vanilla `glm-5.3-flash-iq2s`
+  patched both classes; on `three-26589`, `glm-5.3-flash-iq2s-derisked` inspected `Line.js`, `Points.js`, and `Sprite.js` at step 12, saw that each `copy()`
+  method assigns `this.material = source.material;` directly, but reasoned that material arrays only apply conceptually to `Mesh` and placed the
+  `Array.isArray( source.material )` `.slice()` guard in `Object3D.copy()` and `Mesh.copy()` instead of `Line`/`Points`/`Sprite` (whereas vanilla
+  `glm-5.3-flash-iq2s` patched all four classes), overlooking that `Line.copy()` and `Points.copy()` call `super.copy()` first and then overwrite
+  `this.material = source.material;`; on `gson-1100`, DeepSeek added the `value == null` guard in `DefaultDateTypeAdapter.write()` (fixing the
   serialization NPE shown in the issue) but missed the symmetric `in.peek() == JsonToken.NULL` check in `DefaultDateTypeAdapter.read()`
-  (which GLM 5.3 Flash and Flash Next included); and on `fmt-1683`, DeepSeek fetched `fmt` `7.0.0`'s later `include/fmt/printf.h` from
+  (which both GLM 5.3 Flash models and Flash Next included); and on `fmt-1683`, DeepSeek fetched `fmt` `7.0.0`'s later `include/fmt/printf.h` from
   GitHub — which bundled a separate change (`fmt_specs.fill[0] = ' '` to ignore the `0` flag on `char` types) alongside the `-` alignment
   fix — and ran `./build/bin/printf-test` without recompiling the test binary against the modified header, missing that `PrintfTest.ZeroFlag`
-  (`%05c` expecting `"0000x"` at the `#1683` revision) regressed, whereas GLM 5.3 Flash patched `include/fmt/printf.h` locally and recompiled `printf-test`.
+  (`%05c` expecting `"0000x"` at the `#1683` revision) regressed, whereas both GLM 5.3 Flash models patched `include/fmt/printf.h` locally and recompiled `printf-test`.
 - **Gemma models:** Gemma 4 31B's `vue-11739` introduced a duplicate declaration and failed compilation. Both Gemma `fmt-1683` patches passed
   the target test but regressed `PrintfTest.ZeroFlag`; Gemma 4 26B's `preact-4316` patch likewise passed the target but regressed an existing
   event test. These are code failures, not grader errors.
-- **Capped runs (`N`):** Across both SC117 (`fmt-2457` in both runs) and `glm-5.3-flash-iq2s` (`lucene-12196`, `fmt-2457`, `fmt-3272`, `vue-11739`),
-  every 100B+ MoE `LimitsExceeded` trajectory had **already applied a working fix to `/testbed`** before step 75 expired (because `mini-swe-agent`
-  only captures `git diff` upon `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`, hitting step 75 records an empty patch):
-  - On `fmt-2457`, SC117 (by step 44–45 in both runs) and `glm-5.3-flash-iq2s` (patch at step 48, `ranges-test` and all 18 CMake `ctest` suites
-    passed by step 58; vanilla Flash Next submitted in 58 and 50 steps, DeepSeek in 40) implemented the working `formatter<tuple_join_view<...>>`
-    fix in `include/fmt/ranges.h`, then spent the remaining 17–30 steps writing 6–10 standalone C++ test programs in `/tmp` across `FMT_COMPILE`,
-    nested tuples, `mutable formatters_`, `std::locale`, and dynamic width (`#2484`) until the 75-step cap expired (reaching 103K–107K context,
-    4.4M–4.9M cumulative prompt tokens on SC117 and 78.2K context / 2.93M cumulative prompt tokens on GLM).
-  - On `lucene-12196`, `glm-5.3-flash-iq2s` patched `MultiFieldQueryParser.java` at step 47 (`applySlop` unwrapping `BoostQuery` and applying slop
+- **Capped runs (`N`):** Across SC117 (`fmt-2457` in both runs), vanilla `glm-5.3-flash-iq2s` (`lucene-12196`, `fmt-2457`, `fmt-3272`, `vue-11739`),
+  and `glm-5.3-flash-iq2s-derisked` (`fmt-2457`, `vue-11739`), 7 of the 8 100B+ MoE `LimitsExceeded` trajectories had **already applied a working fix
+  to `/testbed`** before step 75 expired (because `mini-swe-agent` only captures `git diff` upon `COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`, hitting step 75
+  records an empty patch):
+  - On `fmt-2457`, SC117 (by step 44–45 in both runs), vanilla `glm-5.3-flash-iq2s` (patch at step 48, `ranges-test` and all 18 CMake `ctest` suites
+    passed by step 58), and `glm-5.3-flash-iq2s-derisked` (patch at steps 22/29, refined for empty/C++20 tuples at step 61, passing all `ctest` suites
+    at steps 53 and 62; vanilla Flash Next submitted in 58 and 50 steps, DeepSeek in 40) implemented the working `formatter<tuple_join_view<...>>`
+    fix in `include/fmt/ranges.h`, then spent the remaining 13–30 steps writing standalone C++ test programs in `/tmp` across `FMT_COMPILE`,
+    nested tuples, `mutable formatters_`, `std::locale`, dynamic width (`#2484`), and `wchar_t` (`L"{:02}"`) until the 75-step cap expired (reaching
+    103K–107K context / 4.4M–4.9M cumulative prompt tokens on SC117, 78.2K context / 2.93M on vanilla GLM, and 82.5K context / 3.74M on derisked GLM).
+  - On `lucene-12196`, vanilla `glm-5.3-flash-iq2s` patched `MultiFieldQueryParser.java` at step 47 (`applySlop` unwrapping `BoostQuery` and applying slop
     before boost) and passed all 12 tests in `TestMultiFieldQueryParser` at step 62, but had burned steps 7–43 avoiding `./gradlew` by downloading
     JDK 21 (208 MB) from Adoptium and Lucene/HPPC/JUnit/RandomizedTesting JARs from Maven Central into `/tmp` to hand-compile `lucene-core`,
     `lucene-analysis-common`, `lucene-queries`, `lucene-test-framework`, and `lucene-queryparser` with `javac`, then spent steps 64–75 deliberating
-    over `lucene/CHANGES.txt`, inspecting a pre-existing `gradle/testing/defaults-tests.gradle` modification, and checking `QueryParserBase.handleBoost`.
-  - On `fmt-3272`, `glm-5.3-flash-iq2s` spent steps 23–68 instrumenting the `exp <= 0` branch of `do_write_float` in `include/fmt/format.h` before
+    over `lucene/CHANGES.txt`, inspecting a pre-existing `gradle/testing/defaults-tests.gradle` modification, and checking `QueryParserBase.handleBoost`
+    (by contrast, `glm-5.3-flash-iq2s-derisked` fetched only 3 Maven JARs to verify its fix in `/tmp` by step 33, ran `./gradlew :lucene:queryparser:test`
+    and `:spotlessJava` directly at steps 48–55, and submitted in 57 steps).
+  - On `fmt-3272`, vanilla `glm-5.3-flash-iq2s` spent steps 23–68 instrumenting the `exp <= 0` branch of `do_write_float` in `include/fmt/format.h` before
     realizing that in the issue's `{:19.3Lf}` reproducer, `0.295L` (`exp <= 0`, 19 chars) was actually the *correctly* padded line while the five
     `exp > 0` lines (`-119.921L`, etc., 18 chars) were 1 char short because `grouping.count_separators(significand_size)` counted fractional digits;
     it applied the exact 1-line upstream gold fix (`count_separators(significand_size)` -> `count_separators(exp)`) at step 70, verified alignment
-    at step 71, and spent steps 72–75 writing and debugging a 50-line `/tmp/repro/stress.cc` matrix (passing with 0 mismatches at step 75).
-  - On `vue-11739`, `glm-5.3-flash-iq2s` spent steps 13–60 building a custom Vitest harness (`repro.spec.ts` / `repro2.spec.ts`) that compiled SFC
-    blocks and evaluated generated ESM via `new Function(...)` (~35 steps debugging its regex ESM-to-CJS wrapper before reading
-    `hydration.spec.ts`), then at step 74 patched `toStyleMap()` in `packages/runtime-core/src/hydration.ts` to unescape backslash-escaped CSS
-    custom property keys (`unescapeStyleKey`), eliminating the hydration mismatch warning (`WARNINGS: []`) on step 75 right as the step limit hit.
+    at step 71, and spent steps 72–75 writing and debugging a 50-line `/tmp/repro/stress.cc` matrix (passing with 0 mismatches at step 75). By contrast,
+    `glm-5.3-flash-iq2s-derisked` installed the Ubuntu `locales` package (`apt-get update && apt-get install -y locales` + `localedef`) at steps 12–14 so
+    `std::locale("en_US.UTF-8")` ran natively, spotted the 18- vs 19-char width discrepancy at step 17, applied `count_separators(exp)` at step 19, and
+    submitted at step 32.
+  - On `vue-11739`, both GLM 5.3 Flash models spent steps 12–60+ building a custom Vitest harness (`repro.spec.ts` / `tmp-repro.spec.ts`) that compiled SFC
+    blocks via `@vue/compiler-sfc` and evaluated generated ESM via `new Function(...)` (debugging regex ESM-to-CJS import wrappers and destructuring `as` vs `:`
+    syntax errors instead of adding a unit test directly to `hydration.spec.ts`): vanilla `glm-5.3-flash-iq2s` patched `toStyleMap()` in
+    `packages/runtime-core/src/hydration.ts` at step 74 to unescape backslash-escaped CSS custom property keys (`unescapeStyleKey`) and verified `WARNINGS: []`
+    on step 75 right as the limit hit, whereas `glm-5.3-flash-iq2s-derisked` also got bogged down in missing prop values in `createSSRApp(App)` and only
+    reproduced the hydration style mismatch warning on steps 74–75 without modifying `/testbed`.
   Raise the step budget only for clearly progressing cases and report those experiments separately; never mix budgets in this table.
 
 **Strata & Maya 100B+ MoE behavioral notes (Qwen 3.8 Flash Next, DeepSeek V4.1 Flash & GLM 5.3 Flash):**
 - **Zero tool-call errors, step efficiency & CoT hallucination recovery:** Across all 80 Qwen Flash Next trajectories (2,801 API calls, 3,607 bash
-  commands), all 20 DeepSeek V4.1 Flash trajectories (453 API calls, 657 bash commands; min 7, median 21, max 58 steps/task), and all 20
+  commands), all 20 DeepSeek V4.1 Flash trajectories (453 API calls, 657 bash commands; min 7, median 21, max 58 steps/task), all 20
   `glm-5.3-flash-iq2s` trajectories on Project Maya (851 API calls, 997 bash commands; min 8, median 38.5, mean 42.5, max 75 steps/task; 146/851
-  turns emitting 2 parallel `bash` calls; 18.28M cumulative prompt tokens and 297K completion tokens), none of the four 100B+ MoE models had a
+  turns emitting 2 parallel `bash` calls; 18.28M cumulative prompt tokens and 297K completion tokens), and all 20 `glm-5.3-flash-iq2s-derisked`
+  trajectories on Project Maya (740 API calls, 893 bash commands; min 11, median 29.5, mean 37.0, max 75 steps/task; 153/740 turns emitting 2
+  parallel `bash` calls; 15.81M cumulative prompt tokens and 252.5K completion tokens), none of the five 100B+ MoE models had a
   single tool-call parse error, missing tool call, or command timeout. DeepSeek V4.1 Flash finished all 20 tasks without hitting the 75-step cap
-  (~22.7 API calls/task vs ~35.0 on Qwen Flash Next and ~42.5 on `glm-5.3-flash-iq2s`), though its slower hybrid CPU/RAM expert streaming
-  (~427 t/s pp, ~22.8 t/s tg on `strata-dsv41`) stretched its 20-task wall time to 3:57:45, while `glm-5.3-flash-iq2s`'s combination of heavier
-  verification loops and ~20 t/s multi-tier VRAM/RAM/NVMe expert streaming on `maya 1.1.56` stretched its 20-task wall time to 7:20:27. The ~1%
-  `IQ3_S` CoT hallucination noted for Qwen Flash Next in `## Synbad` appeared in `<think>` on 26/2,801 turns (~0.9%, claiming the user had only
-  sent system setup instructions and needed a brief acknowledgment), but in the full multi-turn coding context the model recovered immediately
-  after `</think>` on all 26 turns and emitted the proper `bash` tool call; neither DeepSeek V4.1 Flash nor `glm-5.3-flash-iq2s` exhibited any CoT
-  hallucinations.
+  (~22.7 API calls/task vs ~35.0 on Qwen Flash Next, ~37.0 on `glm-5.3-flash-iq2s-derisked`, and ~42.5 on `glm-5.3-flash-iq2s`), though its slower
+  hybrid CPU/RAM expert streaming (~427 t/s pp, ~22.8 t/s tg on `strata-dsv41`) stretched its 20-task wall time to 3:57:45, while the two GLM 5.3
+  Flash models' combination of heavier verification loops and ~20 t/s multi-tier VRAM/RAM/NVMe expert streaming on `maya 1.1.56` stretched their
+  20-task wall times to 6:55:07 (derisked) and 7:20:27 (vanilla). The ~1% `IQ3_S` CoT hallucination noted for Qwen Flash Next in `## Synbad`
+  appeared in `<think>` on 26/2,801 turns (~0.9%, claiming the user had only sent system setup instructions and needed a brief acknowledgment), but
+  in the full multi-turn coding context the model recovered immediately after `</think>` on all 26 turns and emitted the proper `bash` tool call;
+  neither DeepSeek V4.1 Flash nor either GLM 5.3 Flash model exhibited any CoT hallucinations.
 - **Container network lookups:** Because mini-SWE-agent starts containers on the default Docker bridge (no `--network none`), outbound internet is
   reachable. All three 100B+ MoE families — Qwen Flash Next (7–10/20 tasks per run), DeepSeek V4.1 Flash (8/20 tasks: `axios-6539`, `fmt-1683`,
-  `fmt-2457`, `gson-2158`, `gson-2311`, `three-26589`, `preact-4316`, `vue-11739`), and `glm-5.3-flash-iq2s` (11/20 tasks: `lucene-12196`,
-  `lucene-13170`, `axios-6539`, `fmt-2457`, `gson-1093`, `gson-1100`, `gson-2061`, `gson-2158`, `three-25687`, `preact-3454`, `preact-4316`) —
-  noticed this and probed GitHub, npm, unpkg, Adoptium, or Maven Central (`curl`, `wget`, `python3 urllib.request`, `git clone --filter=blob:none`,
-  `git ls-remote`, `npm view`/`npm pack`) to compare their local diagnosis against upstream commits, issues, or PR diffs (which in DeepSeek's
-  `fmt-1683` run backfired by pulling a later `7.0.0` change that regressed `PrintfTest.ZeroFlag`) or, in GLM's `lucene-12196` and `gson-1093`/
-  `gson-2061` runs, to download JDK 21 and Maven JARs for scratch test harnesses. In most Flash Next and GLM cases (`vue-11739`, `three-25687`,
-  `gson-2061`, `fmt-2457`) the model had already isolated the bug and designed the fix locally before checking upstream for file-placement/edge-case
-  conventions, and solved the same tasks locally on runs where it did not query the network (e.g., `gson-2061` and `gson-2311` in Flash Next vanilla
-  run 2, `vue-11870` in SC117 run 1, `preact-4316` in SC117 run 2, and `fmt-1683`, `gson-2311`, `three-26589`, `vue-11870` in GLM 5.3 Flash). To
-  strictly benchmark offline synthesis in future runs, pass `--network none` to the agent container (keeping network enabled only in the separate
-  grading container for `lucene`'s Gradle wrapper).
+  `fmt-2457`, `gson-2158`, `gson-2311`, `three-26589`, `preact-4316`, `vue-11739`), `glm-5.3-flash-iq2s` (11/20 tasks: `lucene-12196`,
+  `lucene-13170`, `axios-6539`, `fmt-2457`, `gson-1093`, `gson-1100`, `gson-2061`, `gson-2158`, `three-25687`, `preact-3454`, `preact-4316`), and
+  `glm-5.3-flash-iq2s-derisked` (8/20 tasks: `lucene-12196`, `axios-6539`, `fmt-1683`, `fmt-3272` via `apt-get install -y locales`, `gson-2311`,
+  `three-25687`, `preact-3454`, `preact-4316`) — noticed this and probed GitHub, npm, unpkg, Adoptium, Maven Central, or Ubuntu apt mirrors (`curl`,
+  `wget`, `apt-get`, `python3 urllib.request`, `git clone --filter=blob:none`, `git ls-remote`, `npm view`/`npm pack`) to compare their local
+  diagnosis against upstream commits, issues, or PR diffs (which in DeepSeek's `fmt-1683` run backfired by pulling a later `7.0.0` change that
+  regressed `PrintfTest.ZeroFlag`) or, in GLM's `lucene-12196`, `gson-1093`/`gson-2061`, and `fmt-3272` runs, to download JDK 21, Maven JARs, or the
+  `locales` package for scratch test harnesses. In most Flash Next and GLM cases (`vue-11739`, `three-25687`, `gson-2061`, `fmt-2457`) the model had
+  already isolated the bug and designed the fix locally before checking upstream for file-placement/edge-case conventions, and solved the same tasks
+  locally on runs where it did not query the network (e.g., `gson-2061` and `gson-2311` in Flash Next vanilla run 2, `vue-11870` in SC117 run 1,
+  `preact-4316` in SC117 run 2, `fmt-1683`, `gson-2311`, `three-26589`, `vue-11870` in vanilla GLM 5.3 Flash, and `lucene-13170`, `gson-1093`,
+  `gson-1100`, `gson-2158` in derisked GLM 5.3 Flash). To strictly benchmark offline synthesis in future runs, pass `--network none` to the agent
+  container (keeping network enabled only in the separate grading container for `lucene`'s Gradle wrapper).
 
 **Takeaway.** `qwen3.8-flash-next-iq3s` on Strata resolves 18–19/20 (19/20 in both runs in terms of patch correctness, including `three-25687` and
 `vue-11739`) while finishing the 20-task loop in 1:27–1:42 and retaining full prompt-injection and authority-escalation defenses in
 `tool-eval-bench`. The abliterated `qwen3.8-flash-next-sc117-iq3s` offers no coding advantage over vanilla (17–18/20, slower at 1:50–2:21 due to
 step-cap over-verification on `fmt-2457`) and has weaker safety boundaries, so vanilla `qwen3.8-flash-next-iq3s` is the clear default.
-`dsv41f1017-iq2xxs` (16/20, 20/20 submitted in 3:57:45) and `glm-5.3-flash-iq2s` (15/20 resolved, 15/16 submitted patches passing, plus working
-fixes already written in `/testbed` on all four of its 75-step capped tasks in 7:20:27) place second and third among model families:
-`glm-5.3-flash-iq2s` demonstrates near-zero false-patch rate (resolving `fmt-1683`, `gson-1100`, and `gson-2061` where DeepSeek missed), but its
-habit of building custom scratch harnesses in `/tmp` and running exhaustive post-fix stress tests collides with the 75-step cap and its ~20 t/s
-multi-tier expert streaming, making it ~1.85× slower than `dsv41f1017-iq2xxs` and ~4.3×–5.0× slower than `qwen3.8-flash-next-iq3s`. Among the
-remaining `llama.cpp` models, `google-gemma-4-31b-qat-q40-vision` leads at 12/20 resolved. Four tasks were solved by all eight runs (`lucene-13170`,
-`gson-1093`, `three-27395`, `preact-3454`, plus `vue-11870`, `three-26589`, and `json-4237` across all active models). A single task moves the score
-by five percentage points, so close differences on this small pilot are directional, not a firm ranking.
+`dsv41f1017-iq2xxs` (16/20, 20/20 submitted in 3:57:45) and the two GLM 5.3 Flash models (`glm-5.3-flash-iq2s` and `glm-5.3-flash-iq2s-derisked`,
+both 15/20 resolved in 7:20:27 and 6:55:07) place second and third among model families: vanilla `glm-5.3-flash-iq2s` achieved the lowest false-patch
+rate among submitted diffs (15/16 passing, resolving `fmt-1683`, `gson-1100`, and `gson-2061` where DeepSeek missed, plus working fixes already
+written in `/testbed` on all four of its 75-step capped tasks), while `glm-5.3-flash-iq2s-derisked` was more step-efficient (740 vs 851 API calls,
+submitting 18/20 and rescuing `lucene-12196` and `fmt-3272` plus a working `/testbed` fix on `fmt-2457`, at the cost of missing subclass/sibling
+checks on `gson-2061` and `three-26589`). Across both GLM 5.3 Flash variants, the habit of building custom scratch harnesses in `/tmp` and running
+exhaustive post-fix C++ stress tests collides with the 75-step cap and ~20 t/s multi-tier expert streaming, making them ~1.75×–1.85× slower than
+`dsv41f1017-iq2xxs` and ~4.1×–5.0× slower than `qwen3.8-flash-next-iq3s`. Among the remaining `llama.cpp` models,
+`google-gemma-4-31b-qat-q40-vision` leads at 12/20 resolved. Six tasks were solved by all nine runs (`lucene-13170`, `gson-1093`, `three-27395`,
+`preact-3454`, `vue-11870`, and `json-4237`). A single task moves the score by five percentage points, so close differences on this small pilot are
+directional, not a firm ranking.
