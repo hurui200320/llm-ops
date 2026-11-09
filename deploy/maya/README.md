@@ -263,13 +263,13 @@ the run-to-run spread (pp ~903 / ~936 t/s, tg ~19.0 / ~19.1 t/s at 40 / 85 %). W
 (deployed 2026-11-07, 2-rep final): **pp 968.5 / 994.9 t/s, tg 19.75 / 20.65 t/s at 40 / 85 %**, `cache_n` 0 on
 every rep, acceptance 0.760 / 0.788; auto split [0,24) / [24,45)+MTP, int8 KV, 16K chunks, **min free VRAM
 434 MiB monitor / 271 MiB other** (targets 400 / 200), 12.8 GiB MemAvailable, swap flat, 6/6 functional gates
-(chat, tool call, `reasoning_effort: none`, primes, fenced code, a picture turn). The 4K picture turn (2026-11-06,
-camera check; the vision budget unchanged): `prompt_tokens` 10,579 = the 137x77 grid with no downscale, answer
-correct, **527 MiB monitor free idle, 1164 MiB during the turn** (349 MiB on the other card), 2,265 + 2,304 = 4,569
-experts in VRAM; the encoder lends 4.76 GB from the pool for the ~15 s encode and gives it back (the 1.1.56 gate run
-repeats it at 10,591 tokens, no downscale). The tuning arms, the 1.1.53 numbers and the against-setup deltas:
-[notes/glm/5.3-flash.md](../../notes/glm/5.3-flash.md); the 1.1.56 A/B, the #861 repack and the picture budget:
-[notes/maya.md](../../notes/maya.md) 20261107. Ready in ~31 s cold, stop 1-2 s.
+(chat, tool call, `reasoning_effort: none`, primes, fenced code, a picture turn). The 4K
+picture turn (2026-11-06, camera check; the vision budget unchanged): `prompt_tokens` 10,579 = the 137x77 grid
+with no downscale, answer correct, **527 MiB monitor free idle, 1164 MiB during the turn** (349 MiB on the other
+card), 2,265 + 2,304 = 4,569 experts in VRAM; the encoder lends 4.76 GB from the pool for the ~15 s encode and
+gives it back (the 1.1.56 gate run repeats it at 10,591 tokens, no downscale). The tuning arms, the 1.1.53
+numbers and the against-setup deltas: [notes/glm/5.3-flash.md](../../notes/glm/5.3-flash.md); the 1.1.56 A/B, the
+#861 repack and the picture budget: [notes/maya.md](../../notes/maya.md) 20261107. Ready in ~31 s cold, stop 1-2 s.
 
 The vanilla lane (2026-11-06 bring-up, same config) matches it line for line: auto split `[0,24)` /
 `[24,45)+MTP`, 2,265 + 2,304 = 4,569 experts, int8 KV, 16K chunks, 35.98 GB RAM tier; ready in 28 s; 7/7
@@ -282,8 +282,11 @@ The kept knobs above are what moves this lane; the rejected ones (per-card CPU l
 approximation (`DISK_SKIP_W`/`_FROM`, a residency-dependent quality trade, not adopted), a manual split, a
 40 GB RAM tier, `MAYA_GLM_P2P`, the decode lookahead (`MAYA_GLM_AHEAD`, -9 to -20 % tg in a dose-dependent
 sweep), `MAYA_GLM_PREFETCH_N`, the prompt CPU gate (`MAYA_GLM_PREFILL_CPU_GATE=0`, neutral), a traffic-traced
-expert profile (-2.7 % vs the shipped one) and 32K chunks on the prestage base (-2 to -3 % pp)) and the reasons
-are in [notes/glm/5.3-flash.md](../../notes/glm/5.3-flash.md). The layer split is auto on purpose: moving layers
+expert profile (-2.7 % vs the shipped one) and 32K chunks on the prestage base (-2 to -3 % pp)) - and, one day
+later, the 2026-11-09 CPU-vs-PCIe share pin + 4-piece disk reads (tg52/short-decode wins that reversed to
+-4 to -14 % tg on the 2 %-out production ladder; `READ_CHUNKS=4` alone: +2.9 % at 40 %, -7.4 % at 85 %); the
+reasons are in [notes/glm/5.3-flash.md](../../notes/glm/5.3-flash.md) 20261109. The layer split is auto on
+purpose: moving layers
 to the monitor card buys up to +11.6 % pp but costs 6-13 % tg (the pipelined decode costs the slower
 part), and tg is this lane's weak axis.
 
