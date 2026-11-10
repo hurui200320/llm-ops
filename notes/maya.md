@@ -395,3 +395,93 @@ this pair.
 - **`MAYA_GLM_P2P=1`**: no gain (896.8 / 933.5 pp, 19.1 / 17.5 tg) and SETTINGS.md warns consumer-AMD peer access can
   be unreliable (#809 hung on this card pair in the DS4 all-reduce path). Rejected (notes/glm/5.3-flash.md
   20261107).
+
+# 20261110 Maya 1.1.57 upgrade (GLM-5.3 744B bring-up) and 1.1.56 A/B
+
+Upgraded to `v1.1.57` (commit `00655481ce2b0689ab1c2e8d67034dc5701d6511`, 8 commits over `v1.1.56`; llama.cpp
+`3cf03257...`, ROCm `7.2.1-complete` base `sha256:3db551c4...`, `gfx1100` and the `100202` hipBLASLt table all
+unchanged). Workflow run `42659078538` (31m45s) pushed `ghcr.io/hurui200320/llm-ops-maya:1.1.57-rocm-gfx1100`,
+digest `sha256:1372c5d0d33060841cde17951ec3fc4e7708e26e71e425d8128aa941f04a3ee5` (30,141,963,419 B; 1.1.56 was
+30,131,364,031 B - the new glm-dsa sources add ~10 MB of binary). Build gates passed unchanged: `setup.py`'s only
+change is the setup screen's `model_named()`, `tools/iq_pack.py` only gains a `glm-dsa` architecture branch, and
+`tools/ds4/`, `pack_gguf.py`, `vision_pack.py`, `glm5next_patch.py`, `stamps.py` and `tools/hip/gfx1100-*` are
+untouched (the new `gfx1151-glm53-hipblaslt-100202.txt` is Strix Halo's).
+
+## Upstream changes reaching our image and lanes
+
+- **GLM-5.3 (744B, glm-dsa) on the same engine**: ~18 cmake fragments compile the new `glm_dsa_*`/`glmd_*` sources
+  into `strata_engine` on HIP (build 31m45s vs 30m16s at 1.1.56), the server/dashboard gain its model entry and
+  text-only handling, and `MAYA_GLM_*` (= `STRATA_GLM_*` via `maya_names.alias_env`) gains the DSA knobs
+  (`MAYA_GLM_DSA_GRAPHS`, `MAYA_GLM_IDX_FP16`, `MAYA_GLM_PROMPT_CACHE_DIR`, `MAYA_GLM_SPLIT_CARDS`) plus per-request
+  `strata_tune` engine overrides. It is **not usable on this host**: ~256 GB of VRAM+RAM together for every expert,
+  238.6 GB of UD-IQ2_M weights, text only, up to 1M context. Nothing was added to the lanes.
+- **Flash-eligible knobs, all default off**: `MAYA_GLM_NGRAM_DRAFT` (+`_MIN`/`_MAX`; history-repetition drafts,
+  MTP stays the fallback), `MAYA_GLM_LANE_ROW4` (4-row CPU-lane GEMV, bit-exact, AVX2/FMA/F16C) and the heat-evict
+  policy (`MAYA_GLM_VRAM_EVICT=lfu|lru`, default off - "Maya's aged-count policy, unchanged"). The prompt cache is
+  hard-gated on `GlmDsa`, i.e. not available to the Flash lanes (checked in `glm_prompt_cache_engine.cpp`).
+- **Fixes that reach us**: a SIGTERM / Ctrl+C while the server waits no longer hangs it (78c450a) - lane stops via
+  `docker stop -t 120`; DeepSeek video parts now answer a clear 400 instead of an encoder error (serve-side only,
+  `src/ds4/` is untouched); Ollama `"think": false` now turns thinking off (we do not use that API); the setup header
+  names the model being set up (cosmetic).
+- **Shared GLM code**: `glm_model.cu` (auto-split cost from a geometry descriptor; Flash packs fall back to the old
+  path), `glm_prefill.cu`/`glm_multi.cu`/`glm_mtp.cu`/`glm_fast_path.cu` and the shared kernels changed for the DSA
+  paths. The 1.1.57 ladders and placement below show no behaviour change on our packs. **No repack**: the pack tools
+  are untouched and `glm5next` packs are unaffected by the `iq_pack.py` branch; the session ABI stays
+  `engine=0.1.27`.
+
+## Verification (official CI image)
+
+All three lanes, **7/7 functional gates** through llama-swap (chat `SMOKE-OK`; `get_weather` -> `{"city":"Paris"}`;
+`reasoning_effort: none` -> `42`; first five primes; fenced `def sum_list`; 420x420 picture; 3840x2160 picture):
+DS4 first request 27.2 s (cold start + load), GLM derisked 36.1 s, GLM vanilla 32.6 s. 4K pictures:
+`prompt_tokens` **10,578** on both GLM lanes (137x77 grid, no downscale) and **1,145** on DS4 (1140 budget).
+
+Slots survived the bump unchanged (no pack change, same ABI): DS4 reloaded **131 conversations / 11.22 GB**,
+GLM derisked **4 / 1.66 GB**, GLM vanilla **3 / 4.71 GB**. The derisked lane's first start printed the entrypoint's
+config-diff line for the **pre-bump live `env`**; the repo copy replaced it and both GLM live configs now match
+`deploy/maya/configs/` (dashboard edits from earlier sessions are reset, nothing to port). Vanilla started clean.
+The DeepSeek tune tree was a copy of the production pack without its 131 kept conversations (so the ladder could
+not evict them); `ds4.txt` already carried `model_dir /data/model` and the `DS4_VISION_TOKENS=1140` budget.
+
+## Interleaved 512k A/B (1.1.56 vs 1.1.57)
+
+Direct-container ladders on the deployed configs (tune trees, one-shot containers on 127.0.0.1:10110, llama-swap
+idle, `--in-pcts 40,85 --out-pct 1 --reps 1`, `cache_n 0`; isl 209,42x / 445,69x), A/B/A/B:
+
+| Lane / level | 1.1.56 (r1 / r2) | 1.1.57 (r1 / r2) | Mean delta | VRAM floors (other / monitor) & RAM |
+| --- | ---: | ---: | ---: | --- |
+| **DeepSeek** pp 40 % | 1,351.6 / 1,351.7 | 1,342.3 / 1,342.3 | -0.7 % | 1,003-1,017 / 685-696 MiB; `MemAvailable` 14.5-14.8 GiB |
+| **DeepSeek** tg 40 % | 27.1 / 27.1 | 26.2 / 26.8 | -2.2 % | - |
+| **DeepSeek** pp 85 % | 1,186.7 / 1,146.9 | 1,165.8 / 1,181.7 | +0.6 % | - |
+| **DeepSeek** tg 85 % | 27.5 / 27.1 | 27.3 / 27.4 | +0.2 % | - |
+| **GLM (derisked)** pp 40 % | 978.0 / 977.5 | 978.1 / 978.4 | +0.05 % | 275 / 488 MiB; `MemAvailable` 13.0-13.1 GiB |
+| **GLM (derisked)** tg 40 % | 19.0 / 19.5 | 19.3 / 18.4 | -2.1 % | - |
+| **GLM (derisked)** pp 85 % | 1,004.5 / 996.4 | 1,000.5 / 999.1 | -0.06 % | - |
+| **GLM (derisked)** tg 85 % | 17.8 / 21.0 | 19.8 / 19.6 | +1.5 % | - |
+
+All deltas are inside the run-to-run spread (the GLM 85 % tg spread alone is 17.8-21.0 on one image); no
+regression. Placement is identical arm for arm: GLM auto split `[0,24)`/`[24,45)`, 16K chunks, prestage 160
+experts, 36 GB RAM tier (17.57 + 18.42 GB); DS4 `DS4_SPLIT=18,22`, borrowed `prompt chunk 16384`, 3,512 RAM
+slots (10,806-10,820 experts in place). Swap stayed flat on the GLM ladders; the DS4 85 % prompts dip it
+(51-67 GiB free at the minimum on both versions - page-cache pressure from the 240 GB of shards, same on 1.1.56).
+
+## Tuning arms (GLM, 1.1.57)
+
+Screened at 40 % (1 rep, one-shot containers, base control interleaved; the base band across the day's runs is
+976.3-978.4 pp / 18.4-19.5 tg, with one 962.6/17.4 outlier):
+
+| Arm | pp 40 % | tg 40 % | verdict |
+| --- | ---: | ---: | --- |
+| Base (control) | 976.3 | 19.5 | - |
+| `MAYA_GLM_NGRAM_DRAFT=1` | 976.9 | 19.4 | no gain on book text (no repetition) |
+| `MAYA_GLM_LANE_ROW4=1` | 976.8 | 19.4 | no gain |
+
+- **`NGRAM_DRAFT`**: a verbatim-copy test (1,437-token text block repeated from the prompt, 1,399 tokens emitted)
+  shows why it has no headroom here: the MTP block drafted 1,397 tokens and 1,395 were accepted (99.9 %) in **both**
+  arms (23.8-23.9 tg), and the n-gram session stood down - `pick()` prefers the MTP draft when the n-gram's first
+  token is not better, so no `glm ngram:` drafts were taken. Left off.
+- **`LANE_ROW4`**: bit-exact, but the CPU lane is not on the critical path: the copy test's decode stat is 41.9
+  ms/token with the CPU lane at 69.9 experts/token in 25.9 ms, overlapping the 24.3 ms/token of disk waits. Left off.
+- **`VRAM_EVICT`**: not tested on purpose - tg is bounded by the RAM expert tier and the SSD reads, and the knob only
+  changes which experts VRAM evicts (the user's call, 2026-11-10).
+
