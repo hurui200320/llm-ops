@@ -21,6 +21,10 @@
     "top_p": 0.95
   },
   "reasoning_effort": "max",
+  "ablate": {
+    "file": "/data/refusal-directions/GLM-5.3-Flash-refusal-direction.gguf",
+    "fitted_on": "Maya-S24"
+  },
   "lib_dirs": [
     "/opt/rocm-7.2.1/lib"
   ],

@@ -501,6 +501,16 @@ models:
       tools: true
       context: 524288
       disableAuto: true
+    filters:
+      # The :ablation alias turns Maya's refusal ablation on per request: the config's "ablate" key loads the
+      # direction with --ablate-default off, so a plain request runs unprojected (bit-identical to no direction
+      # file) and the alias adds "ablate": true to the body (OpenAI, Anthropic and Maya's model API all read it).
+      # Switching ablate on a live conversation restarts its cache, and an ablated conversation is never kept as
+      # a slot. Direction: peasantsmith/DeepSeek-V4.1-Flash-1017-Maya-GGUF (fitted on Maya-S; this lane packs
+      # ISTA-DASLab IQ2_XXS - the transfer is verified by tools/ablate_fit.py eval, notes/deepseek/v41f1017.md).
+      setParamsByID:
+        "${MODEL_ID}:ablation":
+          ablate: true
     timeouts:
       connect: 30
       keepalive: 30
@@ -571,6 +581,8 @@ models:
     # Declared, not probed: maya's /v1/models omits `owned_by` (same as the DS4/Strata lanes). Tools on: the server
     # translates GLM's tool calls into OpenAI tool_calls and Anthropic tool_use (the smoke gate checks one).
     # Context: the GLM engine's 512k, int8 KV, streamed past 32768.
+    # No :ablation alias on purpose: the derisked quant is already an abliterated transplant - the direction
+    # projection would ablate it twice (see the DeepSeek lane below for the alias mechanics).
     capabilities:
       in: [text, image]
       out: [text]
@@ -622,6 +634,14 @@ models:
       tools: true
       context: 524288
       disableAuto: true
+    filters:
+      # The :ablation alias turns Maya's refusal ablation on per request (see the DeepSeek lane above for the
+      # mechanics; the derisked lane carries none on purpose - its quant is already abliterated).
+      # GLM direction: peasantsmith/GLM-5.3-Flash-Maya-GGUF - the same repo these shards come from
+      # (fitted on Maya-S24; this lane packs the vanilla Maya-M IQ2_S).
+      setParamsByID:
+        "${MODEL_ID}:ablation":
+          ablate: true
     timeouts:
       connect: 30
       keepalive: 30

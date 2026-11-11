@@ -309,6 +309,48 @@ the named changes into `deploy/maya/configs/<lane>/maya-<quant>-hip.json`, commi
   writes into the pack's `ds4.txt` at every start (the strata fork's change 6 mirrored; 1140 is the tower's
   10,240-patch maximum, where Maya's pack default 1024 downscales a 4K screenshot to 1680×966; notes/maya.md).
 
+## Refusal ablation (`:ablation` alias)
+
+Maya 1.1.59 can project a refusal direction out of every residual write for the requests that ask (upstream
+`docs/SETTINGS.md`, "Refusal ablation per request"). Each maya lane loads its model's direction file at start and
+leaves it off; a request turns it on per call, with no restart:
+
+- **Plain requests are untouched**: the server injects `--ablate FILE --ablate-default off` from the config's
+  `"ablate"` key (the file must exist at start, else the switch stays hidden), and a request without the field
+  never carries the projection - its engine line and its answer are the same as without a direction file.
+- **`<model-id>:ablation`** (per-lane `filters.setParamsByID` in `deploy/llama-swap.config.yaml`, the `:npt`
+  pattern) adds `"ablate": true` to any JSON body - OpenAI, Anthropic and Maya's model API all read it, and the
+  maya server never validates the body's `model` field. The engine line then carries `GEN ablate=1`
+  (`INFO ablate=1 ablate_default=0` at load).
+- The dashboard's Models-page switch (`ablate.default`) stays off; the alias is the only activation path.
+
+| Lane | Direction file (in the lane tree's `refusal-directions/`, = `/data/refusal-directions/` in-container) | sha256 (head) |
+| --- | --- | --- |
+| `dsv41f1017-iq2xxs` | `DeepSeek-V4.1-Flash-refusal-direction.gguf` (21,024 B; layer 25, dim 5120, scale 1.0) | `09ab0ac8…` |
+| `glm53f-iq2s` | `GLM-5.3-Flash-refusal-direction.gguf` (16,928 B; layer 31, dim 4096, scale 1.0) | `ecf89232…` |
+
+The **`glm53f-iq2s-derisked` lane carries no ablation on purpose**: the Maya-M-Derisked quant is already an
+abliterated transplant, and projecting a refusal direction out of it would ablate it twice.
+
+Both files are control-vector GGUFs from the models' Maya repos (`peasantsmith/DeepSeek-V4.1-Flash-1017-Maya-GGUF`,
+`peasantsmith/GLM-5.3-Flash-Maya-GGUF`); the GLM one is from the same repo the GLM shards come from (fitted on
+Maya-S24, the lanes pack Maya-M / Maya-M-Derisked). The DeepSeek one was fitted on Maya's Maya-S quant while this
+lane packs ISTA-DASLab IQ2_XXS - same base model and hidden size, and the transfer is checked with
+`tools/ablate_fit.py eval` before the alias is trusted (refusal rate on held-out prompts with ablation off and on,
+plus coherence; notes/deepseek/v41f1017.md).
+
+Operational notes:
+
+- The projection covers every residual write of the main layers on every path - prompt chunks, verify windows,
+  batched `--parallel` rows, both cards of a split; maya-ds4 copies the direction to every device and projects at
+  each `hc_post`, so the `--tp 2` lane is covered (only MiniMax refuses tensor parallel). The draft heads only
+  propose; the main layers verify, so the kept tokens are the ablated model's.
+- Switching ablate on a live conversation restarts that conversation's cache (no cached prefix, restore point,
+  kept conversation or shared start crosses the two settings), and an ablated conversation is never kept as a
+  slot: a `:ablation` request on a conversation the plain model already holds pays a full prompt re-read.
+- An upstream refit replaces the file: re-run the one curl per lane (the pinned URLs and sha256s are in
+  notes/maya.md); the lane picks it up at its next restart, no image rebuild.
+
 ## Build it yourself
 
 On a machine with Docker and ~40 GB free (the ROCm SDK, the compile and the image), e.g. fedora-tuf:
