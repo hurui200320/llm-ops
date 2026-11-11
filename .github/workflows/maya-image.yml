@@ -37,7 +37,7 @@ env:
   IMAGE: ghcr.io/hurui200320/llm-ops-maya
   MAYA_REPO: mw00/project-maya
   # The tag this image is built from (`setup.py`'s llama.cpp pin is gated against LLAMA_COMMIT below).
-  MAYA_REF: v1.1.58
+  MAYA_REF: v1.1.59
   # llama.cpp at the commit Project Maya's setup.py pins (LLAMA_CPP_COMMIT); the Dockerfile downloads this zip.
   LLAMA_COMMIT: 3cf03257f219afbe7334045ff7c6a06ac68c627d
   # The ROCm dev container (build stage AND runtime base) and the ROCm line it must carry.

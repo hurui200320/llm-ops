@@ -16,7 +16,7 @@ Running on fedora-tuf, which has two AMD 7900XTX.
 
 The Strata deployment (second backend, running `ghcr.io/hurui200320/llm-ops-strata:0.2.13-rocm-gfx110x` built by [.github/workflows/strata-image.yml](../.github/workflows/strata-image.yml) with the signed-feed Qwen engine) is documented in [strata/README.md](strata/README.md).
 
-The Maya deployment (GLM-5.3-Flash and DeepSeek-V4.1-Flash on gfx1100, running `ghcr.io/hurui200320/llm-ops-maya:1.1.58-rocm-gfx1100` built by [.github/workflows/maya-image.yml](../.github/workflows/maya-image.yml)) is documented in [maya/README.md](maya/README.md).
+The Maya deployment (GLM-5.3-Flash and DeepSeek-V4.1-Flash on gfx1100, running `ghcr.io/hurui200320/llm-ops-maya:1.1.59-rocm-gfx1100` built by [.github/workflows/maya-image.yml](../.github/workflows/maya-image.yml)) is documented in [maya/README.md](maya/README.md).
 
 To download llama-swap (download to /mnt/unenc-xfs/llama-swap):
 
