@@ -256,11 +256,13 @@ files' sizes** (`index.txt`, `dense.bin`, `native_experts.txt`), so an engine bu
 pack rebuild clears them - the #861 F32-bias repack made 1.1.56 remove 4 stale conversations (4.2 GB) on the derisked
 lane and 2 (227 MB) on the vanilla one. The DeepSeek identity carries the ABI plus `ds4.txt`/`engram.bin`/
 `tensors.txt` and the shard sizes (no pack rebuilds in practice): its 117 conversations (7.21 GB) survived the
-1.1.55 -> 1.1.56 bump. Records: [notes/maya.md](../../notes/maya.md) 20261107.
+1.1.55 -> 1.1.56 bump and its 134 (11.51 GB), the GLM lanes' 4 + 4, survived 1.1.57 -> 1.1.58 (no pack or ABI
+change). Records: [notes/maya.md](../../notes/maya.md) 20261107/20261111.
 
-Measured on the deployed config (2026-11-10, Maya 1.1.57): the 1.1.57 A/B against 1.1.56 was unchanged within
-the run-to-run spread (pp ~978 / ~1,000 t/s, tg ~19.1 / ~19.5 t/s at 40 / 85 %; min free 488 MiB monitor /
-275 MiB other, 13.0 GiB `MemAvailable`, swap flat). With the prestage ring (2-rep final, 2026-11-07 on 1.1.56):
+Measured on the deployed config (2026-11-11, Maya 1.1.58): the 1.1.58 A/B against 1.1.57 was unchanged within
+the run-to-run spread (pp ~977 / ~997 t/s, tg ~19.1 / ~19.2 t/s at 40 / 85 %; min free 359 MiB monitor / 73 MiB
+other, 11.2 GiB `MemAvailable`, swap near-full during the prompts on both versions from page-cache pressure).
+With the prestage ring (2-rep final, 2026-11-07 on 1.1.56):
 **pp 968.5 / 994.9 t/s, tg 19.75 / 20.65 t/s at 40 / 85 %**, `cache_n` 0 on
 every rep, acceptance 0.760 / 0.788; auto split [0,24) / [24,45)+MTP, int8 KV, 16K chunks, **min free VRAM
 434 MiB monitor / 271 MiB other** (targets 400 / 200), 12.8 GiB MemAvailable, swap flat, 6/6 functional gates
@@ -268,16 +270,16 @@ every rep, acceptance 0.760 / 0.788; auto split [0,24) / [24,45)+MTP, int8 KV, 1
 picture turn (2026-11-06, camera check; the vision budget unchanged): `prompt_tokens` 10,579 = the 137x77 grid
 with no downscale, answer correct, **527 MiB monitor free idle, 1164 MiB during the turn** (349 MiB on the other
 card), 2,265 + 2,304 = 4,569 experts in VRAM; the encoder lends 4.76 GB from the pool for the ~15 s encode and
-gives it back (the 1.1.57 gate run: 10,578 tokens, no downscale). The tuning arms, the 1.1.53
-numbers and the against-setup deltas: [notes/glm/5.3-flash.md](../../notes/glm/5.3-flash.md); the 1.1.57 A/B:
-[notes/maya.md](../../notes/maya.md) 20261110; the #861 repack and the picture budget:
+gives it back (the 1.1.58 gate run: 10,577 tokens, no downscale). The tuning arms, the 1.1.53
+numbers and the against-setup deltas: [notes/glm/5.3-flash.md](../../notes/glm/5.3-flash.md); the 1.1.57 and
+1.1.58 A/Bs: [notes/maya.md](../../notes/maya.md) 20261110/20261111; the #861 repack and the picture budget:
 [notes/maya.md](../../notes/maya.md) 20261107. Ready in ~31 s cold, stop 1-2 s.
 
 The vanilla lane (2026-11-06 bring-up, same config) matches it line for line: auto split `[0,24)` /
 `[24,45)+MTP`, 2,265 + 2,304 = 4,569 experts, int8 KV, 16K chunks, 35.98 GB RAM tier; ready in 28 s; 7/7
 functional gates including the 4K picture (`prompt_tokens` 10,579, no downscale); min free VRAM 445 / 286 MiB,
-13.5 GiB `MemAvailable`, swap flat. Its 1.1.57 restart repeats 7/7 gates and 10,578 picture tokens. Record:
-[notes/maya.md](../../notes/maya.md) 20261106/20261107/20261110.
+13.5 GiB `MemAvailable`, swap flat. Its 1.1.58 restart repeats 7/7 gates and 10,577 picture tokens. Record:
+[notes/maya.md](../../notes/maya.md) 20261106/20261107/20261110/20261111.
 
 The kept knobs above are what moves this lane; the rejected ones (per-card CPU lanes, promotion limits,
 `SPEC_WIN`, `MV_RDNA`, `GU22_TUNED`, DFlash2, no MTP at all (`MAYA_GLM_NO_MTP`, -19 % tg), the disk-skip

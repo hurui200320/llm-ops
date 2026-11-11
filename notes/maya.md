@@ -485,3 +485,68 @@ Screened at 40 % (1 rep, one-shot containers, base control interleaved; the base
 - **`VRAM_EVICT`**: not tested on purpose - tg is bounded by the RAM expert tier and the SSD reads, and the knob only
   changes which experts VRAM evicts (the user's call, 2026-11-10).
 
+# 20261111 Maya 1.1.58 upgrade and 1.1.57 A/B
+
+Upgraded to `v1.1.58` (commit `f4067232fa599494122508b55556c4dbaad945ba`, 2 commits over `v1.1.57`; llama.cpp
+`3cf03257...`, ROCm `7.2.1-complete` base `sha256:3db551c4...`, `gfx1100` and the `100202` hipBLASLt table all
+unchanged). Workflow run `42977699783` (30m45s) pushed `ghcr.io/hurui200320/llm-ops-maya:1.1.58-rocm-gfx1100`,
+digest `sha256:f8149c180f0e7e74d3395abe1d3120c6760ea877774f7d493c59bb2724ae0a14` (30,142,539,960 B; 1.1.57 was
+30,141,963,419 B - the new `glm_ablate.cu` and test code). Build inputs passed the workflow gates unchanged:
+`setup.py`, `maya.py`'s build path (`check_hip_pc`, `compile_engine_hip`/`compile_vision`, stamps), `iq_pack.py`,
+`pack_gguf.py`, `vision_pack.py`, `glm5next_patch.py`, `tools/hip/gfx1100-*` and `tools/ds4/` are untouched;
+`CMakeLists.txt` only adds `src/core/glm_ablate.cu` to `strata_engine` (+ its test).
+
+## Upstream changes reaching our image and lanes
+
+- **No pack change, no ABI change**: the GLM-5.3 Q8_0-attention pack change is glm-dsa only
+  (`tools/strata/glm_dsa_pack.py`; `headwise_stale` returns None for `glm5next` packs), `iq_pack.py` (the Flash
+  packs' tool) is untouched, and the session ABI stays `engine=0.1.27` - both GLM packs and the DS4 pack keep their
+  slots.
+- **`LANE_ROW4` default on** (`STRATA_GLM_LANE_ROW4`, the 4-row CPU-lane GEMV, bit-exact): the only default that
+  flips on our GLM lanes (screened neutral on 1.1.57). Kept; configs unchanged.
+- **Loop guard (#921/#925)**: an answer to a user message (not a tool result) is never kept going, and a kept
+  agent answer continues on a new paragraph. Server-side only, automatic - it reaches our chat/agent use.
+- **FP16 expert prompt path** (IQ1_M / Q4_0 / Q4_1 / Q5_0 / Q5_1 in `glm_prefill.cu`, glm-dsa-shaped) and the
+  **Q5_K multi-token GEMV** (`glm_fast.cu`, bit-exact): our Flash packs' types (IQ2_S / IQ3_XXS / Q6_K / Q3_K /
+  Q4_K) are already MMQ/GEMM-covered, so no effect measured or expected.
+- **DS4 #920/#697**: the one-GPU NVIDIA decode-streaming path only; our 2-GPU `DS4_SPLIT=18,22` lane never takes
+  the path. The ablate groundwork (`--ablate*`, `GEN ablate=`, server/chat plumbing) stays off without a direction
+  file (none is published).
+- New opt-in `MAYA_GLM_PREFILL_STABLE=1` (reproducible prompt products whatever the expert cache holds, 2-5 % pp
+  cost): a bench-methodology knob, not deployed (notes/TODO.md).
+
+## Verification (official CI image, on the runner)
+
+Pulled on fedora-tuf with the digest above. All three lanes, **7/7 functional gates** through llama-swap (chat
+`SMOKE-OK`; `get_weather` -> `{"city":"Paris"}`; `reasoning_effort: none` -> `42`; first five primes; fenced
+`def sum_list`; 420x420 picture; 3840x2160 picture): DS4 ready 24.8 s, GLM derisked 43.3 s, GLM vanilla 41.6 s
+(first request, cold). 4K pictures: `prompt_tokens` **10,577** on both GLM lanes (137x77 grid, no downscale) and
+**1,171** on DS4 (1140 budget). Slots survived the bump unchanged: DS4 reloaded **134 conversations / 11.51 GB**,
+GLM derisked **4 / 1.43 GB**, vanilla **4 / 3.18 GB**. No entrypoint config-diff line on either GLM lane (the live
+configs already matched `deploy/maya/configs/`). Engine build: `maya-ds4 1.1.58 (build f4067232fa59...)`.
+
+## Interleaved 512k A/B (1.1.57 vs 1.1.58)
+
+One-shot containers on the tune trees, deployed configs, 127.0.0.1:10110, llama-swap idle, A/B/A/B,
+`--in-pcts 40,85 --out-pct 1 --reps 1`, `cache_n 0`; isl 209,42x / 445,69x. Artifacts (local, gitignored):
+`bench/results/longctx/maya-ab-20261111/`.
+
+| Lane / level | 1.1.57 (r1 / r2) | 1.1.58 (r1 / r2) | Mean delta | VRAM floors (other / monitor) & RAM |
+| --- | ---: | ---: | ---: | --- |
+| **DeepSeek** pp 40 % | 1,364.8 / 1,241.2 | 1,261.5 / 1,365.3 | +0.8 % | 809-821 / 561-566 MiB; `MemAvailable` 12.4-13.2 GiB |
+| **DeepSeek** tg 40 % | 27.4 / 27.2 | 26.5 / 26.5 | -2.9 % | - |
+| **DeepSeek** pp 85 % | 1,158.9 / 1,177.4 | 1,181.2 / 1,183.9 | +1.2 % | - |
+| **DeepSeek** tg 85 % | 27.4 / 27.4 | 27.0 / 27.3 | -0.9 % | - |
+| **GLM (derisked)** pp 40 % | 974.1 / 976.8 | 977.3 / 977.7 | +0.2 % | 73 / 359 MiB; `MemAvailable` 10.5-11.3 GiB |
+| **GLM (derisked)** tg 40 % | 19.0 / 19.9 | 19.5 / 18.7 | -1.8 % | - |
+| **GLM (derisked)** pp 85 % | 1,001.9 / 1,004.2 | 995.8 / 999.0 | -0.6 % | - |
+| **GLM (derisked)** tg 85 % | 18.2 / 20.4 | 19.0 / 19.5 | -0.3 % | - |
+
+All deltas are inside the run-to-run spread (+-3 %; the GLM 85 % tg spread alone is 18.2-20.4 on one image); no
+regression on either lane. Placement is identical arm for arm: GLM auto split `[0,24)`/`[24,45)`, 16K chunks,
+prestage 160, 2,265 + 2,304 experts, 36 GB RAM tier (17.57 + 18.41 GB); DS4 `DS4_SPLIT=18,22`, borrowed prompt
+chunk 16384, 3,512 RAM slots, 4,541-4,554 experts in VRAM. GLM draft acceptance stayed in its band (1.1.57
+0.771-0.786, 1.1.58 0.763-0.803): the new default `LANE_ROW4` is bit-exact and moves nothing measurable here. Swap
+was near-full during the DS4 85 % prompts on both versions (page-cache pressure from the shards, as before).
+
+
