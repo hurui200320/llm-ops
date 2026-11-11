@@ -6,7 +6,9 @@
     "--tp", "2",
     "--ssd-cache", "36",
     "--reserve-mib", "1664",
-    "--suffix-draft", "0"
+    "--suffix-draft", "0",
+    "--ablate", "/data/refusal-directions/DeepSeek-V4.1-Flash-refusal-direction.gguf",
+    "--ablate-default", "off"
   ],
   "cwd": "/opt/maya",
   "tokenizer": "/data/pack/maya-ds4/tokenizer",

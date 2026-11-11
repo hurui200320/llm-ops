@@ -7,7 +7,9 @@
     "--prefill", "16384",
     "--kv-streaming", "on",
     "--kv", "int8",
-    "--expert-profile", "/opt/maya/data/expert-profile-glm.bin"
+    "--expert-profile", "/opt/maya/data/expert-profile-glm.bin",
+    "--ablate", "/data/refusal-directions/GLM-5.3-Flash-refusal-direction.gguf",
+    "--ablate-default", "off"
   ],
   "cwd": "/opt/maya",
   "tokenizer": "/data/pack/tokenizer",
