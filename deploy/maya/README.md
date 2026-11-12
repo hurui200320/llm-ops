@@ -263,10 +263,14 @@ lane. The DeepSeek identity carries the ABI plus `ds4.txt`/`engram.bin`/
 1.1.55 -> 1.1.56 bump and its 134 (11.51 GB), the GLM lane's 4, survived 1.1.57 -> 1.1.58 (no pack or ABI
 change). Records: [notes/maya.md](../../notes/maya.md) 20261107/20261111.
 
-Measured on the deployed config (2026-11-12, Maya 1.1.59): the 1.1.59 bump was verified with the 7/7 functional
-gates on both maya lanes (4K `prompt_tokens` 10,572 on the GLM lane, 1,166 on DS = its 1140 budget), DS slots
-134 / 11.51 GB and the GLM lane's 4 kept across the bump, and the refusal-ablation A/B (the ablation section
-below): DS unchanged within the spread, GLM tg -4..-5 % on ablated requests only. The 1.1.58 A/B
+Measured on the deployed config (2026-11-12, Maya 1.1.60): the 1.1.60 bump was verified with the 7/7 functional
+gates on all three maya lanes (4K `prompt_tokens` 10,581 on the GLM lane plain and through the `:ablation` alias,
+1,175 on both DS lanes = its 1140 budget), DS slots 135 / 11.52 GB, GLM 4 / 2.00 GB and abiray 1 / 0.16 GB kept
+across the bump. The 1.1.59-vs-1.1.60 A/B is deferred (dev containers busy that day; notes/maya.md 20261112) - the
+only engine change reaching the lanes is the HIP routing-ring sizing (upstream: <= ~0.8 % tg on APUs, identical
+answers). The 1.1.59 bump was verified the same day (4K `prompt_tokens` 10,572 / 1,166, slots 134 / 11.51 GB and
+the GLM lane's 4 kept) with the refusal-ablation A/B (the ablation section below): DS unchanged within the
+spread, GLM tg -4..-5 % on ablated requests only. The 1.1.58 A/B
 against 1.1.57 (2026-11-11) was unchanged within
 the run-to-run spread (pp ~977 / ~997 t/s, tg ~19.1 / ~19.2 t/s at 40 / 85 %; min free 359 MiB monitor / 73 MiB
 other, 11.2 GiB `MemAvailable`, swap near-full during the prompts on both versions from page-cache pressure).
@@ -278,7 +282,7 @@ every rep, acceptance 0.760 / 0.788; auto split [0,24) / [24,45)+MTP, int8 KV, 1
 picture turn (2026-11-06, camera check; the vision budget unchanged): `prompt_tokens` 10,579 = the 137x77 grid
 with no downscale, answer correct, **527 MiB monitor free idle, 1164 MiB during the turn** (349 MiB on the other
 card), 2,265 + 2,304 = 4,569 experts in VRAM; the encoder lends 4.76 GB from the pool for the ~15 s encode and
-gives it back (the 1.1.59 gate run: 10,572 tokens, no downscale). The tuning arms, the 1.1.53
+gives it back (the 1.1.60 gate run: 10,581 tokens, no downscale). The tuning arms, the 1.1.53
 numbers and the against-setup deltas: [notes/glm/5.3-flash.md](../../notes/glm/5.3-flash.md); the 1.1.57 and
 1.1.58 A/Bs: [notes/maya.md](../../notes/maya.md) 20261110/20261111; the #861 repack and the picture budget:
 [notes/maya.md](../../notes/maya.md) 20261107. Ready in ~31 s cold, stop 1-2 s.
@@ -286,7 +290,7 @@ numbers and the against-setup deltas: [notes/glm/5.3-flash.md](../../notes/glm/5
 The lane's own bring-up (2026-11-06, the config above) measured the same within noise: auto split `[0,24)` /
 `[24,45)+MTP`, 2,265 + 2,304 = 4,569 experts, int8 KV, 16K chunks, 35.98 GB RAM tier; ready in 28 s; 7/7
 functional gates including the 4K picture (`prompt_tokens` 10,579, no downscale); min free VRAM 445 / 286 MiB,
-13.5 GiB `MemAvailable`, swap flat. Its 1.1.59 restart repeats 7/7 gates (10,572 picture tokens) plain and
+13.5 GiB `MemAvailable`, swap flat. Its 1.1.60 restart repeats 7/7 gates (10,581 picture tokens) plain and
 through the `:ablation` alias. Record:
 [notes/maya.md](../../notes/maya.md) 20261106/20261107/20261110/20261111/20261112.
 
@@ -320,7 +324,7 @@ the named changes into `deploy/maya/configs/<lane>/maya-<quant>-hip.json`, commi
 
 ## Refusal ablation (`:ablation` alias)
 
-Maya 1.1.59 can project a refusal direction out of every residual write for the requests that ask (upstream
+Maya 1.1.60 can project a refusal direction out of every residual write for the requests that ask (upstream
 `docs/SETTINGS.md`, "Refusal ablation per request"). The GLM lane loads its model's direction file at start and
 leaves it off; a request turns it on per call, with no restart. The DeepSeek lane carries none since 2026-11-12:
 the direction is fitted on thinking-off prompts and does not hold under this deployment's reasoning workload

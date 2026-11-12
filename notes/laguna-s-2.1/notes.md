@@ -44,7 +44,7 @@ The model doesn't seems smart. Removing this model. Config:
   # Laguna S 2.1
   # dflash not working with llamacpp
   # since we need to offload to CPU, thus disable mmap loading
-  #   Slower to load, but have better performance? TODO: test this
+  #   Slower to load, but have better performance?
   "laguna-s-2.1-q4nl":
     name: "LAguna S 2.1 UD-IQ4_NL"
     description: "256K context, UD IQ4 NL"

@@ -670,3 +670,57 @@ bit-identical to no direction file, which the off arms confirm (they sit on the 
 
 Artifacts (local, gitignored): `bench/results/longctx/maya-ab-20261112/` (12 points: 4 DS + 8 GLM, each with
 `.json` results, `.log`, `.csv` VRAM/RAM/swap samples and the engine log).
+
+# 20261112 Maya 1.1.60 upgrade and 1.1.59 parity gates (A/B deferred)
+
+Upgraded to `v1.1.60` (commit `8b0a449c599fbb370a1dcc0979ae7c84d4310529`, 3 commits over `v1.1.59`: the release
+commit plus two docs commits publishing the direction files; llama.cpp `3cf03257...`, ROCm `7.2.1-complete` base,
+`gfx1100` and the `100202` hipBLASLt table all unchanged). Workflow run `43178050443` (25m53s) pushed
+`ghcr.io/hurui200320/llm-ops-maya:1.1.60-rocm-gfx1100`, digest
+`sha256:7f0dfef0f632f9b756f71c7fe732b444a019e9be5e7ada1ddb38e317965c7f29` (30,142,642,289 B; 1.1.58 was
+30,142,539,960 B - the GLM engine sources changed, vision unchanged). Build gates passed unchanged: `setup.py`,
+`maya.py`'s build path (`check_hip_pc`, `compile_engine_hip`/`compile_vision`, stamps), `CMakeLists.txt`,
+`iq_pack.py`, `pack_gguf.py`, `tools/ds4/pack_gguf.py`, `vision_pack.py`, `glm5next_patch.py` and
+`tools/hip/gfx1100-*` are untouched; only the GLM engine's source hash moved (stamp `src=ca1104c6e2bb366d`) with
+the ring/DFlash2 changes.
+
+## Upstream changes reaching our image and lanes
+
+- **HIP routing-ring sizing** (the one change that reaches us): since v1.1.57 the host-mapped routing ring was
+  sized for GLM-5.3 (744B) - 256 entries x 8192 floats, 8.4 MB; HIP builds now size it per model
+  (`ring_entries_for`/`ring_stride_for`): GLM-5.3-Flash 64 x 4096 floats (1 MB), glm-dsa 128 x 6144. Upstream
+  measured up to ~0.8% faster drafting decode on gfx1151 APUs, "back to v1.1.56's speed", with identical answers;
+  a kernel guard refuses an `n_embd` wider than the ring's entries. Automatic - no config change. Our
+  1.1.56 -> 1.1.59 ladders never showed the regression on gfx1100 (an APU phenomenon), so the expected effect here
+  is neutral to slightly-positive tg on the GLM lanes.
+- **DFlash2 drafting for GLM-5.3 (744B)** (`--dflash` no longer refused on glm-dsa, plain-path capture hooks in
+  `glm_residual.cu`, `dflash_pipelined` plain mode): glm-dsa only, not usable on this host (744B); the hooks sit on
+  the plain (mHC-less) path our Flash lanes never take. No effect.
+- **Setup-side only**: turboderp's EXL3 2.25 bpw DeepSeek quant in the setup (`--ds4-quant exl3-2.25`, ~160 GB of
+  VRAM+RAM - fits our 110 GB host worse than the IQ2_XXS GGUF; not deployed), the `APU_CONTEXT_SAFETY_GB=4`
+  context-recommendation margin on unified-memory APUs (we pin `--max-context`), direction-file downloads now from
+  the model repo's `refusal-directions/` folder with the top-level fallback (our manually downloaded files are
+  byte-identical and stay valid), `serve/model_pull.py`'s "Other quants" list. `tools/ds4/pack.py` changes serve
+  the EXL3 safetensors packs, not our GGUF lane (`pack_gguf.py` is untouched).
+- **No pack change, no ABI change** (`project(strata VERSION 0.1.27)` unchanged): no repacks, all slots survive.
+
+## Verification (official CI image, on fedora-tuf)
+
+In-image smoke gates replicated after the pull (engines `--help`/`--version`, `ldd`, stamps `src=ca1104c6e2bb366d`
+/ vision `src=3485b5bec679d4fa`, venv imports, `maya.py --help`) - all pass; `maya-ds4 1.1.60 (build 8b0a449...)`.
+Deployed by `git pull` on fedora-tuf (`b5153d7`); llama-swap's `-watch-config` picked up the new tag. All three
+lanes, **7/7 functional gates** through llama-swap (chat `SMOKE-OK`; `get_weather` -> `{"city":"Paris"}`;
+`reasoning_effort: none` -> `42`; first five primes; fenced `def sum_list`; 420x420 picture; 3840x2160 picture):
+4K `prompt_tokens` **1,175** on both DS lanes (their 1140 budget) and **10,581** on the GLM lane (137x77 grid, no
+downscale). The GLM vanilla lane repeats **7/7 through the `:ablation` alias** and `/props` reports
+`ablate.available: true, default: false`. Slots survived the bump unchanged (no pack change, same ABI): DS
+**135 conversations / 11.52 GB**, GLM **4 / 2.00 GB**, abiray **1 / 0.16 GB**. No entrypoint config-diff line on
+any lane.
+
+## Interleaved 512k A/B: deferred
+
+The 1.1.59-vs-1.1.60 ladder was **not run**: dev containers occupied the host during the upgrade window and a
+benchmark would have measured them, not the release. The only engine change reaching the lanes is the routing-ring
+sizing (upstream: <= ~0.8% tg on APUs, identical answers; the 1.1.57 regression it fixes never reproduced on
+gfx1100), so the regression risk is low - the lanes go to production on the gate results alone. Tracked in
+notes/TODO.md; run the interleaved ladder when the host is idle.
