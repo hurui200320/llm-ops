@@ -550,3 +550,123 @@ chunk 16384, 3,512 RAM slots, 4,541-4,554 experts in VRAM. GLM draft acceptance 
 was near-full during the DS4 85 % prompts on both versions (page-cache pressure from the shards, as before).
 
 
+
+# 20261112 Maya 1.1.59 upgrade, refusal ablation and the ablation A/B
+
+Upgraded to `v1.1.59` (commit `027992cb1f09829488e650e466233ca351d3d6ef`, 3 commits over `v1.1.58`; llama.cpp
+`3cf03257...`, ROCm `7.2.1-complete` base, `gfx1100` and the `100202` hipBLASLt table all unchanged). GitHub CI
+failed three times on a runner-side DNS outage (`Could not resolve 'security.ubuntu.com'` inside the Dockerfile's
+own `apt-get update`, a step every build runs), so the image was built on fedora-tuf with the workflow's exact
+build args (24-core box, ~12 min: warm base layers, engines + vision recompiled from the new source). Smoke tests
+replicated the workflow's seven in-image gates (engine `--help`/`--version`, vision usage, `ldd`, stamps
+`src=95fc0c552f73ea91`, venv imports, `maya.py --help`) - all pass; `maya-ds4 1.1.59 (build 027992cb...)`. Image
+`ghcr.io/hurui200320/llm-ops-maya:1.1.59-rocm-gfx1100`, manifest list `sha256:9c027bf37f0b322a7612d19ece91d6fb25013861c2ad0a54669ead44ecb27806`
+(built locally; no GHCR push from the runner - no docker login there; CI can publish the equivalent artifact when
+its network recovers).
+
+## Upstream changes reaching our lanes
+
+- **Internal `STRATA_*` -> `MAYA_*` rename pass** (the bulk of the 365-file diff): env vars, tuning-table headers
+  (`STRATA_HIPBLASLT_TUNING_V1` -> `MAYA_HIPBLASLT_TUNING_V1`, table + engine ship in one image), cmake targets.
+  All 21 env vars our lanes deploy keep their names (checked one by one); `VISION_FOOTPRINT_MB` is ours.
+- **No pack change, no ABI change** (`project(strata VERSION 0.1.27)` unchanged, `iq_pack.py`/`pack_gguf.py`/
+  `vision_pack.py` untouched): no pack rebuilds, all slots survive. Verified: DS reloaded 134 conversations /
+  11.51 GB, GLM vanilla 4 kept.
+- **Refusal ablation ships** (groundwork was 1.1.58): per-request direction projection for maya-ds4 and the GLM
+  engine, Maya's direction files published in each model's Maya repo, `tools/ablate_fit.py` gains `eval`. See the
+  ablation section below and deploy/maya/README.md.
+- Setup quant/context recommendation rework, GLM-5.3 (744B) Turbo (`MAYA_GLM_ROUTE_AFFINITY`), the #883 fair
+  slices fix (`--parallel`, not deployed), #884 (`DS4_LENT_RAM_GB`, not used), `MAYA_DS4_HIP_PEER_AR`
+  (NVIDIA-only): none touch our lanes. `MAYA_GLM_ROUTE_AFFINITY` (lossy, changes answers) is a candidate future
+  tuning arm for the GLM lanes - notes/TODO.md.
+
+## Refusal ablation wiring
+
+- **Direction files** (control-vector GGUFs, one F32 `direction.1` of the hidden size): DeepSeek
+  `peasantsmith/DeepSeek-V4.1-Flash-1017-Maya-GGUF` -> `DeepSeek-V4.1-Flash-refusal-direction.gguf`
+  (21,024 B, sha256 `09ab0ac8...`, fitted on Maya-S, layer 25, dim 5120, scale 1.0, think off); GLM-5.3-Flash
+  `peasantsmith/GLM-5.3-Flash-Maya-GGUF` -> `GLM-5.3-Flash-refusal-direction.gguf` (16,928 B, sha256
+  `ecf89232...`, fitted on Maya-S24, layer 31, dim 4096). Downloaded once per lane tree into
+  `<tree>/refusal-directions/` (= `/data/refusal-directions/` in-container); the derisked GLM lane carries none
+  on purpose (its quant is already an abliterated transplant - projecting would ablate it twice).
+- **Config wiring**: the server does NOT inject the flags at spawn - `maya.py`'s setup-time `ablate_step` bakes
+  `--ablate FILE --ablate-default off` into the config's `args`, and the serve path never re-derives them (the
+  `models.apply` injection runs only on dashboard saves). So the lane configs carry both the `"ablate"` key
+  (file + fitted_on, what the Models page reads) AND the two flags in `args`. First attempt with the key alone
+  started the engine without a direction (`/props` said `available: false`); the flags fixed it.
+- **llama-swap alias**: per-lane `filters.setParamsByID` `"${MODEL_ID}:ablation"` -> `ablate: true` (the `:npt`
+  pattern; the key auto-registers as an alias, the middleware merges the top-level field into any JSON body, and
+  maya never validates the body's `model` field). Default stays off everywhere: `--ablate-default off` + no
+  `ablate.default` key, so plain requests are bit-identical to no direction file.
+- **Verification** (all on 1.1.59): 7/7 functional gates per lane (chat, tool call, reasoning_effort none,
+  primes, fenced code, 420x420 and 4K pictures; DS 4K `prompt_tokens` 1,166 = its 1140 budget, GLM 10,572 = no
+  downscale), and the vanilla GLM + DS lanes repeat **7/7 through the `:ablation` alias** (tool calls,
+  reasoning_effort and 4K pictures all flow through the injected field). `/props` `ablate.available: true`
+  (default false) on DS + vanilla; `false` on derisked. DS slots 134 / 11.51 GB, GLM vanilla 4 - both lanes
+  kept their conversations across the bump.
+
+## DeepSeek: the Maya-S direction transfers to the ISTA quant (tools/ablate_fit.py eval)
+
+`ablate_fit.py prompts` (pinned AdvBench + Alpaca, 416/104 train/test harmful, 416/104 harmless, 16 coherence)
+then `eval --model dsv41f1017-iq2xxs --harmless` against the production lane (temperature 0, think off - the
+file's own fitting condition), ~37 min for 448 requests:
+
+| | ablation off | ablation on |
+| --- | ---: | ---: |
+| held-out harmful refusals | 99.0 % | **3.8 %** |
+| harmless false refusals | 0.96 % | 0.0 % |
+| coherence loops / empty / refusals | 0 / - / - | 0 / 0 / 0 |
+| coherence length ratio | - | 1.02 |
+
+`verdict: "ok"`. Upstream's own DeepSeek numbers (their quant): 98 % -> 1 %; the 2.8-point residual here is
+plausibly the IQ2_XXS quant or run variance - at 3.8 % the direction transfers. Sets + JSON:
+`/mnt/unenc-xfs/maya/ablate-eval/` on fedora-tuf (not in the repo).
+
+## Ablation A/B (512k, deployed configs, off = `--ablate-default off`, on = `on`)
+
+One-shot containers on the tune trees (DS: `dsv41f1017-iq2xxs-tune`; GLM: a fresh `glm53f-iq2s-tune` copy of the
+vanilla tree minus slots - the derisked tune tree cannot serve an ablation arm), direct on 127.0.0.1:10110,
+llama-swap idle, A/B/A/B interleaved, `--in-pcts 40,85 --out-pct 1 --reps 1`, `cache_n 0`, vram_sampler at 5 s.
+Both arms load the direction; only `--ablate-default` differs, so the delta is exactly the projection's cost.
+Driver: `/mnt/unenc-xfs/maya/tune/ab59_point.sh`; artifacts `/mnt/unenc-xfs/maya/tune/ab59/results/`.
+
+**DeepSeek (2 clean reps per arm, floors card0/card1 669-687 / 505-516 MiB, `MemAvailable` 12.9-13.2 GiB, swap
+near-flat):**
+
+| Lane / level | off (r1 / r2) | on (r1 / r2) | mean delta |
+| --- | ---: | ---: | ---: |
+| **DS** pp 40 % | 1,315.0 / 1,349.6 | 1,349.4 / 1,287.8 | -1.0 % |
+| **DS** tg 40 % | 26.60 / 26.90 | 26.10 / 26.30 | -2.1 % |
+| **DS** pp 85 % | 1,183.1 / 1,168.2 | 1,194.1 / 1,181.0 | +1.0 % |
+| **DS** tg 85 % | 27.40 / 27.20 | 27.40 / 27.20 | 0.0 % |
+
+All deltas inside the +-3 % spread - the DS projection (a per-device direction copy, projected at each
+`hc_post`) costs nothing measurable. **The alias is free on this lane.**
+
+**GLM vanilla:** the first round's two r1 points are outliers from cold-start memory pressure (`MemAvailable`
+193/257 MiB, ~48 GB swap churn - fresh tune-tree expert profile plus the DS ladder's page cache): off-r1 85 %
+fell to 726.1 pp / 12.8 tg and on-r1 40 % to 10.8 tg. The warm r2 pair: off 973.1 / 18.7 and 990.5 / 18.0 vs on
+967.7 / 16.8 and 992.0 / 17.0 - pp unchanged (±0.6 %), tg -10.2 % (40 %) and -5.6 % (85 %) on single warm reps.
+A second interleaved round (r3/r4) ran to firm this up - see below.
+
+**GLM vanilla, second round (r3/r4, fully warm - floors 201-239 / 352-372 MiB, `MemAvailable` ~11.7 GiB, swap
+flat on all four points):** off 970.3 / 17.8 and 990.5 / 17.2, then 971.7 / 18.4 and 976.4 / 20.5 vs on 969.0 /
+17.7 and 988.7 / 17.6, then 969.9 / 18.2 and 991.9 / 18.4. Pooled with the warm r2 pair (3 reps per arm):
+
+| GLM vanilla / level | off (warm) | on | mean delta |
+| --- | ---: | ---: | ---: |
+| pp 40 % | 971.7 (973.1 / 970.3 / 971.7) | 968.9 (967.7 / 969.0 / 969.9) | -0.3 % |
+| tg 40 % | 18.30 (18.7 / 17.8 / 18.4) | 17.57 (16.8 / 17.7 / 18.2) | **-4.0 %** |
+| pp 85 % | 985.8 (990.5 / 990.5 / 976.4) | 990.9 (992.0 / 988.7 / 991.9) | +0.5 % |
+| tg 85 % | 18.57 (18.0 / 17.2 / 20.5) | 17.67 (17.0 / 17.6 / 18.4) | **-4.8 %** |
+
+**GLM verdict: pp free, tg -4..-5 % (about -0.8 t/s) on ablated requests.** Consistent across both rounds' warm
+points; the r2 pair's -10.2 % (40 %) was single-rep noise. Draft acceptance is unchanged between arms (0.71-0.80
+both), so the cost is the projection itself - the GLM engine projects every residual write of every main layer on
+every path (decode token, verify windows, batched rows, both cards), which lands entirely on the decode step.
+Floors and placement are identical arm for arm (auto split, 16K chunks, prestage 160, 36 GB RAM tier). The cost
+applies only to requests that ask for ablation: plain requests carry nothing on their engine line and are
+bit-identical to no direction file, which the off arms confirm (they sit on the production baseline).
+
+Artifacts (local, gitignored): `bench/results/longctx/maya-ab-20261112/` (12 points: 4 DS + 8 GLM, each with
+`.json` results, `.log`, `.csv` VRAM/RAM/swap samples and the engine log).
