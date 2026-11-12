@@ -489,7 +489,7 @@ models:
         -e CONFIG_SRC=/repo-configs-ds4
         -e PACK_BUILD=1
         -e DS4_VISION_TOKENS=1140
-        ghcr.io/hurui200320/llm-ops-maya:1.1.59-rocm-gfx1100
+        ghcr.io/hurui200320/llm-ops-maya:1.1.60-rocm-gfx1100
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
@@ -532,7 +532,7 @@ models:
         -e CONFIG_SRC=/repo-configs-ds4
         -e PACK_BUILD=1
         -e DS4_VISION_TOKENS=1140
-        ghcr.io/hurui200320/llm-ops-maya:1.1.59-rocm-gfx1100
+        ghcr.io/hurui200320/llm-ops-maya:1.1.60-rocm-gfx1100
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
@@ -600,7 +600,7 @@ models:
         -v /mnt/unenc-xfs/llm-ops/deploy/maya/configs/glm53f-iq2s:/repo-configs-glm-vanilla:ro
         -e CONFIG_SRC=/repo-configs-glm-vanilla
         -e VISION_FOOTPRINT_MB=4711
-        ghcr.io/hurui200320/llm-ops-maya:1.1.59-rocm-gfx1100
+        ghcr.io/hurui200320/llm-ops-maya:1.1.60-rocm-gfx1100
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
