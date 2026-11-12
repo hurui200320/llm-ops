@@ -6,9 +6,7 @@
     "--tp", "2",
     "--ssd-cache", "36",
     "--reserve-mib", "1664",
-    "--suffix-draft", "0",
-    "--ablate", "/data/refusal-directions/DeepSeek-V4.1-Flash-refusal-direction.gguf",
-    "--ablate-default", "off"
+    "--suffix-draft", "0"
   ],
   "cwd": "/opt/maya",
   "tokenizer": "/data/pack/maya-ds4/tokenizer",
@@ -23,10 +21,6 @@
     "top_p": 1.0
   },
   "reasoning_effort": "high",
-  "ablate": {
-    "file": "/data/refusal-directions/DeepSeek-V4.1-Flash-refusal-direction.gguf",
-    "fitted_on": "Maya-S"
-  },
   "env": {
     "DS4_INDEX_TC": "1",
     "DS4_CHUNK_GFX11": "16384",

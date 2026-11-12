@@ -190,7 +190,7 @@ Per-start settings (context, expert cache…) live in the config; the dashboard 
 ### Configs from the repo (lanes)
 
 `deploy/maya/configs/` holds version-controlled configs for lanes, **one subfolder per lane** named after the
-llama-swap model id (`dsv41f1017-iq2xxs/`, `glm53f-iq2s-derisked/`, `glm53f-iq2s/`), each holding one `maya-*-hip.json`
+llama-swap model id (`dsv41f1017-iq2xxs/`, `glm53f-iq2s/`), each holding one `maya-*-hip.json`
 so the entrypoint's glob finds it. Each lane mounts **its own** folder read-only and points `CONFIG_SRC` at it (the
 llama-swap macro mounts none): the entrypoint serves the newest copied JSON, so a shared folder would let one
 lane's config take over the other on its next restart. The entrypoint copies the JSON into `/data/config` at
@@ -221,20 +221,20 @@ placing experts, and the run-time floor is ~`reserve - 648 MiB - the monitor car
 (measured with the split: 598 MiB free on the monitor, 1,015 on the other card during the 85 % prefill).
 Raising it costs ~12 experts a card per 100 MiB; lowering it eats the desktop's headroom first.
 
-### GLM lanes (Maya-M and Maya-M-Derisked)
+### The GLM lane (Maya-M)
 
-Two GLM-5.3-Flash lanes share one tuned configuration, one quant each:
-`configs/glm53f-iq2s-derisked/maya-glm53f-iq2s-derisked-hip.json` (llama-swap `glm-5.3-flash-iq2s-derisked`,
-Maya-M-Derisked) and `configs/glm53f-iq2s/maya-glm53f-iq2s-hip.json` (llama-swap `glm-5.3-flash-iq2s`, the vanilla
-Maya-M). Each config sits in its own subfolder like every lane (see "Configs from the repo"): a lane mounts only
-its folder and points `CONFIG_SRC` at it. The vanilla lane is the derisked lane's configuration copied 1:1 -
-same args, env and vision values; only the shards, the lane data tree, the config folder and the config's
-`model_name`/`log` differ (the quant has identical shard sizes and pack layout) - so the table below applies to
-both lanes. Baseline is the setup's own config
+One GLM-5.3-Flash lane, the vanilla Maya-M quant:
+`configs/glm53f-iq2s/maya-glm53f-iq2s-hip.json` (llama-swap `glm-5.3-flash-iq2s`). The config sits in its own
+subfolder like every lane (see "Configs from the repo"): the lane mounts only its folder and points `CONFIG_SRC`
+at it. Baseline is the setup's own config
 (`maya.py --setup --backend hip --gpus 0,1 --gguf-dir /data --context 524288`), ported with the knobs below:
 `--glm-pack /data/pack --max-context 524288 --expert-cache auto --prefill 16384 --kv-streaming on
 --expert-profile /opt/maya/data/expert-profile-glm.bin`. Tuning record, arms and numbers:
 [notes/glm/5.3-flash.md](../../notes/glm/5.3-flash.md), deployment records: [notes/maya.md](../../notes/maya.md).
+(The second GLM lane this config was tuned on, `glm53f-iq2s-derisked` / Maya-M-Derisked, was retired on
+2026-11-12: a third-party directional weight edit, experimental and "not measured yet" upstream, always on, and
+unable to take the direction file without ablating twice - the vanilla lane + the `:ablation` alias below covers
+the same need with off = 100% vanilla. Record: [notes/glm/5.3-flash.md](../../notes/glm/5.3-flash.md) 20261112.)
 
 | Setting | Why |
 | --- | --- |
@@ -253,16 +253,16 @@ both lanes. Baseline is the setup's own config
 
 Kept slots and pack rebuilds: the GLM session identity carries the session ABI (`engine=0.1.27`) **and the pack
 files' sizes** (`index.txt`, `dense.bin`, `native_experts.txt`), so an engine bump alone keeps the conversations but a
-pack rebuild clears them - the #861 F32-bias repack made 1.1.56 remove 4 stale conversations (4.2 GB) on the derisked
-lane and 2 (227 MB) on the vanilla one. The DeepSeek identity carries the ABI plus `ds4.txt`/`engram.bin`/
+pack rebuild clears them - the #861 F32-bias repack made 1.1.56 remove 2 stale conversations (227 MB) on this
+lane. The DeepSeek identity carries the ABI plus `ds4.txt`/`engram.bin`/
 `tensors.txt` and the shard sizes (no pack rebuilds in practice): its 117 conversations (7.21 GB) survived the
-1.1.55 -> 1.1.56 bump and its 134 (11.51 GB), the GLM lanes' 4 + 4, survived 1.1.57 -> 1.1.58 (no pack or ABI
+1.1.55 -> 1.1.56 bump and its 134 (11.51 GB), the GLM lane's 4, survived 1.1.57 -> 1.1.58 (no pack or ABI
 change). Records: [notes/maya.md](../../notes/maya.md) 20261107/20261111.
 
 Measured on the deployed config (2026-11-12, Maya 1.1.59): the 1.1.59 bump was verified with the 7/7 functional
-gates on all three lanes (4K `prompt_tokens` 10,572 on the GLM lanes, 1,166 on DS = its 1140 budget), DS slots
-134 / 11.51 GB and GLM vanilla's 4 kept across the bump, and the refusal-ablation A/B (deploy/maya/README.md's
-ablation section): DS unchanged within the spread, GLM tg -4..-5 % on ablated requests only. The 1.1.58 A/B
+gates on both maya lanes (4K `prompt_tokens` 10,572 on the GLM lane, 1,166 on DS = its 1140 budget), DS slots
+134 / 11.51 GB and the GLM lane's 4 kept across the bump, and the refusal-ablation A/B (the ablation section
+below): DS unchanged within the spread, GLM tg -4..-5 % on ablated requests only. The 1.1.58 A/B
 against 1.1.57 (2026-11-11) was unchanged within
 the run-to-run spread (pp ~977 / ~997 t/s, tg ~19.1 / ~19.2 t/s at 40 / 85 %; min free 359 MiB monitor / 73 MiB
 other, 11.2 GiB `MemAvailable`, swap near-full during the prompts on both versions from page-cache pressure).
@@ -279,7 +279,7 @@ numbers and the against-setup deltas: [notes/glm/5.3-flash.md](../../notes/glm/5
 1.1.58 A/Bs: [notes/maya.md](../../notes/maya.md) 20261110/20261111; the #861 repack and the picture budget:
 [notes/maya.md](../../notes/maya.md) 20261107. Ready in ~31 s cold, stop 1-2 s.
 
-The vanilla lane (2026-11-06 bring-up, same config) matches it line for line: auto split `[0,24)` /
+The lane's own bring-up (2026-11-06, the config above) measured the same within noise: auto split `[0,24)` /
 `[24,45)+MTP`, 2,265 + 2,304 = 4,569 experts, int8 KV, 16K chunks, 35.98 GB RAM tier; ready in 28 s; 7/7
 functional gates including the 4K picture (`prompt_tokens` 10,579, no downscale); min free VRAM 445 / 286 MiB,
 13.5 GiB `MemAvailable`, swap flat. Its 1.1.59 restart repeats 7/7 gates (10,572 picture tokens) plain and
@@ -317,8 +317,14 @@ the named changes into `deploy/maya/configs/<lane>/maya-<quant>-hip.json`, commi
 ## Refusal ablation (`:ablation` alias)
 
 Maya 1.1.59 can project a refusal direction out of every residual write for the requests that ask (upstream
-`docs/SETTINGS.md`, "Refusal ablation per request"). Each maya lane loads its model's direction file at start and
-leaves it off; a request turns it on per call, with no restart:
+`docs/SETTINGS.md`, "Refusal ablation per request"). The GLM lane loads its model's direction file at start and
+leaves it off; a request turns it on per call, with no restart. The DeepSeek lane carries none since 2026-11-12:
+the direction is fitted on thinking-off prompts and does not hold under this deployment's reasoning workload
+(upstream's own measurement, `docs/SETTINGS.md`: thinking "high", scale 1 refused 92/120 held-out harmful
+prompts and 1.375 refused 12 at ~2.6x the thinking length, 76 s -> 130 s a request; a direction refitted on
+thinking-on prompts did not help) - the eval that verified the transfer on this lane (refusals 99.0 % -> 3.8 %,
+notes/deepseek/v41f1017.md 20261112) ran with think off. Uncensored traffic that needs thinking is the static
+uncensored quant's job (notes/TODO.md, notes/uncensored.md):
 
 - **Plain requests are untouched**: the server injects `--ablate FILE --ablate-default off` from the config's
   `"ablate"` key (the file must exist at start, else the switch stays hidden), and a request without the field
@@ -331,36 +337,31 @@ leaves it off; a request turns it on per call, with no restart:
 
 | Lane | Direction file (in the lane tree's `refusal-directions/`, = `/data/refusal-directions/` in-container) | sha256 (head) |
 | --- | --- | --- |
-| `dsv41f1017-iq2xxs` | `DeepSeek-V4.1-Flash-refusal-direction.gguf` (21,024 B; layer 25, dim 5120, scale 1.0) | `09ab0ac8…` |
 | `glm53f-iq2s` | `GLM-5.3-Flash-refusal-direction.gguf` (16,928 B; layer 31, dim 4096, scale 1.0) | `ecf89232…` |
 
-The **`glm53f-iq2s-derisked` lane carries no ablation on purpose**: the Maya-M-Derisked quant is already an
-abliterated transplant, and projecting a refusal direction out of it would ablate it twice.
-
-Both files are control-vector GGUFs from the models' Maya repos (`peasantsmith/DeepSeek-V4.1-Flash-1017-Maya-GGUF`,
-`peasantsmith/GLM-5.3-Flash-Maya-GGUF`); the GLM one is from the same repo the GLM shards come from (fitted on
-Maya-S24, the lane packs Maya-M). The DeepSeek one was fitted on Maya's Maya-S quant while this lane packs
-ISTA-DASLab IQ2_XXS - same base model and hidden size, and the transfer is verified with `tools/ablate_fit.py
-eval` (2026-11-12, production lane, think off): refusals on 104 held-out harmful prompts **99.0 % -> 3.8 %**,
-harmless false refusals 0.96 % -> 0.0 %, no coherence loops or empty answers, length ratio 1.02, verdict "ok"
-(notes/deepseek/v41f1017.md 20261112). The GLM direction is native to these shards' repo.
+The file is a control-vector GGUF from the shards' own repo (`peasantsmith/GLM-5.3-Flash-Maya-GGUF`, fitted on
+Maya-S24; the lane packs Maya-M), so it is native to these shards. The DeepSeek direction this lane family used
+until 2026-11-12 (`peasantsmith/DeepSeek-V4.1-Flash-1017-Maya-GGUF`, fitted on Maya-S while the lane packs
+ISTA-DASLab IQ2_XXS - same base model and hidden size) transferred: `tools/ablate_fit.py eval` (2026-11-12,
+production lane, think off) measured refusals on 104 held-out harmful prompts **99.0 % -> 3.8 %**, harmless
+false refusals 0.96 % -> 0.0 %, no coherence loops or empty answers, length ratio 1.02, verdict "ok"
+(notes/deepseek/v41f1017.md 20261112) - but only under thinking-off, which is why the wiring came off.
 
 Measured cost of an ablated request (2026-11-12 interleaved 512k A/B, off vs `--ablate-default on`, warm states,
-notes/maya.md 20261112): **DS: no measurable cost** (all pp/tg deltas inside the +-3 % spread; the direction is
-copied per device and projected at each `hc_post`). **GLM: pp free, tg -4.0 % (40 %) / -4.8 % (85 %)** (18.30 ->
+notes/maya.md 20261112): **GLM: pp free, tg -4.0 % (40 %) / -4.8 % (85 %)** (18.30 ->
 17.57 and 18.57 -> 17.67 t/s) - the projection touches every residual write of every layer on the decode path,
-and the cost lands only on the requests that ask for it; draft acceptance is unchanged.
+and the cost lands only on the requests that ask for it; draft acceptance is unchanged. (The DS lane measured no
+cost while it carried the alias - all pp/tg deltas inside the +-3 % spread.)
 
 Operational notes:
 
 - The projection covers every residual write of the main layers on every path - prompt chunks, verify windows,
-  batched `--parallel` rows, both cards of a split; maya-ds4 copies the direction to every device and projects at
-  each `hc_post`, so the `--tp 2` lane is covered (only MiniMax refuses tensor parallel). The draft heads only
+  batched `--parallel` rows, both cards of a split. The draft heads only
   propose; the main layers verify, so the kept tokens are the ablated model's.
 - Switching ablate on a live conversation restarts that conversation's cache (no cached prefix, restore point,
   kept conversation or shared start crosses the two settings), and an ablated conversation is never kept as a
   slot: a `:ablation` request on a conversation the plain model already holds pays a full prompt re-read.
-- An upstream refit replaces the file: re-run the one curl per lane (the pinned URLs and sha256s are in
+- An upstream refit replaces the file: re-run the one curl (the pinned URL and sha256 are in
   notes/maya.md); the lane picks it up at its next restart, no image rebuild.
 
 ## Build it yourself

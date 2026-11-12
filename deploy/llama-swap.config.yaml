@@ -501,16 +501,6 @@ models:
       tools: true
       context: 524288
       disableAuto: true
-    filters:
-      # The :ablation alias turns Maya's refusal ablation on per request: the config's "ablate" key loads the
-      # direction with --ablate-default off, so a plain request runs unprojected (bit-identical to no direction
-      # file) and the alias adds "ablate": true to the body (OpenAI, Anthropic and Maya's model API all read it).
-      # Switching ablate on a live conversation restarts its cache, and an ablated conversation is never kept as
-      # a slot. Direction: peasantsmith/DeepSeek-V4.1-Flash-1017-Maya-GGUF (fitted on Maya-S; this lane packs
-      # ISTA-DASLab IQ2_XXS - the transfer is verified by tools/ablate_fit.py eval, notes/deepseek/v41f1017.md).
-      setParamsByID:
-        "${MODEL_ID}:ablation":
-          ablate: true
     timeouts:
       connect: 30
       keepalive: 30
@@ -520,24 +510,17 @@ models:
       idleConn: 90
 
 
-  # GLM-5.3-Flash Maya-M-Derisked IQ2_S, maya's GLM engine (`build-hip/maya`). The DeepSeek lane's pattern again, with one
-  # difference forced by the engine: maya-ds4 has a model_dir key in its pack (ds4.txt), the GLM engine has none - it opens
-  # the shards as SIBLINGS of the pack (src/core/glm_model.cu: <pack>/../<shard name>). So the production files are bound
-  # READ-ONLY PER FILE at /data/<shard name>, right beside the writable /data/pack the setup builds. The production folder
-  # is never written: Docker leaves 0-byte root-owned placeholder files in /data after a lane stop (the bind target is
-  # materialized before the mount), which the mounts cover while running and glm_files() filters out on the host (a
-  # GGUF with no tensors is no model). A replaced shard (new inode) is picked up on the next lane start - maya lanes are
-  # --rm containers recreated every start. The .sha256 sidecars stay host-only: the setup verifies the hashes itself.
+  # GLM-5.3-Flash Maya-M (the vanilla quant) IQ2_S, maya's GLM engine (`build-hip/maya`).
   #
-  # Everything derived lives in the lane's writable /data tree (one per model, the strata pattern): pack/ (the engine's
-  # index, dense weights and tokenizer), vision/ (mmproj + vocab GGUF, downloaded by the setup), pack/slots/ (the GLM
-  # engine's conversation slots - disk, 4 slots / 16 GB, outliving a llama-swap stop with MAYA_GLM_SLOT_KEEP=1) and
-  # config/ (CONFIG_SRC). The GGUFs are the only thing the production mount provides.
+  # Everything derived lives in the lane's writable /data tree (one per model, the strata pattern): pack/ (the
+  # engine's index, dense weights and tokenizer), vision/ (mmproj + vocab GGUF, downloaded by the setup),
+  # pack/slots/ (the GLM engine's conversation slots - disk, 4 slots / 16 GB, outliving a llama-swap stop with
+  # MAYA_GLM_SLOT_KEEP=1) and config/ (CONFIG_SRC). The GGUFs are the only thing the production mount provides.
   #
-  # The engine settings are version-controlled in a lane-private folder, deploy/maya/configs/glm53f-iq2s-derisked/:
-  # each maya lane mounts only its own config folder and points CONFIG_SRC at it (the macro mounts none), so a
-  # second config can never take the other lane over on its next restart. The -e and the mount below are the
-  # lane's own declared state.
+  # The engine settings are version-controlled in a lane-private folder, deploy/maya/configs/glm53f-iq2s/: each maya
+  # lane mounts only its own config folder and points CONFIG_SRC at it (the macro mounts none), so a second config
+  # can never take another lane over on its next restart. The -e and the mount below are the lane's own declared
+  # state.
   #
   # Picture budget: the lane config sets vision.max_tokens=12288 (the server passes it to maya-vision as
   # --max-tokens, overriding the mmproj's 8000). GLM's tower is 1 token per 28x28 px (784 px), so a naive 4K
@@ -553,59 +536,10 @@ models:
   #
   # Chat template: Maya renders a GLM-5 pack with the image's serve/glm5_chat_template.jinja, not the pack's
   # tokenizer/chat_template.jinja. The bind below mounts the repo's templates/ checkout over that image path,
-  # so templates/glm-5.3-flash/ is the source of truth for both GLM lanes. 
-  # Keep MAYA_PACK_TEMPLATE unset: `=1` uses the pack's stale copy and ignores the mount. 
+  # so templates/glm-5.3-flash/ is the source of truth for the GLM lane.
+  # Keep MAYA_PACK_TEMPLATE unset: `=1` uses the pack's stale copy and ignores the mount.
   # The target is Maya-internal (serve/server.py's chat_template_path()); when bumping Maya, check that path
   # still matches before trusting this mount.
-  "glm-5.3-flash-iq2s-derisked":
-    name: "GLM 5.3 Flash Maya-M-Derisked IQ2_S"
-    description: "524288 ctx, maya GLM engine, int8 KV, 36 GB RAM expert tier, 4 disk slots, vision 12288 tok (4K un-downscaled), MTP drafting"
-    cmd: |
-      ${docker-server-maya-rocm}
-        -v /mnt/unenc-xfs/maya/glm53f-iq2s-derisked:/data
-        -v /mnt/unenc-xfs/models/maya/glm53f-maya-m-derisked/GLM-5.3-Flash-Maya-M-Derisked-IQ2_S-00001-of-00003.gguf:/data/GLM-5.3-Flash-Maya-M-Derisked-IQ2_S-00001-of-00003.gguf:ro
-        -v /mnt/unenc-xfs/models/maya/glm53f-maya-m-derisked/GLM-5.3-Flash-Maya-M-Derisked-IQ2_S-00002-of-00003.gguf:/data/GLM-5.3-Flash-Maya-M-Derisked-IQ2_S-00002-of-00003.gguf:ro
-        -v /mnt/unenc-xfs/models/maya/glm53f-maya-m-derisked/GLM-5.3-Flash-Maya-M-Derisked-IQ2_S-00003-of-00003.gguf:/data/GLM-5.3-Flash-Maya-M-Derisked-IQ2_S-00003-of-00003.gguf:ro
-        -v /mnt/unenc-xfs/llm-ops/templates/glm-5.3-flash/chat-template.jinja:/opt/maya/serve/glm5_chat_template.jinja:ro
-        -v /mnt/unenc-xfs/llm-ops/deploy/maya/configs/glm53f-iq2s-derisked:/repo-configs-glm:ro
-        -e CONFIG_SRC=/repo-configs-glm
-        -e VISION_FOOTPRINT_MB=4711
-        ghcr.io/hurui200320/llm-ops-maya:1.1.59-rocm-gfx1100
-    cmdStop: docker stop -t 120 ${MODEL_ID}
-    proxy: http://127.0.0.1:${PORT}
-    checkEndpoint: /health
-    # First load is unmeasured on this box (first GLM-engine run); a llama-swap start also loads the pack and pre-fills
-    # the 36 GB RAM tier. llama-swap bounds the graceful stop by this value too, so -t 120 fits.
-    healthCheckTimeout: 600
-    concurrencyLimit: 20
-    # Declared, not probed: maya's /v1/models omits `owned_by` (same as the DS4/Strata lanes). Tools on: the server
-    # translates GLM's tool calls into OpenAI tool_calls and Anthropic tool_use (the smoke gate checks one).
-    # Context: the GLM engine's 512k, int8 KV, streamed past 32768.
-    # No :ablation alias on purpose: the derisked quant is already an abliterated transplant - the direction
-    # projection would ablate it twice (see the DeepSeek lane below for the alias mechanics).
-    capabilities:
-      in: [text, image]
-      out: [text]
-      tools: true
-      context: 524288
-      disableAuto: true
-    timeouts:
-      connect: 30
-      keepalive: 30
-      # experts stream from the RAM tier/SSD; no header timeout
-      responseHeader: 0
-      tlsHandshake: 10
-      idleConn: 90
-
-
-  # GLM-5.3-Flash Maya-M (the vanilla quant) IQ2_S, maya's GLM engine. The derisked lane's pattern and settings, one
-  # quant over: identical shard sizes and pack layout (IQ2_S gate/up + IQ3_XXS down, Q6_K attention, MTP in the
-  # shards), so the derisked lane's tuned config is copied 1:1 into its own lane config folder
-  # (deploy/maya/configs/glm53f-iq2s/). See the derisked entry above for the per-file bind, CONFIG_SRC,
-  # chat-template mount and picture-budget rationale - not repeated here; only the shard names, the lane
-  # data tree, the config folder and the config's model_name/log differ. Quant source:
-  # peasantsmith/GLM-5.3-Flash-Maya-GGUF (Maya-M folder); the downloaded shards' sha256 match maya.py
-  # 1.1.55's published list (notes/maya.md 20261106).
   "glm-5.3-flash-iq2s":
     name: "GLM 5.3 Flash Maya-M IQ2_S (vanilla)"
     description: "524288 ctx, maya GLM engine, int8 KV, 36 GB RAM expert tier, 4 disk slots, vision 12288 tok (4K un-downscaled), MTP drafting"
@@ -627,7 +561,7 @@ models:
     # pre-fills the 36 GB RAM tier. llama-swap bounds the graceful stop by this value too, so -t 120 fits.
     healthCheckTimeout: 600
     concurrencyLimit: 20
-    # Declared, not probed: maya's /v1/models omits `owned_by` (same as the derisked lane); same values there.
+    # Declared, not probed: maya's /v1/models omits `owned_by` (same as the DS4/Strata lanes).
     capabilities:
       in: [text, image]
       out: [text]
@@ -635,10 +569,12 @@ models:
       context: 524288
       disableAuto: true
     filters:
-      # The :ablation alias turns Maya's refusal ablation on per request (see the DeepSeek lane above for the
-      # mechanics; the derisked lane carries none on purpose - its quant is already abliterated).
-      # GLM direction: peasantsmith/GLM-5.3-Flash-Maya-GGUF - the same repo these shards come from
-      # (fitted on Maya-S24; this lane packs the vanilla Maya-M IQ2_S).
+      # The only :ablation alias left (the DeepSeek lane's was removed 2026-11-12, notes/deepseek/v41f1017.md): the
+      # config's "ablate" key loads the direction with --ablate-default off, so a plain request runs unprojected
+      # (bit-identical to no direction file) and the alias adds "ablate": true to the body (OpenAI, Anthropic and
+      # Maya's model API all read it). Switching ablate on a live conversation restarts its cache, and an ablated
+      # conversation is never kept as a slot. GLM direction: peasantsmith/GLM-5.3-Flash-Maya-GGUF - the same repo
+      # these shards come from (fitted on Maya-S24; this lane packs the vanilla Maya-M IQ2_S).
       setParamsByID:
         "${MODEL_ID}:ablation":
           ablate: true
