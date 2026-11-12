@@ -19,7 +19,11 @@
 # healthCheckTimeout: number of seconds to wait for a model to be ready to serve requests
 # - optional, default: 120
 # - minimum value is 15 seconds, anything less will be set to this value
-healthCheckTimeout: 120
+# 600, not the default: cold starts on this host can exceed 2 min under load. The per-model
+# healthCheckTimeout entries below are NOT applied by this llama-swap build (measured 2026-11-12:
+# a lane with healthCheckTimeout: 600 still timed out at the top-level 2m0s) - this top-level
+# value is the one that governs every lane's startup check.
+healthCheckTimeout: 600
 
 # logLevel: sets the logging value
 # - optional, default: info
@@ -495,6 +499,49 @@ models:
     concurrencyLimit: 20
     # Declared, not probed: maya's /v1/models omits `owned_by` (same as the Strata lanes). Tools on:
     # the server translates DeepSeek's DSML into OpenAI tool_calls and Anthropic tool_use (verified).
+    capabilities:
+      in: [text, image]
+      out: [text]
+      tools: true
+      context: 524288
+      disableAuto: true
+    timeouts:
+      connect: 30
+      keepalive: 30
+      # pp/tg are slow on this model (experts read from RAM/SSD); no header timeout
+      responseHeader: 0
+      tlsHandshake: 10
+      idleConn: 90
+
+
+  # Abiray's uncensored re-quant of the same ISTA-DASLab GSQ-RCO IQ2_XXS set (the Engram shard is byte-identical
+  # to the vanilla lane's - a hardlink on the host; only the weight tensors differ). The uncensoring is baked
+  # into the weights, so there is no ablation filter here - every request runs the uncensored weights (the
+  # replacement for the removed direction-ablation alias on traffic that needs thinking: notes/uncensored.md).
+  # Same engine, same tuned settings and same lane pattern as the vanilla lane above: per-lane /data tree,
+  # shards read in place from a read-only mount, PACK_BUILD=1 builds the vision tower and the pack on first
+  # start, each lane mounts only its own config folder via CONFIG_SRC.
+  "dsv41f1017-iq2xxs-abiray":
+    name: "DeepSeek V4.1-Flash Abiray GSQ-RCO IQ2_XXS (uncensored)"
+    description: "524288 ctx, maya-ds4, fixed kv cache quant, vision, uncensored weights"
+    cmd: |
+      ${docker-server-maya-rocm}
+        -v /mnt/unenc-xfs/maya/dsv41f1017-iq2xxs-abiray:/data
+        -v /mnt/unenc-xfs/models/maya/abiray-dsv41f1017:/data/model:ro
+        -v /mnt/unenc-xfs/llm-ops/deploy/maya/configs/dsv41f1017-iq2xxs-abiray:/repo-configs-ds4:ro
+        -e CONFIG_SRC=/repo-configs-ds4
+        -e PACK_BUILD=1
+        -e DS4_VISION_TOKENS=1140
+        ghcr.io/hurui200320/llm-ops-maya:1.1.59-rocm-gfx1100
+    cmdStop: docker stop -t 120 ${MODEL_ID}
+    proxy: http://127.0.0.1:${PORT}
+    checkEndpoint: /health
+    # Cold start ~25-40 s after the pack exists (the first start also builds the pack + tower); llama-swap
+    # also bounds the graceful stop by this value, so -t 120 fits.
+    healthCheckTimeout: 600
+    concurrencyLimit: 20
+    # Declared, not probed: maya's /v1/models omits `owned_by` (same as the vanilla lane). Tools on: the
+    # server translates DeepSeek's DSML into OpenAI tool_calls and Anthropic tool_use (verified there).
     capabilities:
       in: [text, image]
       out: [text]

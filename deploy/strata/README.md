@@ -168,10 +168,11 @@ assembled context; `STRATA_DOCKER_BUILD_OPTS` adds docker-build options.
 
 The host llama-swap ([deploy/llama-swap.config.yaml](../llama-swap.config.yaml)) starts this image
 with the macro **`docker-server-strata-rocm`** and the models appended at the end of `models:` —
-vanilla **`qwen3.8-flash-next-iq3s`** and SC117 **`qwen3.8-flash-next-sc117-iq3s`**. `${PORT}` is
-assigned in **model-ID order** (llama-swap sorts the IDs, not the file): the maya DeepSeek lane
-(`dsv41f1017-iq2xxs`, [maya/README.md](../maya/README.md)) sorts first and keeps port 10001,
-and the two Qwen lanes are 10008/10009; those
+vanilla **`qwen3.8-flash-next-iq3s`**, SC117 **`qwen3.8-flash-next-sc117-iq3s`** and the maya
+uncensored **`dsv41f1017-iq2xxs-abiray`**. `${PORT}` is
+assigned in **model-ID order** (llama-swap sorts the IDs, not the file): the maya DeepSeek lanes
+sort first — vanilla `dsv41f1017-iq2xxs` keeps port 10001, the uncensored `dsv41f1017-iq2xxs-abiray`
+takes 10002 ([maya/README.md](../maya/README.md)) — and the two Qwen lanes are 10007/10008; those
 per-lane ports are internal to the proxy (clients use `:8080`). `CHAT_TEMPLATE_PATH` and the picture
 budget `VISION_TOKENS`/`VISION_MIN_TOKENS` are per model entry, not in the
 macro.

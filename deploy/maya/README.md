@@ -190,17 +190,21 @@ Per-start settings (context, expert cache…) live in the config; the dashboard 
 ### Configs from the repo (lanes)
 
 `deploy/maya/configs/` holds version-controlled configs for lanes, **one subfolder per lane** named after the
-llama-swap model id (`dsv41f1017-iq2xxs/`, `glm53f-iq2s/`), each holding one `maya-*-hip.json`
+llama-swap model id (`dsv41f1017-iq2xxs/`, `dsv41f1017-iq2xxs-abiray/`, `glm53f-iq2s/`), each holding one
+`maya-*-hip.json`
 so the entrypoint's glob finds it. Each lane mounts **its own** folder read-only and points `CONFIG_SRC` at it (the
 llama-swap macro mounts none): the entrypoint serves the newest copied JSON, so a shared folder would let one
 lane's config take over the other on its next restart. The entrypoint copies the JSON into `/data/config` at
 **every** start, so the repo file is the declared state (the equivalent of the strata fork's `STRATA_SET` env)
 and dashboard edits last until the next lane restart. Never mount a repo config writable straight into
 `/data/config`: maya.py touches (and may rewrite) the config on every start, which would dirty the checkout. The
-DeepSeek lane's config is `configs/dsv41f1017-iq2xxs/maya-deepseek-2bpw-hip.json` (512k, `--ssd-cache 36
+DeepSeek lanes' configs are `configs/dsv41f1017-iq2xxs/maya-deepseek-2bpw-hip.json` (the vanilla ISTA-DASLab
+quant) and `configs/dsv41f1017-iq2xxs-abiray/maya-deepseek-2bpw-hip.json` (Abiray's uncensored re-quant of the
+same set) - identical engine settings in both: 512k, `--ssd-cache 36
 --reserve-mib 1664 --suffix-draft 0`, env `DS4_INDEX_TC=1 DS4_CHUNK_GFX11=16384 DS4_RING_MB=128 DS4_HC_STREAM=1
 DS4_HC_MIX_SPLIT=2 DS4_ROUTE_FUSE=1 DS4_SPLIT=18,22 MAYA_DS4_SLOT_KEEP=1 MAYA_DS4_SLOT_CAP=8
-MAYA_DS4_SLOT_RAM_GB=6`; rationale, tuning arms and numbers: notes/deepseek/v41f1017.md 20261104/20261105).
+MAYA_DS4_SLOT_RAM_GB=6`; only `model_name` and the installer note differ (rationale, tuning arms and numbers:
+notes/deepseek/v41f1017.md 20261104/20261105, the abiray lane: 20261112).
 
 The engine knobs on that lane, in one line each (they exist only as engine environment, not config keys):
 
@@ -324,7 +328,8 @@ the direction is fitted on thinking-off prompts and does not hold under this dep
 prompts and 1.375 refused 12 at ~2.6x the thinking length, 76 s -> 130 s a request; a direction refitted on
 thinking-on prompts did not help) - the eval that verified the transfer on this lane (refusals 99.0 % -> 3.8 %,
 notes/deepseek/v41f1017.md 20261112) ran with think off. Uncensored traffic that needs thinking is the static
-uncensored quant's job (notes/TODO.md, notes/uncensored.md):
+uncensored quant lane's job - deployed as `dsv41f1017-iq2xxs-abiray` (notes/deepseek/v41f1017.md 20261112;
+method and the when-to-use-what: notes/uncensored.md):
 
 - **Plain requests are untouched**: the server injects `--ablate FILE --ablate-default off` from the config's
   `"ablate"` key (the file must exist at start, else the switch stays hidden), and a request without the field
