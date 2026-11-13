@@ -263,12 +263,20 @@ lane. The DeepSeek identity carries the ABI plus `ds4.txt`/`engram.bin`/
 1.1.55 -> 1.1.56 bump and its 134 (11.51 GB), the GLM lane's 4, survived 1.1.57 -> 1.1.58 (no pack or ABI
 change). Records: [notes/maya.md](../../notes/maya.md) 20261107/20261111.
 
-Measured on the deployed config (2026-11-12, Maya 1.1.60): the 1.1.60 bump was verified with the 7/7 functional
-gates on all three maya lanes (4K `prompt_tokens` 10,581 on the GLM lane plain and through the `:ablation` alias,
-1,175 on both DS lanes = its 1140 budget), DS slots 135 / 11.52 GB, GLM 4 / 2.00 GB and abiray 1 / 0.16 GB kept
-across the bump. The 1.1.59-vs-1.1.60 A/B is deferred (dev containers busy that day; notes/maya.md 20261112) - the
-only engine change reaching the lanes is the HIP routing-ring sizing (upstream: <= ~0.8 % tg on APUs, identical
-answers). The 1.1.59 bump was verified the same day (4K `prompt_tokens` 10,572 / 1,166, slots 134 / 11.51 GB and
+Measured on the deployed config (2026-11-14, Maya 1.1.61): the 1.1.61 bump was verified with the 7/7 functional
+gates on all three maya lanes (4K `prompt_tokens` 10,579 on the GLM lane plain and through the `:ablation` alias,
+1,146 on both DS lanes, within the 1140 image budget), abiray slots 215 / 9.26 GB and the GLM lane's 4 / 1.50 GB
+kept across the bump (the main DS lane keeps 9 / 1.15 GB - the 11-13 abiray bench churned its older conversations;
+slots survive the bump itself). The interleaved 512k A/B against 1.1.60 (4 points per arm, tune tree, `cache_n 0`):
+DeepSeek **pp +4.4 % at 40 % (1234.7 -> 1288.8 t/s) and +8.6 % at 85 % (1156.0 -> 1255.1 t/s)** - the release's
+RDNA3 expert-unpack and sparse-attention changes reach this pair of RX 7900 XTX, matching upstream's +8-9 % claim
+for this size class - tg unchanged within the spread (25.8 -> 25.8 / 26.9 -> 27.05 t/s), VRAM floors 838-847 /
+609-612 MiB, 12.3-13.0 GiB `MemAvailable`. Lane output varies boot-to-boot on the same build (the seeded bit-probe
+diverged within both versions and matched once across them), so answers are not boot-reproducible on this lane
+either version; the gates' canonical answers are unchanged. The 1.1.60 bump (2026-11-12) was verified with 7/7
+gates (4K `prompt_tokens` 10,581 / 1,175; DS slots 135 / 11.52 GB, GLM 4 / 2.00 GB, abiray 1 / 0.16 GB kept); its
+1.1.59-vs-1.1.60 A/B was deferred and is superseded by the ladder above. The 1.1.59 bump was verified the same day
+(4K `prompt_tokens` 10,572 / 1,166, slots 134 / 11.51 GB and
 the GLM lane's 4 kept) with the refusal-ablation A/B (the ablation section below): DS unchanged within the
 spread, GLM tg -4..-5 % on ablated requests only. The 1.1.58 A/B
 against 1.1.57 (2026-11-11) was unchanged within

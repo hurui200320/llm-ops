@@ -5,4 +5,3 @@
   only), and upstream's GLM thinking data is on the XS-fitted direction (0/24 refusals at 1.5, 4/24 token-capped).
   Run `ablate_fit.py eval --think on` against `glm-5.3-flash-iq2s` if GLM uncensored-under-thinking ever matters.
 + Bench abiray deepseek?
-+ Maya 1.1.61

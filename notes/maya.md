@@ -724,3 +724,99 @@ benchmark would have measured them, not the release. The only engine change reac
 sizing (upstream: <= ~0.8% tg on APUs, identical answers; the 1.1.57 regression it fixes never reproduced on
 gfx1100), so the regression risk is low - the lanes go to production on the gate results alone. Tracked in
 notes/TODO.md; run the interleaved ladder when the host is idle.
+
+# 20261114 Maya 1.1.61 upgrade: DeepSeek prefill +8.6% at 85% on gfx1100
+
+Upgraded to `v1.1.61` (commit `f66a913c628c6672795088a56ad85de0efc827e4`, 4 commits over `v1.1.60`: three HIP EXL3
+decode commits plus the release commit; llama.cpp `3cf03257...`, ROCm `7.2.1-complete` base, `gfx1100` and the
+`100202` hipBLASLt table all unchanged). Workflow run pushed
+`ghcr.io/hurui200320/llm-ops-maya:1.1.61-rocm-gfx1100`, digest
+`sha256:83994e79aa49139fe333638f0d9a9665588ac924215450ac4931271129dc896d` (30,146,959,474 B; 1.1.60 was
+30,142,642,289 B - the ds4 kernel changes). Both build gates passed unchanged (`setup.py`'s llama.cpp pin, the
+`gfx1100-glm-hipblaslt-100202.txt` table); pack tools (`iq_pack.py`, `pack_gguf.py`, `vision_pack.py`,
+`glm5next_patch.py`, `stamps.py`, `tools/hip/`) and the GLM/vision engine sources are untouched in the diff - no
+repack, no Dockerfile/entrypoint changes, `project(strata VERSION 0.1.27)` unchanged (slots survive).
+
+## Upstream changes reaching our image and lanes
+
+- **RDNA3 DeepSeek prefill, the release's headline and the reason to take it**: `set_tc_kernel` gains an RM rows
+  multiplier (a block takes RM x 64 rows, an expert's weight tile decoded once for all of them; "the same MMAs over
+  the same K steps: the same bits") defaulting to **4 on gfx11** (`tc_rows_mult()`; `DS4_IQ_TC_RM=1|2|4` override),
+  and `sparse_attn_wmma_kernel` gains a G groups form (G x 16 heads per block, one staged tile for all, bank-padded
+  rows; "the same values: the same bits") taking **mode 4 on gfx11 for prompt chunks >= 64 queries**
+  (`attn_wmma_mode()`; `DS4_ATTN_SHARE=0|1|4` override). Upstream measured pp +14-17% (Maya-XS, 2K-128K) and +8-9%
+  (Maya-S, 8K-32K) on a Ryzen AI Max APU, "other RDNA3 GPUs (Radeon RX 7000) use the same code" - our 2x RX 7900
+  XTX qualify. Both changes are automatic, no config.
+- **Long-prompt skip refactor** (`ds4_model.cu`): the single cut became a per-layer cut (`ck`/`cr` by layer)
+  serving the new cone mode; with the cone off the plan returns the same single cut - behavior-preserving for us.
+- **`fast_prefill` / `--fast-prefill`** (Models page switch, `serve/server.py` maps it to `DS4_YOCO_CONE=1`): the
+  skip as a per-layer cone - **requires `yoco_one_gpu()`**, so it is unavailable on our 2-GPU `DS4_SPLIT=18,22`
+  lanes; also "answers can shift slightly". Not deployed.
+- **`MAYA_DS4_LOOKUP_TRUST`** (default on) + per-request `lookup_trust`: a trusted long-match prompt-lookup round
+  is verified without drafting. Inert here: our lanes run `--suffix-draft 0` (lookup off). `MAYA_MM3_LOOKUP_TRUST`
+  and mm3 `--suffix-draft 3` default: no MiniMax lane.
+- **Setup-side only**: the DSpark speed calibration now weighs chat, code and tool calls alike
+  (`tools/calibrate_ds4.py`, `maya.py`) - we hand-write configs, so no effect; side thought (not deployed): the
+  code-aware calibration + trust machinery could justify re-testing `--suffix-draft` on the DS lane for code-heavy
+  traffic. EXL3 decode gains (full-rate shifts/codebook multiply/`EXL3_DECODE_INLINE`) and the maya-mm3 CMake link
+  change: no EXL3 packs, `maya-mm3` is not built by our image.
+
+## Verification (official CI image, on fedora-tuf)
+
+In-image smoke gates replicated after the pull (engines `--help`/`--version`, vision usage, `ldd`, stamps
+`src=651b9f33b57605a1` / vision `src=19084eccaa9c2513`, venv imports, `maya.py --help`) - all pass;
+`maya-ds4 1.1.61 (build f66a913c...)`. Deployed by `git pull` (`9daba5e`); llama-swap's `-watch-config` reloaded
+the three lane tags. All three lanes, **7/7 functional gates** through llama-swap (chat `SMOKE-OK`; `get_weather`
+-> `{"city":"Paris"}`; `reasoning_effort: none` -> `42`; first five primes; fenced `def sum_list`; 420x420 picture;
+3840x2160 picture): 4K `prompt_tokens` **1,146 on both DS lanes** (within the 1140 image budget) and **10,579** on
+the GLM lane (137x77 grid, no downscale), plain and through the `:ablation` alias (6/6 + 4K through the alias
+too). `/props`: GLM vanilla `ablate.available: true, default: false`; the DS lanes carry no direction by design
+(uncensored abiray weights since 2026-11-12). Slots across the bump: abiray **215 conversations / 9.26 GB**, GLM
+**4 / 1.50 GB**; the main DS lane keeps **9 / 1.15 GB** and removed 110 as foreign/incomplete - the 11-13 abiray
+bench traffic evicted its older conversations under the 16 GB slot cap (not a version effect: the bump kept
+abiray's 215). Live `/data/config` diffs clean against `deploy/maya/configs/` on all three lanes after the
+restarts.
+
+## Interleaved 512k A/B (1.1.60 vs 1.1.61, DeepSeek lane)
+
+Tune tree recreated first (`/mnt/unenc-xfs/maya/dsv41f1017-iq2xxs-tune`: rsync of the production tree minus
+`slots/`, 935 MB, carrying the pack, `expert-profile.bin`, `refusal-directions/`); the ab59-era trees had been
+cleaned up. One-shot containers on 127.0.0.1:10110 with the production config folder
+(`deploy/maya/configs/dsv41f1017-iq2xxs`), repo entrypoint bind, A/B/A/B interleaved,
+`run_longctx.py --ctx 524288 --in-pcts 40,85 --out-pct 1 --reps 1`, `cache_n 0`; vram_sampler at 5 s. Driver:
+`/mnt/unenc-xfs/maya/tune/ab61_point.sh` + `ab61_run.sh`; artifacts `/mnt/unenc-xfs/maya/tune/ab61/`.
+
+| Lane / level | 1.1.60 (r1 / r2 / r3 / r4) | 1.1.61 (r1 / r2 / r3 / r4) | Mean delta |
+| --- | --- | --- | ---: |
+| **DS** pp 40 % | 1286.3 / 1126.2 / 1262.4 / 1263.9 | 1273.3 / 1198.2 / 1375.6 / 1308.1 | **+4.4 %** (1234.7 -> 1288.8) |
+| **DS** tg 40 % | 25.7 / 25.5 / 25.8 / 26.5 | 25.2 / 25.5 / 26.2 / 26.3 | -0.3 % |
+| **DS** pp 85 % | 1147.4 / 1192.5 / 1144.7 / 1139.4 | 1260.9 / 1263.0 / 1235.7 / 1260.6 | **+8.6 %** (1156.0 -> 1255.1) |
+| **DS** tg 85 % | 26.3 / 27.1 / 27.2 / 26.9 | 26.7 / 27.1 / 27.2 / 27.2 | +0.7 % |
+
+The 85% gain (+8.6%, every 1.1.61 point above every 1.1.60 point) matches upstream's +8-9% claim for this size
+class; 40% is +4.4% with overlapping spreads (1.1.60's 40% spread alone is 1126-1286). tg is unchanged. Placement
+is identical arm for arm (36 GB RAM store, 3,512 slots, 10,803-10,804 CPU-lane experts in place); VRAM floors
+838-847 / 609-612 MiB, `MemAvailable` 12.3-13.0 GiB. Both AGENTS.md targets hold with margin (pp >= 1000, tg >= 25
+at 85%). No repack, no config change.
+
+## Bit-identity probe: inconclusive, lane output is not boot-reproducible
+
+Each point runs a fixed greedy `seed 42` probe before the ladder. Result: outputs differ **within the same
+version** boot-to-boot (1.1.60 r3 vs r4 diverge at byte 150 of 374; 1.1.61 r3 vs r4 at byte 0 - one 1.1.61 boot
+answered with a stray meta preamble, "? Desired oververbosity 5."), while one cross-version pair is
+byte-identical (1.1.60 r3 == 1.1.61 r4). So the probe cannot attribute drift to the release: this lane's output
+varies boot-to-boot regardless of version (the analogue of GLM's expert-cache-dependent sums - for DS4 the
+boot-varying expert admission/placement is the likely source; the placement counts stay identical, the sums'
+association order need not). The upstream "identical answers" claim is untestable this way here; practically the
+gates' canonical answers are unchanged and the 4K/tool/thinking paths all pass. If a reproducibility knob ships
+for DS4 (like GLM's `MAYA_GLM_PREFILL_STABLE`), revisit.
+
+## Method notes
+
+- First pass ran with rep-only tags (`r1`, `r2`), so the B arms overwrote the A arms' per-point files
+  (`r1.json`, bits, csv, engine logs); the summaries in `run.log` survived and the table above pools both passes.
+  Fixed to `<arm>-<rep>` tags for the r3/r4 pass.
+- The first launch collided with the still-up GLM lane (llama-swap keeps the last-used lane loaded, `globalTTL:
+  0`): the arm's engine died at load behind its `--rm` container and the point script burned its health timeout.
+  The point script now checks both cards' free VRAM before `docker run` (a lane woken between arms aborts the
+  point instead of measuring a contended arm) and asserts the arm's engine version at start.
