@@ -141,3 +141,99 @@ for c in card0 card1; do echo -n "$c "; cat /sys/class/drm/$c/device/current_lin
 sudo lspci -s 00:1b.4 -vv | grep LnkSta:        # expect Speed 16GT/s, Width x4
 sudo journalctl -k -b 0 | grep -cE 'AER:.*error|device lost from bus|GPU Recovery Failed'
 ```
+
+---
+
+# 20261116 Second drop of GPU1 (`09:00.0`): identical signature, mid-prefill on the 1.1.65 A/B ladder
+
+## Summary
+
+Seven days after the 20261109 incident, the same PCH-attached x4 card (`0000:09:00.0`, DRM `card0`, maya's GPU1)
+dropped off the bus again with the **identical kernel opening**: a correctable physical-layer RxErr at root port
+`00:1b.4`, then `device lost from bus!` one line later (17:52:35 CST). The card died mid-prefill during the Maya
+1.1.65 verification ladder, so this incident also documents how the drop looks through maya's watchdogs. The
+20261109 "not recurring (so far)" line is superseded: it recurred, and the runbook's next diagnostics (riser swap,
+Gen3 test) are warranted.
+
+## Timeline (CST)
+
+| Time | Event |
+| --- | --- |
+| 17:38:20 | GLM tune-ladder point `b65-r2` (Maya 1.1.65 arm) starts; its 40 % point completes normally |
+| ~17:47 | its 85 % prompt starts prefilling 445,692 tokens |
+| 17:49-17:52 | prefill reaches 311,296 tokens (~70 %); chunk walls degrade (19.7 s max vs 16.5-16.9 s on the other 7 points, mixer windows 14,394 vs ~11 k) |
+| **17:52:35** | **AER correctable Physical-Layer RxErr (`[0] RxErr (First)`) at root port `00:1b.4`, then `amdgpu 0000:09:00.0: device lost from bus!`** |
+| 17:55-17:56 | the engine's serve watchdog (#29) fires after 180 s of no progress at "the prompt: layer 23"; the engine stops itself (exit code 3) so the server restarts it; the in-flight request gets a 503 naming the exit code, the reason and the log line |
+| 18:00:24 | the driver's own recovery cascade: SMU bus errors (`TransferTableSmu2Dram(18)` / `DisallowGfxOff(41)` response 0xFFFFFFFF), `ring sdma0 timeout`, sdma queue reset, devcoredump created |
+| at writing (18:02) | reset loop ongoing: 7,247 AER / device-lost / recovery-failed lines this boot, ~830/minute |
+
+## State after the drop
+
+- `lspci -s 09:00.0` still enumerates the device and its internal switch bridges (`07:00.0`/`08:00.0`) — unlike
+  20261109's `Unknown header type 7f` — but `current_link_speed: Unknown`, `current_link_width: 63`.
+- Root port `00:1b.4`: `LnkSta: Speed 2.5GT/s, Width x4` (capability 16 GT/s; equalization incomplete) — the same
+  degraded retrain as 20261109.
+- `card1` (`03:00.0`, CPU x16, display): healthy, 16.0 GT/s, unaffected.
+- `devcoredump/data`: **0 bytes** again (the driver never read GPU state).
+- 24,267 MiB stuck as "used" on card0 with **no container or process holding it** (all maya/strata lanes were
+  stopped): the killed engine's buffer objects are unreclaimable while the driver is wedged — D-state `ttm`
+  kworkers (`u100`/`u101`).
+
+## How the drop looks through maya (new this time)
+
+- The engine hung inside a GPU call that never returned; nothing in the engine log precedes the link error. The
+  serve watchdog (#29) then fired at +180 s ("no progress for 180 s during a request (the prompt: layer 23)"),
+  the engine stopped itself (exit code 3), and the server reported the request with the exit code, the reason
+  ("stopped itself because it had stopped making progress - a hang it caught") and the stage/position. On
+  20261109 the equivalent event was an opaque lane hang at weight loading.
+- The #860 drafting-stall watch did not fire (this was a prompt-path stall, not drafting) and the #899 pool-check
+  wait was not involved (startup had long completed).
+- **Not a Maya 1.1.65 regression**: the same ladder's completed points measured parity (b65-r1 85 % pp 978.5 /
+  tg 18.4 vs the 1.1.64 arms' 967.1 / 16.75; all DS points within the run-to-run spread), and the GLM bits probes
+  were byte-identical across all 4 points including across versions (`9eec69b5…`, the same hash as the 20261116
+  1.1.64 round). The ladder's missing cell (b65-r2 85 %) is re-run after recovery.
+
+## What it was not
+
+- **Not thermal/OOM/power**: zero thermal-throttle, MCE, machine-check or OOM messages in the kernel log from
+  17:00 until the 17:52:35 RxErr (checked; same method as 20261109).
+- **Not a software/engine hang taking the link down**: prefill was progressing normally (chunks completing at
+  ~1,000 t/s) until the RxErr; the engine-side stall began only when the card vanished.
+
+## Recovery
+
+Done the same evening, without hardware changes: force power-off, boot. The link retrained at POST — root port
+`00:1b.4` back at **16 GT/s x4**, both cards 16 GT/s, **0** AER/amdgpu errors this boot, VRAM floors clean
+(26/367 MiB desktop), llama-swap serving again. The 20261109 warning held: a warm reboot would not have done it.
+
+Constraints recorded for the runbook's next diagnostics: no shorter riser is on hand (no spare cable; 50 cm does
+not reach this layout at all, 70 cm barely fits), and the Gen3 diagnostic is rejected for now — expert streaming
+and pp depend on the Gen4 x4 bandwidth. So steps 3-4 of the 20261109 runbook are not currently actionable;
+monitoring (the per-boot check and the `journalctl -f` watchdog) continues.
+
+Working hypotheses for the repeat (user's, unverified — recorded because they shape what to watch):
+
+- **Ladder-class load**: both drops happened during long-prefill streaming (20261109: a 144k-token production
+  prefill; 20261116: a 445k-token ladder prompt, the heaviest sustained PCIe-x4 + disk streaming this host runs).
+  Short chats and idle never trigger it. If drops only ever follow ladder-class prefill, load-correlated margin
+  (power draw transient on the riser/connector under sustained reads) stays the prime suspect.
+- **Load/unload cycles tickling a driver bug**: the ladders also cycle engine boots/stops every ~20 minutes
+  (llama-swap restarts, expert-tier pinning, VRAM lend/return); a TTM/GEM- or HIP-level bug could in principle
+  wedge the card. Counter-evidence: the kernel opening is a physical-layer receiver error at the root port —
+  below the driver — and there is no MCE/thermal/OOM precursor; but a driver-side wedge and an electrical margin
+  problem are not yet fully separable from this host alone.
+
+What would discriminate: a drop on a swapped (shorter) riser → card; a drop at Gen3 under the same load → not
+signal margin alone; no drop ever outside ladder-class prefill → load-correlated; a drop while idle at desktop
+load → card or slot power. Until then: keep ladders away from production hours where possible, watch the first
+minutes of any 85 % ladder prompt (both drops sat inside or right at sustained streaming), and treat a third
+occurrence as the trigger to take the slot out of service pending the riser swap.
+
+## Assessment
+
+Two identical drops seven days apart on the same 70 cm riser move the 20261109 "suspected link marginality" from
+a one-off towards a confirmed margin problem on the PCH x4 slot path (riser cable, connectors, or the card's PHY
+at Gen4). The degradation pattern before both drops (none visible last time; chunk-wall creep this time) and the
+identical root-port retrain behaviour point at the link, not the GPU cores. Until the riser is swapped or the
+Gen3 test discriminates, treat this slot as suspect under sustained Gen4 load (the ladder's 85 % prompts are the
+heaviest sustained PCIe+disk streaming this host runs).
