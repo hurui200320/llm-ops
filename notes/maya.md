@@ -915,3 +915,107 @@ drift to the release; the gates' canonical answers are unchanged.
 - llama-swap keeps the last-used lane up (`GET /unload` on :8080 empties all lanes; the A/B driver's VRAM
   guard aborts a point if a lane wakes between arms). Lane containers are auto-removed on stop - engine logs
   (`/opt/maya/maya-<quant>-hip.log`) must be `docker cp`'d out per run or they are lost with the container.
+
+# 20261116 Maya 1.1.65 upgrade: parity on both engines; the ladder interrupted by the second GPU1 link drop
+
+Upgraded to `v1.1.65` (commit `c81fab6c9d63cf69b928f92460e0a662b28aa9ec`, 45 commits over `v1.1.64`, one release;
+llama.cpp `3cf03257...`, ROCm `7.2.1-complete` base, `gfx1100`, the `100202` hipBLASLt table (62 rows), `setup.py`
+and the stamp mechanism all unchanged - both build gates passed as-is). `project(strata VERSION 0.1.27)` unchanged
+(session ABI intact; slots survived on all three lanes). Workflow run pushed
+`ghcr.io/hurui200320/llm-ops-maya:1.1.65-rocm-gfx1100`, digest
+`sha256:f8a3a10d61f1c6c5fa1d0d2e6fc34cec2b583a5ecb3bc7d36681fcfe61c55823` (30,144,512,351 B; 1.1.64 was
+30,148,744,231 B). In-image smoke gates replicated after the pull: engines `--help`/`--version`
+(`maya-ds4 1.1.65 (build c81fab6...)`), vision usage, `ldd` clean on all three binaries, stamps
+`src=a14286b083fafa5b` / vision `src=b94af92b198b2be0` (1.1.64 was `d295b7c3...`/`1c62b301...`), venv imports,
+`maya.py --help`. Deployed by `git pull` (`827d3a3`); llama-swap's `-watch-config` picked up the three lane tags.
+
+## Upstream changes reaching our image and lanes
+
+- **#899 GLM expert-pool check wait (Linux HIP - active here)**: after the pool check frees its written budget,
+  the free-VRAM read could still count it as used -> 0 slots a layer -> start failure (reported on 2x 16 GB
+  cards). The check now waits until the figure is back (`MAYA_GLM_POOL_CHECK_WAIT_MS`, default 10 s, 0: off) and
+  says when it had to. Our starts never waited (no "came back as free VRAM" line, no WARNING on any boot this
+  round) - the frees read back promptly on this host - but the fix covers the monitor card's tighter floor.
+- **#827 clearer engine-failure reporting (observed live, see the A/B section)**: an answer the engine stops on
+  an error is no longer "length"/a retried 5xx; streamed answers keep their text and end with the API's error
+  event, other requests get HTTP 422 `engine_error` with reason/position/partial text, and the console END line
+  names the failed step and position. Not exercised by a real engine fault this round - but the sibling path
+  (the #29 watchdog stop during the hardware drop) surfaced with the exit code, the reason, the log line, the
+  stage ("the prompt: layer 23") and the token position, where the pre-1.1.65 form was an opaque stop.
+- **#860 GLM drafting-stall report**: a drafting step slower than 20 s prints a `glm stall:` line naming where
+  each GPU of the split is (`MAYA_GLM_STALL_S`, default 20). Report-only; never fired this round.
+- **Everything else is inert here**: the #794 DeepSeek Windows-NVIDIA pin fix is `#if defined(_WIN32) &&
+  !defined(STRATA_USE_HIP)`; the AMD+NVIDIA pairing work (helper-link DMABUL - `MAYA_GLM_HELPER_DMABUF`, the
+  lane-steps repeatability change `MAYA_GLM_LANE_STEPS` - both gated on `repeatable(F->helper.linked())`),
+  `strata-device`'s compute-capability floor, the Ubuntu rocWMMA doc note (our image ships ROCm 7.2.1-complete),
+  the calibration-gating changes (we never run named calibrations), and the `maya.py` help text. One ds4
+  helper-prompt change was committed and reverted upstream - net zero. The test-suite repairs and the faster
+  GPU tests do not reach the image (`STRATA_BUILD_TESTS=OFF`).
+
+## Verification (official CI image, on fedora-tuf)
+
+All three lanes through llama-swap, **7/7 functional gates** per DS lane and **6/6 + 4K on the GLM lane plain
+and through the `:ablation` alias** (chat `SMOKE-OK`; `get_weather` -> `{"city":"Paris"}`; `reasoning_effort:
+none` -> `42`; first five primes; fenced `def sum_list`; 420x420 and 3840x2160 pictures): 4K `prompt_tokens`
+**10,579 on the GLM lane plain and through the alias** (the 137x77 grid, no downscale) and **1,146 on both DS
+lanes** (the canonical count for the deterministic red/blue gate image; 1.1.64's 1,168 was a fresh random-noise
+set). `/props`: GLM `ablate.available: true, default: false`. Slots across the bump: abiray **217 conversations
+/ 9.28 GB**, the main DS lane **8 / 0.39 GB** (9th rotated out before the bump; kept = not wiped), GLM **4 /
+6.06 GB**. Live `/data/config` diffs clean against `deploy/maya/configs/` on all three lanes, no entrypoint diff
+lines (no schema migrations). No #899 pool-check waits or warnings, no `glm stall:` lines on any boot.
+
+## Interleaved 512k A/B vs 1.1.64 (tune trees; DS 2 points per arm, GLM 2+1)
+
+Same harness as 20261114/20261116-morning (`ab65_point.sh` / `glm65_point.sh`, derived from the ab64/glm64
+scripts; arms `a64` = 1.1.64, `b65` = 1.1.65; results `tune/ab65/results/`): tune trees, production config
+folders, repo entrypoint, A/B/A/B interleaved, `run_longctx.py --ctx 524288 --in-pcts 40,85 --out-pct 1 --reps
+1`, `cache_n 0`, vram_sampler at 5 s, greedy seed-42 bits probe per point, engine log per point. A third GLM
+b65 point (r3) was added after the hardware drop below to complete the 85 % cell.
+
+| Lane / level | 1.1.64 (r1 / r2) | 1.1.65 (r1 / r2 / r3) | Mean delta |
+| --- | --- | --- | ---: |
+| **DS** pp 40 % | 1374.2 / 1380.2 | 1384.2 / 1362.5 | -0.3 % (1377.2 -> 1373.4) |
+| **DS** tg 40 % | 26.20 / 26.10 | 25.80 / 26.20 | -0.6 % (26.15 -> 26.00) |
+| **DS** pp 85 % | 1271.3 / 1239.3 | 1265.9 / 1242.1 | -0.1 % (1255.3 -> 1254.0) |
+| **DS** tg 85 % | 26.90 / 27.10 | 26.40 / 27.00 | -1.1 % (27.00 -> 26.70) |
+| **GLM** pp 40 % | 973.4 / 969.1 | 972.9 / 971.8 / 967.2 | -0.1 % (971.3 -> 970.6) |
+| **GLM** tg 40 % | 17.20 / 17.40 | 18.80 / 18.00 / 17.20 | +4.0 % (17.30 -> 18.00) |
+| **GLM** pp 85 % | 975.3 / 958.9 | 978.5 / (r2 lost) / 985.3 | +1.5 % (967.1 -> 981.9) |
+| **GLM** tg 85 % | 16.80 / 16.70 | 18.40 / (r2 lost) / 18.40 | +9.9 % (16.75 -> 18.40) |
+
+Verdict: **both engines at parity** - DS within +-1.1 % on all axes; GLM pp identical within noise (the clean
+compute signal), GLM tg inside the lane's documented run-to-run band (16.3-18.8 t/s measured on *both* versions
+earlier the same day; the +9.9 % at 85 % is acceptance-led - draft acceptance 0.72-0.75 on a64 vs 0.75-0.77 on
+b65 - the same shape as the 1.1.64 ladder's +11.7 % GLM 85 % delta judged inside spreads). VRAM floors
+arm-identical (DS 810-823 / 611-624 MiB; GLM 186-194 / 389-395 MiB; r3 started with ~250 MiB more desktop usage
+on the monitor card and adapted, floors 109/255). Swap flat everywhere. Both AGENTS.md targets hold (DS pp >=
+1000 both levels, tg 26.7 at 85 %; GLM pp ~970-985 both levels).
+
+Bit-probes: the GLM tune-tree probes are **byte-identical across all 5 points including across versions**
+(`9eec69b5...` - the same hash as the 20261116 1.1.64 round), while the DS probe keeps its boot-to-boot
+divergence with 3 of 4 byte-identical (both 1.1.65 points among them) - same conclusion as 20261114: the probe
+cannot attribute drift to the release; the gates' canonical answers are unchanged.
+
+## The ladder was interrupted by the second GPU1 link drop (hardware, not the release)
+
+At 17:52:35, during b65-r2's 85 % prefill (~70 % through), GPU1 (`0000:09:00.0`, the PCH x4 riser card) dropped
+off the bus with the **identical kernel opening as 20261109** (AER correctable Physical-Layer RxErr at root port
+`00:1b.4`, then `device lost from bus!`; root port retrained to 2.5 GT/s x4; devcoredump 0 bytes; 7,247 error
+lines and a still-running reset loop; the killed engine's 24 GiB unreclaimable). The engine hung on a GPU call
+to the vanished card; the #29 watchdog stopped it 180 s later (exit code 3) and the server surfaced it with the
+new #827-style detail. Full evidence, the recovery (force power-off restored 16 GT/s x4 with 0 errors, no
+hardware changed) and the working hypotheses: [notes/hardware-failure.md](../hardware-failure.md) 20261116. The
+completed ladder points above are unaffected; b65-r3 re-ran clean after the recovery.
+
+## Method notes
+
+- The `ab65`/`glm65` harness scripts are the ab64/glm64 scripts with arm names `a64`/`b65` and the two image
+  tags swapped - when deriving them with `sed`, do the two image-tag substitutions via a placeholder (chained
+  1.1.61->1.1.64->1.1.65 substitutions silently map BOTH arms to the new tag; the shell guard caught it before
+  any point ran).
+- b65-r3 ran with ~250 MiB more desktop usage on the monitor card (a viewer was open); the engine adapted its
+  pools (floors 109/255 MiB) and measured normally - the asymmetric-reserve design absorbing a shifter desktop,
+  not a regression.
+- After a llama-swap `-watch-config` reload, lanes are NOT restarted proactively - the first request through
+  each lane key starts the new image (all three lanes cold-started on 1.1.65 during the gates above; that IS
+  the deployment).
