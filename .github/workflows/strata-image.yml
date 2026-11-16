@@ -11,15 +11,20 @@ name: strata-image
 #      engine is byte-identical to what upstream puts in its own images;
 #   2. builds the image with upstream's docker/build.sh from the same tag, and smoke-tests it in-image.
 #
-# The result is exactly what an upstream 0.2.14.1-rocm-gfx110x build assembles: the released package, the Terminal
-# from the same tag, nothing added and no source patch. (v0.2.11 needed one build-context patch — upstream fix
-# 5d37280d, which makes docker/build.sh stage the metal/tools/ sources its own package_terminal.py copies;
-# v0.2.12 contains it. 0.2.14's docker/ then changed on its own: the image no longer carries llama.cpp — the
-# Terminal vendors gguf-py (third_party/strata-gguf-py) and the Dockerfile's seed stage is gone. Until 2026-11-04
-# the workflow also compiled a gfx110x `strata-dsv41` DeepSeek engine into the image with the TheRock ROCm wheels;
-# the DeepSeek lane moved to Project Maya that day (notes/maya.md 20261104) and the build was removed — the record:
-# notes/strata.md 20261104; 0.2.14 removed the dsv41 engine sources from upstream's repo.) The Dockerfile's verify
-# stage re-checks the package (every listed file, binary_deps on every ELF, ldd in the image).
+# The result is what an upstream 0.2.14.1-rocm-gfx110x build assembles: the released package, the Terminal
+# from the same tag, no source patch. One deviation: upstream's docker/build.sh forgets to stage
+# third_party/strata-gguf-py (the folder package_terminal.py's INSTALLER_THIRD_PARTY puts into the Terminal
+# bundle), so the build step pre-stages it into an explicit --ctx context — upstream's own tracked tree, staged
+# byte for byte, nothing else added. (History: v0.2.11 needed one build-context patch — upstream fix 5d37280d,
+# which makes docker/build.sh stage the metal/tools/ sources its own package_terminal.py copies; v0.2.12 contains
+# it. 0.2.14's docker/ then changed on its own: the image no longer carries llama.cpp — the Terminal vendors
+# gguf-py (third_party/strata-gguf-py) and the Dockerfile's seed stage is gone, but the same release left the
+# folder out of build.sh's staging list (see the build step; unfixed on upstream main as of 3af562d541ec).
+# Until 2026-11-04 the workflow also compiled a gfx110x `strata-dsv41` DeepSeek engine into the image with the
+# TheRock ROCm wheels; the DeepSeek lane moved to Project Maya that day (notes/maya.md 20261104) and the build was
+# removed — the record: notes/strata.md 20261104; 0.2.14 removed the dsv41 engine sources from upstream's repo.)
+# The Dockerfile's verify stage re-checks the package (every listed file, binary_deps on every ELF, ldd in the
+# image).
 #
 # The upstream versions are PINNED in `env:` below, not workflow inputs: the image is bound to one Strata source tag
 # and one released engine package. The package gate is written against exactly that combination, so moving any of
@@ -46,7 +51,8 @@ env:
   # Control 0.1.60.1: the Mac drafting-Off download fix, an offline-drafter explanation, progress-word fixes); the
   # engines stay 0.1.60. Its docker/ drops the llama.cpp seed link from the entrypoint and the Dockerfile's seed
   # stage (the Terminal vendors gguf-py at third_party/strata-gguf-py; the preparation tools fetch nothing), so
-  # this tag needs no source patch either.
+  # this tag needs no source patch — but its build.sh also forgot to stage the vendored folder into the build
+  # context, so the build step pre-stages it (see the build step; drop it when upstream fixes the paths list).
   STRATA_REF: v0.2.14.1
   # The RELEASE that carries the signed feed and the Qwen engine packages — v0.2.14.1 has no release object, so the
   # feed is fetched from v0.2.14 (whose assets carry both Control 0.1.60 and 0.1.60.1; the pairing of Terminal
@@ -172,8 +178,19 @@ jobs:
       - name: Build the image from the engine package (nothing else is compiled)
         run: |
           set -euo pipefail
+          # Upstream 0.2.14.1's docker/build.sh does not stage third_party/strata-gguf-py into the build
+          # context (package_terminal.py's INSTALLER_THIRD_PARTY copies it into the Terminal bundle; the
+          # paths= list was not updated when the folder replaced the llama.cpp seed — still unfixed on
+          # upstream main at 3af562d541ec, first seen as our CI run 43801311873). Until upstream fixes the
+          # list (expected with the 0.2.15 docker/), pre-stage the folder into an explicit --ctx context:
+          # build.sh merges its own staging into it, and the Dockerfile's COPY terminal-src/ /src/ carries
+          # it into the terminal stage. The folder is upstream's own tracked tree, staged byte for byte.
+          ctx="$(mktemp -d /tmp/strata-ctx.XXXXXX)"
+          mkdir -p "$ctx/terminal-src/third_party"
+          cp -a strata/third_party/strata-gguf-py "$ctx/terminal-src/third_party/"
           strata/docker/build.sh --flavor hip --engine "$PKG_DIR" --repo strata \
-            --version "$IMAGE_VERSION" --tag "$IMAGE:$IMAGE_TAG"
+            --version "$IMAGE_VERSION" --tag "$IMAGE:$IMAGE_TAG" --ctx "$ctx"
+          rm -rf "$ctx"
           docker image inspect "$IMAGE:$IMAGE_TAG" --format 'built {{.RepoTags}} {{.Size}} bytes'
 
       - name: In-image smoke test (Terminal, component inventory)

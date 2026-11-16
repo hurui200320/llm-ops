@@ -483,6 +483,15 @@ exactly upstream's own shipped 0.2.14.1 pairing. (`v0.2.13.1` was a Control-only
     `hipblaslt_version 100200` — TheRock `7.10.0a20251120` default unchanged, the gate re-checks it at build). The
     in-image `serve/test_tool_format.py` fixture gap persists (`tools/qwen4_intake_fixtures/` is still not copied
     into the image; the same 7 in-image errors as 0.2.13, runtime unaffected).
+  - **Upstream build.sh bug, first CI run failed (run `43801311873`)**: v0.2.14.1's `docker/build.sh` stages the
+    context from a fixed `paths=` list that was not updated when `package_terminal.py` gained
+    `INSTALLER_THIRD_PARTY = ("third_party/strata-gguf-py",)` — the terminal stage died at
+    `FileNotFoundError: /src/third_party/strata-gguf-py`. Still unfixed on upstream main (`3af562d541ec`); upstream
+    builds no Docker images since 0.2.3, so their own packaging never runs this path. Fix in our workflow: the
+    build step pre-stages the folder into an explicit `--ctx` context (verified locally with `--ctx-only` against a
+    fake package: `build.sh` merges its staging into an existing context and the Dockerfile's
+    `COPY terminal-src/ /src/` carries the folder in). No upstream file is patched; the folder is upstream's own
+    tracked tree. Drop the pre-stage when upstream's `paths=` list carries the folder (expected 0.2.15).
   - **Watch item**: upstream reports "the graphics driver paused the GPU for N ms" on R9700 (gfx1201) Linux with the
     0.1.60 engine; gfx1100 is not named, but grep the lane logs once after cutover.
 - **Pins (0.2.14.1)**: image `ghcr.io/hurui200320/llm-ops-strata:0.2.14.1-rocm-gfx110x` (digest pending the CI
@@ -491,6 +500,7 @@ exactly upstream's own shipped 0.2.14.1 pairing. (`v0.2.13.1` was a Control-only
   `strata-engine-0.1.60-linux-x86_64-hip-rx7900` (322,924,154 B per the release table; asset sha256, manifest
   sha256, `BUILD.json` source and file count to be recorded from the build). hipBLASLt table expected unchanged
   (`1bb8cd2e…`, version `100200`).
-- **Rollout (2026-11-16)**: pending — CI build and smoke first, then the fedora-tuf cutover (git pull, watchconfig
+- **Rollout (2026-11-16)**: pending — first CI run failed on the upstream build.sh staging gap (above), fix
+  applied; re-run builds and smokes next, then the fedora-tuf cutover (git pull, watchconfig
   reload, one setup pass per lane `0.1.59 → 0.1.60`, dangling-seed-symlink cleanup, 6/6 llama-swap smokes, in-image
   suites, placement figures, longctx spot vs the 0.2.13 control).
