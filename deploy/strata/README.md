@@ -1,20 +1,22 @@
 # Strata (AMD / HIP) deployment
 
-The Strata image the lanes run is **our own build**, `ghcr.io/hurui200320/llm-ops-strata:0.2.14.1-rocm-gfx110x`,
+The Strata image the lanes run is **our own build**, `ghcr.io/hurui200320/llm-ops-strata:0.2.15-rocm-gfx110x`,
 made by [`.github/workflows/strata-image.yml`](../../.github/workflows/strata-image.yml). It carries upstream's
-Terminal 0.2.14.1 (serve + the GGUF preparation tools and the `strata` CLI), upstream's signed-feed 0.1.60 Qwen engine
+Terminal 0.2.15 (serve + the GGUF preparation tools and the `strata` CLI), upstream's signed-feed 0.1.60 Qwen engine
 package, both picture readers (CPU and GPU), and the ROCm runtime for the whole RDNA 3
 dGPU family (gfx1100 = RX 7900 XTX/XT, gfx1101 = RX 7800/7700 XT, gfx1102 = RX 7600) — byte for byte what
 upstream's own `docker/build.sh` assembles from the same tag; nothing is added. The host needs only the `amdgpu`
 kernel driver: no ROCm, no compiler.
 
-Since 0.2.14 (engine 0.1.60) the prompt experts run on **Strata's own fused prompt kernels** — upstream's release
+Since 0.2.14 (engine 0.1.60) the prompt experts run on **Strata's own fused prompt kernels** — the 0.2.14 release
 dropped llama.cpp's MMQ kernels from the engine build (`-DSTRATA_MMQ=ON` is a source-build switch only, so there is
 no runtime rollback; the previous image tag is the rollback). Upstream measured prompt gains on other cards (R9700
-Linux IQ3_S: 256 tok 255 vs 396 t/s) and did **not** run gfx1100 on hardware this release; answers can differ from
+Linux IQ3_S: 256 tok 255 vs 396 t/s) and did **not** run gfx1100 on hardware for that release; answers can differ from
 0.2.13 in some words. The layer split also trims each card's dense weights **by default** now (#4522 — the lanes
 already passed `trim-stage-weights=on`, so only the new draft-head room on the last card, #4549, and the corrected
-pricing move the placement), and long prompts are cut into equal ≥5,400/6,144-token pieces.
+pricing move the placement), and long prompts are cut into equal ≥5,400/6,144-token pieces. 0.2.15 keeps these
+engine files byte for byte; its changes are serve/Terminal-side (`#5979` boolean tool arguments, `#6055` stop
+drain, drafting-word persistence — see "Pins").
 
 We build our own image because upstream publishes no Docker images. See "Building the image" and the pins below;
 historical context and upgrade records are in [notes/strata.md](../../notes/strata.md). (Until 2026-11-04 the image
@@ -24,11 +26,12 @@ also carried our gfx110x `strata-dsv41` DeepSeek engine; the DeepSeek lane moved
 
 ## Pins
 
-Current image: `ghcr.io/hurui200320/llm-ops-strata:0.2.14.1-rocm-gfx110x` (Terminal `v0.2.14.1`, engine
-`0.1.60` rx7900; the Terminal tag has no release object of its own — the signed feed and the 0.1.60 packages ship
-in the `v0.2.14` release, which is what the workflow's `ENGINE_RELEASE` points at, exactly upstream's own
-0.2.14.1 pairing). Digests, package hashes, and verification records are in
-[notes/strata.md](../../notes/strata.md); the workflow `env:` block pins the build inputs.
+Current image: `ghcr.io/hurui200320/llm-ops-strata:0.2.15-rocm-gfx110x` (Terminal `v0.2.15` / Control `0.1.61`,
+engine `0.1.60` rx7900; the 0.2.15 feed — sequence 127 — carries the 0.1.60 packages by absolute URL into the
+`v0.2.14` release, which is what the workflow's `ENGINE_RELEASE` resolves them through; the engine files are
+byte-identical to the 0.2.14.1 pairing, exactly upstream's own shipped 0.2.15 update). Digests, package hashes, and
+verification records are in [notes/strata.md](../../notes/strata.md); the workflow `env:` block pins the build
+inputs.
 
 - **Engine folder**: `/opt/strata/components/engine/0.1.60-linux-x86_64-hip-rx7900` (upstream names
   the folder without the `strata-engine-` prefix; reference the engine as `component:strata-engine`,
@@ -73,7 +76,7 @@ docker run -d --name strata-init --init --rm \
   -e VISION_TOKENS=8192 -e VISION_MIN_TOKENS=1024 \
   -e DRAFTING=mtp \
   -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1" \
-  ghcr.io/hurui200320/llm-ops-strata:0.2.14.1-rocm-gfx110x
+  ghcr.io/hurui200320/llm-ops-strata:0.2.15-rocm-gfx110x
 docker logs -f strata-init    # wait for one-time setup to finish, then stop the container
 ```
 
@@ -129,7 +132,7 @@ docker run -it --rm \
   --group-add "$(getent group video | cut -d: -f3)" \
   --group-add "$(getent group render | cut -d: -f3)" \
   -v /mnt/unenc-xfs/strata/ISTA-DASLab-Flash-Next:/data -v /mnt/unenc-xfs/models:/models:z \
-  ghcr.io/hurui200320/llm-ops-strata:0.2.14.1-rocm-gfx110x sh
+  ghcr.io/hurui200320/llm-ops-strata:0.2.15-rocm-gfx110x sh
 ```
 
 Any command replaces the server start (`docker run … image strata launch --help`, `… image sh`).
@@ -154,17 +157,21 @@ compiler in the image: engine updates are new packages, or a local package built
 ## Building the image
 
 Run **Actions → strata-image → Run workflow**. [`.github/workflows/strata-image.yml`](../../.github/workflows/strata-image.yml)
-is the source of truth: its header says why the image exists and what it changes against an upstream one (nothing
-since v0.2.12: that tag contains the `metal/tools` build-context fix v0.2.11 needed as an after-tag patch, and
-0.2.14's `docker/` change — the llama.cpp seed stage out, the vendored gguf-py in — is upstream's own), its `env:`
-block pins the Strata tag, the engine release and the
-hipBLASLt table, and its steps are the build and its gates (signed fetch, package checks, the in-image smoke
-tests). The one switch: `push` (off builds and smoke-tests without publishing). The run summary carries the
-digests, which are recorded in [notes/strata.md](../../notes/strata.md).
+is the source of truth: its header says why the image exists and what it changes against an upstream one (no source
+patch since v0.2.12 — that tag contains the `metal/tools` build-context fix v0.2.11 needed as an after-tag patch,
+and 0.2.14's `docker/` change, the llama.cpp seed stage out and the vendored gguf-py in, is upstream's own; the one
+deviation since 0.2.14 is the build step pre-staging `third_party/strata-gguf-py` into the build context, which
+upstream's `build.sh` still forgets to stage — see the workflow), its `env:` block pins the Strata tag, the engine
+release and the hipBLASLt table, and its steps are the build and its gates (signed fetch, package checks, the
+in-image smoke tests). The one switch: `push` (off builds and smoke-tests without publishing). The run summary
+carries the digests, which are recorded in [notes/strata.md](../../notes/strata.md).
 
 **No source patch.** The workflow builds upstream's own assembly: `docker/build.sh` stages the Terminal's
-`metal/tools` scripts itself (upstream `5d37280d`, in since v0.2.12), and v0.2.14.1's docker/ needs nothing local —
-the Terminal sources pair with the `v0.2.14` release's signed-feed package as upstream's own 0.2.14.1 update does.
+`metal/tools` scripts itself (upstream `5d37280d`, in since v0.2.12), and v0.2.15's docker/ is byte-identical to
+v0.2.14.1's (entrypoint sha `1e6e0290…`) — the entrypoint fork carries over untouched. The only build-input fix-up
+is the pre-staged vendored gguf-py folder (upstream's own tracked tree, see above). The Terminal sources pair with
+the sequence-127 signed feed as upstream's own 0.2.15 update does; the feed carries the engine packages from the
+`v0.2.14` release by absolute URL.
 
 A local build is those same steps run by hand (Docker + network, no GPU): run upstream's
 `docker/fetch-engines.py` and `docker/build.sh`.
@@ -172,11 +179,14 @@ A local build is those same steps run by hand (Docker + network, no GPU): run up
 A plain upstream image (what the workflow produces) builds with:
 
 ```sh
-git -C <strata-checkout> worktree add /tmp/strata-v0.2.14.1 v0.2.14.1
+git -C <strata-checkout> worktree add /tmp/strata-v0.2.15 v0.2.15
 tar -xzf strata-engine-0.1.60-linux-x86_64-hip-rx7900.tar.gz -C <empty-dir>
-/tmp/strata-v0.2.14.1/docker/build.sh --flavor hip \
-  --engine <empty-dir> --repo /tmp/strata-v0.2.14.1 \
-  --version 0.2.14.1 --tag strata:0.2.14.1-rocm-gfx110x-local
+# build.sh's paths= list still misses the vendored gguf-py folder — pre-stage it, as the workflow does:
+ctx="$(mktemp -d)" && mkdir -p "$ctx/terminal-src/third_party" \
+  && cp -a /tmp/strata-v0.2.15/third_party/strata-gguf-py "$ctx/terminal-src/third_party/"
+/tmp/strata-v0.2.15/docker/build.sh --flavor hip \
+  --engine <empty-dir> --repo /tmp/strata-v0.2.15 \
+  --version 0.2.15 --tag strata:0.2.15-rocm-gfx110x-local --ctx "$ctx"
 ```
 
 Needs network (base image + the terminal's pinned CPython 3.12 and hash-locked wheels). `--ctx-only` keeps the

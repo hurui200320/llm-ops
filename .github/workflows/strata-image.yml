@@ -11,7 +11,7 @@ name: strata-image
 #      engine is byte-identical to what upstream puts in its own images;
 #   2. builds the image with upstream's docker/build.sh from the same tag, and smoke-tests it in-image.
 #
-# The result is what an upstream 0.2.14.1-rocm-gfx110x build assembles: the released package, the Terminal
+# The result is what an upstream 0.2.15-rocm-gfx110x build assembles: the released package, the Terminal
 # from the same tag, no source patch. One deviation: upstream's docker/build.sh forgets to stage
 # third_party/strata-gguf-py (the folder package_terminal.py's INSTALLER_THIRD_PARTY puts into the Terminal
 # bundle), so the build step pre-stages it into an explicit --ctx context — upstream's own tracked tree, staged
@@ -19,7 +19,8 @@ name: strata-image
 # which makes docker/build.sh stage the metal/tools/ sources its own package_terminal.py copies; v0.2.12 contains
 # it. 0.2.14's docker/ then changed on its own: the image no longer carries llama.cpp — the Terminal vendors
 # gguf-py (third_party/strata-gguf-py) and the Dockerfile's seed stage is gone, but the same release left the
-# folder out of build.sh's staging list (see the build step; unfixed on upstream main as of 3af562d541ec).
+# folder out of build.sh's staging list (see the build step; still unfixed on v0.2.15, first seen as our CI run
+# 43801311873).
 # Until 2026-11-04 the workflow also compiled a gfx110x `strata-dsv41` DeepSeek engine into the image with the
 # TheRock ROCm wheels; the DeepSeek lane moved to Project Maya that day (notes/maya.md 20261104) and the build was
 # removed — the record: notes/strata.md 20261104; 0.2.14 removed the dsv41 engine sources from upstream's repo.)
@@ -47,29 +48,28 @@ on:
 env:
   IMAGE: ghcr.io/hurui200320/llm-ops-strata
   STRATA_REPO: Niko1221/Strata
-  # Terminal sources and the Dockerfile. v0.2.14.1 is the Control-only follow-up to v0.2.14 (Terminal 0.2.14.1 /
-  # Control 0.1.60.1: the Mac drafting-Off download fix, an offline-drafter explanation, progress-word fixes); the
-  # engines stay 0.1.60. Its docker/ drops the llama.cpp seed link from the entrypoint and the Dockerfile's seed
-  # stage (the Terminal vendors gguf-py at third_party/strata-gguf-py; the preparation tools fetch nothing), so
-  # this tag needs no source patch — but its build.sh also forgot to stage the vendored folder into the build
-  # context, so the build step pre-stages it (see the build step; drop it when upstream fixes the paths list).
-  STRATA_REF: v0.2.14.1
-  # The RELEASE that carries the signed feed and the Qwen engine packages — v0.2.14.1 has no release object, so the
-  # feed is fetched from v0.2.14 (whose assets carry both Control 0.1.60 and 0.1.60.1; the pairing of Terminal
-  # 0.2.14.1 sources with the 0.1.60 package is exactly upstream's shipped 0.2.14.1 update). v0.2.14 rebuilds EVERY
-  # engine package at 0.1.60: the rx7900 engine folder changes 0.1.59 -> 0.1.60 and every lane re-runs setup once.
-  # The headline: the prompt experts run on Strata's own fused kernels — llama.cpp's MMQ kernels are no longer
-  # built in (-DSTRATA_MMQ=ON is a source-build switch only, so there is no runtime rollback; the previous image
-  # tag is the rollback). Upstream measured prompt gains on other cards (R9700 Linux IQ3_S: 256 tok 255 vs 396 t/s)
-  # and did NOT run gfx1100 on hardware this release, so the in-image smoke and the lanes' longctx spot carry more
-  # weight than usual; answers can differ from 0.2.13 in some words (upstream's KL checks stayed fine). Also in:
-  # the layer-split dense-weight trim is now the default (#4522; the lanes already pass trim-stage-weights=on) and
-  # the last card keeps the drafter's head room (#4549), long prompts are cut into equal >=5,400/6,144-token pieces,
-  # setup fetches the drafter the start will use and Off stays Off (0.2.14.1), and the vision GPU tower holds BF16
-  # as F16 (reader retries bounded 18 s / 12). DFlash2's default changes are Strix Halo / Blackwell >= 48 GB only;
-  # gfx1100 is unchanged and the lanes stay on MTP. No HIP toolchain change: the gate below re-checks hipBLASLt
-  # 100200 + the tuning table. The package is re-verified against the feed below (signature, manifest hash).
-  ENGINE_RELEASE: v0.2.14
+  # Terminal sources and the Dockerfile. v0.2.15 is an app/Terminal round (Terminal 0.2.15 / Control 0.1.61: a
+  # chosen drafter stays chosen across a restart with no Drafting word, serve #5979 makes a declared boolean tool
+  # argument written True / False the boolean, serve #6055 makes a stop without --shutdown-timeout begin the drain
+  # and refuse new requests with 503 server_draining instead of accepting and cutting them off, #5601 reads an
+  # empty state file as not there yet); the engines stay 0.1.60, so no lane re-runs setup. Its docker/ is
+  # byte-identical to v0.2.14.1's (entrypoint sha 1e6e0290…), so the entrypoint fork carries over untouched — but
+  # its build.sh still forgets to stage the vendored gguf-py folder into the build context (see the build step;
+  # drop the pre-stage when upstream's paths list carries it, expected 0.2.16).
+  STRATA_REF: v0.2.15
+  # The RELEASE that carries the signed feed and the Qwen engine packages. 0.2.15's feed (sequence 127) lists the
+  # engine packages with absolute URLs into the v0.2.14 release: the 0.1.60 rx7900 files are byte-identical to the
+  # ones the lanes already run (manifest sha256 09cb87e8…), and the pairing — Terminal 0.2.15 sources with the
+  # sequence-127 feed — is exactly upstream's own shipped 0.2.15 update. The feed's Ed25519 signature and the
+  # package (size, SHA-256, manifest hash, every file) are verified below. Engine folder name unchanged, so the
+  # lanes keep their install records, packs and MTP are reused, and no lane re-runs setup. The headline is
+  # serve/Terminal-only: #5979 (a declared boolean tool argument written True / False is the boolean — a
+  # tool-calling fix), #6055 (a stop without --shutdown-timeout drains and refuses new requests with 503
+  # server_draining instead of accepting and cutting them off), #5601 (an empty state file is not there yet), and
+  # the drafting-word persistence (a chosen drafter stays chosen; DFlash2 no longer stands in for a chosen MTP —
+  # the lanes pass --drafting mtp explicitly, so inert here). No new settings and no HIP toolchain change: the
+  # gate below re-checks hipBLASLt 100200 + the tuning table.
+  ENGINE_RELEASE: v0.2.15
   # hipBLASLt version the package's gfx1100 tuning table must match (BUILD.json hipblaslt_version).
   HIPBLASLT_TABLE_VERSION: "100200"
 
@@ -178,13 +178,13 @@ jobs:
       - name: Build the image from the engine package (nothing else is compiled)
         run: |
           set -euo pipefail
-          # Upstream 0.2.14.1's docker/build.sh does not stage third_party/strata-gguf-py into the build
+          # Upstream v0.2.15's docker/build.sh does not stage third_party/strata-gguf-py into the build
           # context (package_terminal.py's INSTALLER_THIRD_PARTY copies it into the Terminal bundle; the
-          # paths= list was not updated when the folder replaced the llama.cpp seed — still unfixed on
-          # upstream main at 3af562d541ec, first seen as our CI run 43801311873). Until upstream fixes the
-          # list (expected with the 0.2.15 docker/), pre-stage the folder into an explicit --ctx context:
-          # build.sh merges its own staging into it, and the Dockerfile's COPY terminal-src/ /src/ carries
-          # it into the terminal stage. The folder is upstream's own tracked tree, staged byte for byte.
+          # paths= list was not updated when the folder replaced the llama.cpp seed — first seen as our
+          # CI run 43801311873, still unfixed on v0.2.15). Until upstream fixes the list (expected 0.2.16),
+          # pre-stage the folder into an explicit --ctx context: build.sh merges its own staging into it,
+          # and the Dockerfile's COPY terminal-src/ /src/ carries it into the terminal stage. The folder
+          # is upstream's own tracked tree, staged byte for byte.
           ctx="$(mktemp -d /tmp/strata-ctx.XXXXXX)"
           mkdir -p "$ctx/terminal-src/third_party"
           cp -a strata/third_party/strata-gguf-py "$ctx/terminal-src/third_party/"
