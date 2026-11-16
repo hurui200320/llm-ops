@@ -12,10 +12,14 @@ name: strata-image
 #   2. builds the image with upstream's docker/build.sh from the same tag, and smoke-tests it in-image.
 #
 # The result is what an upstream 0.2.15-rocm-gfx110x build assembles: the released package, the Terminal
-# from the same tag, no source patch. One deviation: upstream's docker/build.sh forgets to stage
-# third_party/strata-gguf-py (the folder package_terminal.py's INSTALLER_THIRD_PARTY puts into the Terminal
-# bundle), so the build step pre-stages it into an explicit --ctx context — upstream's own tracked tree, staged
-# byte for byte, nothing else added. (History: v0.2.11 needed one build-context patch — upstream fix 5d37280d,
+# from the same tag. Two deviations, both upstream bugs worked around locally:
+#   1. upstream's docker/build.sh forgets to stage third_party/strata-gguf-py (the folder package_terminal.py's
+#      INSTALLER_THIRD_PARTY puts into the Terminal bundle), so the build step pre-stages it into an explicit --ctx
+#      context — upstream's own tracked tree, staged byte for byte, nothing else added;
+#   2. 0.2.15's verify gate (packaging/binary_deps.py) removed libatomic.so.1 from the "OS base" list, but the
+#      0.1.60 rx7900 package needs it from the OS (see the patch step) — one carried patch:
+#      deploy/strata/patches/0.2.15-libatomic-verify.patch.
+# (History: v0.2.11 needed one build-context patch — upstream fix 5d37280d,
 # which makes docker/build.sh stage the metal/tools/ sources its own package_terminal.py copies; v0.2.12 contains
 # it. 0.2.14's docker/ then changed on its own: the image no longer carries llama.cpp — the Terminal vendors
 # gguf-py (third_party/strata-gguf-py) and the Dockerfile's seed stage is gone, but the same release left the
@@ -54,8 +58,10 @@ env:
   # and refuse new requests with 503 server_draining instead of accepting and cutting them off, #5601 reads an
   # empty state file as not there yet); the engines stay 0.1.60, so no lane re-runs setup. Its docker/ is
   # byte-identical to v0.2.14.1's (entrypoint sha 1e6e0290…), so the entrypoint fork carries over untouched — but
-  # its build.sh still forgets to stage the vendored gguf-py folder into the build context (see the build step;
-  # drop the pre-stage when upstream's paths list carries it, expected 0.2.16).
+  # its build.sh still forgets to stage the vendored gguf-py folder into the build context, and its verify gate
+  # refuses the 0.1.60 package on libatomic (both worked around locally: the pre-stage in the build step and the
+  # carried patch deploy/strata/patches/0.2.15-libatomic-verify.patch; drop both when upstream fixes them,
+  # expected 0.2.16).
   STRATA_REF: v0.2.15
   # The RELEASE that carries the signed feed and the Qwen engine packages. 0.2.15's feed (sequence 127) lists the
   # engine packages with absolute URLs into the v0.2.14 release: the 0.1.60 rx7900 files are byte-identical to the
@@ -174,6 +180,20 @@ jobs:
             echo "PKG_VERSION=$version"
             echo "ENGINE_MANIFEST_SHA=$(sha256sum "$PKG_DIR/engine-component.json" | cut -d' ' -f1)"
           } >> "$GITHUB_ENV"
+
+      - name: Apply the carried verify patch (libatomic OS list)
+        run: |
+          set -euo pipefail
+          # 0.2.15's verify gate (packaging/binary_deps.py) removed libatomic.so.1 from the "OS base" list,
+          # betting the engine packages bundle it. The 0.1.60 rx7900 package (the v0.2.14 files) does NOT
+          # bundle it yet: its librocm_sysdeps_numa.so.1 imports libatomic.so.1 and the package's own
+          # SYSTEM-LIBS.txt declares it as an OS requirement (first seen as our CI run 43844311473:
+          # "REFUSED: ... needs libatomic.so.1, which is neither bundled nor an OS / GPU driver library").
+          # The image runtime stage installs libatomic1 anyway (upstream's own Dockerfile), so the package
+          # is correct and only the static list is wrong for this engine generation. The patch re-adds
+          # libatomic.so.1 to LINUX_OS; verified to apply on v0.2.15. Drop the patch when upstream bundles
+          # libatomic in the engine package (expected 0.2.16).
+          git -C strata apply --verbose "$GITHUB_WORKSPACE/deploy/strata/patches/0.2.15-libatomic-verify.patch"
 
       - name: Build the image from the engine package (nothing else is compiled)
         run: |

@@ -159,19 +159,25 @@ compiler in the image: engine updates are new packages, or a local package built
 Run **Actions → strata-image → Run workflow**. [`.github/workflows/strata-image.yml`](../../.github/workflows/strata-image.yml)
 is the source of truth: its header says why the image exists and what it changes against an upstream one (no source
 patch since v0.2.12 — that tag contains the `metal/tools` build-context fix v0.2.11 needed as an after-tag patch,
-and 0.2.14's `docker/` change, the llama.cpp seed stage out and the vendored gguf-py in, is upstream's own; the one
-deviation since 0.2.14 is the build step pre-staging `third_party/strata-gguf-py` into the build context, which
-upstream's `build.sh` still forgets to stage — see the workflow), its `env:` block pins the Strata tag, the engine
+and 0.2.14's `docker/` change, the llama.cpp seed stage out and the vendored gguf-py in, is upstream's own; two
+deviations since 0.2.14: the build step pre-stages `third_party/strata-gguf-py` into the build context, which
+upstream's `build.sh` still forgets to stage, and a carried patch re-adds `libatomic.so.1` to the verify gate's OS
+list for the 0.1.60 engine generation — see the workflow), its `env:` block pins the Strata tag, the engine
 release and the hipBLASLt table, and its steps are the build and its gates (signed fetch, package checks, the
 in-image smoke tests). The one switch: `push` (off builds and smoke-tests without publishing). The run summary
 carries the digests, which are recorded in [notes/strata.md](../../notes/strata.md).
 
-**No source patch.** The workflow builds upstream's own assembly: `docker/build.sh` stages the Terminal's
-`metal/tools` scripts itself (upstream `5d37280d`, in since v0.2.12), and v0.2.15's docker/ is byte-identical to
-v0.2.14.1's (entrypoint sha `1e6e0290…`) — the entrypoint fork carries over untouched. The only build-input fix-up
-is the pre-staged vendored gguf-py folder (upstream's own tracked tree, see above). The Terminal sources pair with
-the sequence-127 signed feed as upstream's own 0.2.15 update does; the feed carries the engine packages from the
-`v0.2.14` release by absolute URL.
+**No source patch in the image; two carried fixes in the build.** The workflow builds upstream's own assembly:
+`docker/build.sh` stages the Terminal's `metal/tools` scripts itself (upstream `5d37280d`, in since v0.2.12), and
+v0.2.15's docker/ is byte-identical to v0.2.14.1's (entrypoint sha `1e6e0290…`) — the entrypoint fork carries over
+untouched. The two build-input fix-ups: the pre-staged vendored gguf-py folder (upstream's own tracked tree), and
+[deploy/strata/patches/0.2.15-libatomic-verify.patch](patches/0.2.15-libatomic-verify.patch), applied to the
+checked-out sources before the build: 0.2.15's verify gate removed `libatomic.so.1` from the "OS base" list while
+the 0.1.60 rx7900 package still needs it from the OS (its `SYSTEM-LIBS.txt` declares it; the image runtime stage
+installs `libatomic1`, upstream's own Dockerfile). Verify-only change, no effect on the served engine. Both fixes
+are dropped when upstream bundles libatomic in the engine package (expected 0.2.16). The Terminal sources pair
+with the sequence-127 signed feed as upstream's own 0.2.15 update does; the feed carries the engine packages from
+the `v0.2.14` release by absolute URL.
 
 A local build is those same steps run by hand (Docker + network, no GPU): run upstream's
 `docker/fetch-engines.py` and `docker/build.sh`.
@@ -181,7 +187,10 @@ A plain upstream image (what the workflow produces) builds with:
 ```sh
 git -C <strata-checkout> worktree add /tmp/strata-v0.2.15 v0.2.15
 tar -xzf strata-engine-0.1.60-linux-x86_64-hip-rx7900.tar.gz -C <empty-dir>
-# build.sh's paths= list still misses the vendored gguf-py folder — pre-stage it, as the workflow does:
+# Two upstream bugs to work around, as the workflow does:
+# build.sh's paths= list misses the vendored gguf-py folder -> pre-stage it into an explicit --ctx context;
+# the 0.2.15 verify gate refuses the 0.1.60 package on libatomic -> apply the carried patch:
+git -C /tmp/strata-v0.2.15 apply /mnt/unenc-xfs/llm-ops/deploy/strata/patches/0.2.15-libatomic-verify.patch
 ctx="$(mktemp -d)" && mkdir -p "$ctx/terminal-src/third_party" \
   && cp -a /tmp/strata-v0.2.15/third_party/strata-gguf-py "$ctx/terminal-src/third_party/"
 /tmp/strata-v0.2.15/docker/build.sh --flavor hip \
