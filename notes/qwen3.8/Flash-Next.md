@@ -526,3 +526,25 @@ on hardware this release and re-measured only the DFlash2 defaults on other card
 
 Records: `bench/results/longctx/qwen3.8-flash-next-iq3s-20261110-010029.json` and `.log` (runner). Upgrade,
 pins, rollout and placement: [../strata.md](../strata.md) 20261110.
+
+# 20261116 Strata 0.2.14.1 (engine 0.1.60) longctx spot — prompts +20-24%, decode neutral
+
+Same box, same arm (MTP, `--spec 4`, `spec-min-p 0.7`, `pipeline-windows 2`), vanilla lane, fixed template, layer
+split 26. Same protocol as the 0.2.13 control: `run_longctx.py --ctx 262144 --out-pct 10 --in-pcts 60,85 --reps 2`,
+cold prefill every rep (`cache_prompt: false`, `cache 0` verified):
+
+| Run | 60% pp / tg | 85% pp / tg | acceptance |
+| --- | --- | --- | --- |
+| 0.2.14.1 (2026-11-16) | 2529.2 / 66.65 | 2710.0 / 65.55 | 0.676 / 0.680 |
+| 0.2.13 control (2026-11-10) | 2100.9 / 66.85 | 2185.9 / 64.90 | 0.682 / 0.684 |
+
+**Prompt speed +20.4% (60%) and +24.0% (85%)** — the first big prefill win on this box since the hipBLASLt table,
+from 0.2.14's own fused prompt expert kernels (llama.cpp's MMQ kernels are gone from the engine build, no runtime
+rollback) plus the equal-chunk prompt cutting (pieces of ≥5,400/6,144 tokens instead of full pieces plus a short
+rest). Decode is neutral (−0.3% at 60%, +1.0% at 85%, inside the box's run-to-run spread); draft acceptance
+0.676/0.680 vs 0.682/0.684 — a touch lower, within spread. Placement vs 0.2.13: 15,862 VRAM expert slots (+176;
+the #4549 drafter-head room cost CUDA1 118, the #4522 trim credit added CUDA0 294), RAM copy 22.0 GiB (−1.75),
+lend 2,816 all RAM-backed — the full rollout record is [../strata.md](../strata.md) 20261116.
+
+Records: `bench/results/longctx/qwen3.8-flash-next-iq3s-20261116-142510.json` and `.log` (runner). Upgrade,
+pins, rollout and verification: [../strata.md](../strata.md) 20261116.

@@ -494,13 +494,60 @@ exactly upstream's own shipped 0.2.14.1 pairing. (`v0.2.13.1` was a Control-only
     tracked tree. Drop the pre-stage when upstream's `paths=` list carries the folder (expected 0.2.15).
   - **Watch item**: upstream reports "the graphics driver paused the GPU for N ms" on R9700 (gfx1201) Linux with the
     0.1.60 engine; gfx1100 is not named, but grep the lane logs once after cutover.
-- **Pins (0.2.14.1)**: image `ghcr.io/hurui200320/llm-ops-strata:0.2.14.1-rocm-gfx110x` (digest pending the CI
-  run); Terminal tag `v0.2.14.1`, commit `3af562d541ec76c8da63d568248a919c8a54906b` (Control `0.1.60.1`, app
-  `0.2.14`; the v0.2.14 sources commit is `09b603886925994d0d4461857b01321ef3aa431c`);
-  `strata-engine-0.1.60-linux-x86_64-hip-rx7900` (322,924,154 B per the release table; asset sha256, manifest
-  sha256, `BUILD.json` source and file count to be recorded from the build). hipBLASLt table expected unchanged
-  (`1bb8cd2e…`, version `100200`).
-- **Rollout (2026-11-16)**: pending — first CI run failed on the upstream build.sh staging gap (above), fix
-  applied; re-run builds and smokes next, then the fedora-tuf cutover (git pull, watchconfig
-  reload, one setup pass per lane `0.1.59 → 0.1.60`, dangling-seed-symlink cleanup, 6/6 llama-swap smokes, in-image
-  suites, placement figures, longctx spot vs the 0.2.13 control).
+- **Pins (0.2.14.1)**: image `ghcr.io/hurui200320/llm-ops-strata:0.2.14.1-rocm-gfx110x`, digest
+  `sha256:791b04211ffbd256a0bd46c666516860ae4bdbc82fe14d75db7a87a68eb6900d` (1,811,989,575 B in CI, run
+  `43802234345`, job `133084946753`); Terminal tag `v0.2.14.1`, commit `3af562d541ec76c8da63d568248a919c8a54906b`
+  (Control `0.1.60.1`, app `0.2.14`; the v0.2.14 sources commit is `09b603886925994d0d4461857b01321ef3aa431c`);
+  `strata-engine-0.1.60-linux-x86_64-hip-rx7900` (322,924,154 B per the release table, 583 files, manifest sha256
+  `09cb87e82240c40099ade15e6c8ec34ba23029fb1eeeab8c607bfd2ee787568b`, `BUILD.json` source `f-p4-rc 00157e14b534`
+  — this package's BUILD.json carries no separate build_id); hipBLASLt table bytes unchanged
+  (`1bb8cd2e232ce1dec5dc0f303e5bd3b32abd9444330a4428a995ad4db8fb97be`, 845 B, version `100200`). In-image smoke:
+  `strata --version` OK, `components engine --backend hip --full` exit 0 with inventory `0.1.60
+  linux-x86_64-hip`.
+- **Rollout (2026-11-16, fedora-tuf)**: image pre-pulled (digest matches the CI push byte for byte); the old
+  `/data/install/third_party/llama.cpp` seed symlinks removed from both lane trees (dangling in the new image,
+  nothing reads them); `git pull` to `df3bd10` — llama-swap's watchconfig picked up the `0.2.14.1-rocm-gfx110x`
+  tags. Both lanes ran one setup pass (`0.1.59 → 0.1.60`, install record remade because the run config named the
+  old engine folder's `strata-vision-hip`; packs and MTP reused, no download). Vanilla first request 200 in 46.4 s
+  (setup+load; 0.2.13: 44 s), graceful stop 1.6 s, warm reload 200 in 55.2 s with
+  `Vision budget: strata-iq3_s.json: max_tokens=8192, min_tokens=1024` applied; SC117 first request 200 in 48.9 s.
+- **Placement (serving start, vision 8192 applied)**: vanilla **8,253 (14.97 GiB) + 7,609 (15.25 GiB) = 15,862
+  slots** — 0.2.13: 7,959 + 7,727 = 15,686 (+176 net: CUDA0 gained 294 from the #4522 trim credit to card 0,
+  CUDA1 gave up 118 to the #4549 drafter-head room and the corrected later-stage pricing); RAM copy **22.0 GiB**
+  (0.2.13: 23.75); lend **2,816 slots, all RAM-backed** (0.2.13: 3,582; no streamed-slot warning). New log lines:
+  `CUDA0 keeps only its own layers' dense weights (1.85 GiB in all): CUDA0 0-25 (55 MiB freed)` (#4522),
+  `1536 MiB reserved (+0 MiB for the draft head, +256 MiB for what is allocated after the cache)` (#4549), and an
+  informational `--pipeline-windows 2 … (STRATA_MTP_STAGE0=1 asks for it) … kept as asked`. The explicit
+  `--layer-split 26` is honored (split 26, 0-25/26-47); `adaptive overlap: off: not on a layer split` (as before).
+  `prefill gemm: hipBLASLt tuning enabled (26 rows, gfx1100, version 100200)` throughout serving on both lanes —
+  the `version mismatch: file=100500` lines visible in `docker.engine.log` are from the tree's October 0.2.0-beta
+  first starts (engine 0.1.45.3 was built against hipBLASLt 1.5.0), not from 0.1.60. Zero
+  `the graphics driver paused the GPU` lines on either lane.
+- **Verification (2026-11-16)**: both lanes pass chat with the reasoning split, a declared tool call
+  (`get_weather {"city":"Paris"}`), the multi-turn tool result, vision (`Red` on the 1×1 red PNG), and the `:npt`
+  alias (reasoning still split into `reasoning_content`; `preserve_thinking` honoured); `/props` on both lanes:
+  `n_ctx 262144`, `chat_template_caps` all true (tools, tool_calls, system, parallel, preserve_reasoning),
+  `modalities.vision true`, `build_info Strata 0.1.60`, and the serving chat template is the repo's
+  `-fixed.jinja` (its header comment rides along). In-image suites (throwaway container, source fixtures mounted
+  at `tools/qwen4_intake_fixtures`): `serve.test_serve_robustness` + `test_tool_corpus` + `test_tool_format` (12/12
+  with the fixtures) + the tool-name/envelope family — **80/80 OK**; `OpenAIChunksTerminal` +
+  `test_request_accounting` + `test_yield_accounting` — **28/28 OK**. The packaging fixture gap noted for 0.2.13
+  persists (the image still lacks `tools/qwen4_intake_fixtures/`; runtime serving does not read them).
+- **Longctx spot (60%/85% of 262144, reps 2, cold prefill per rep)**: recorded in
+  [qwen3.8/Flash-Next.md](qwen3.8/Flash-Next.md) 20261116.
+- **TODO review (2026-11-16, all three strata items closed here, removed from
+  [TODO.md](TODO.md))**:
+  - **`STRATA_PF_P1A` — dropped.** Two reasons: (1) impossible on this box — `p1a_wanted()` and the
+    launch path in `src/prefill/moe_fused_iq.cu` hard-require `dev_info().g1151`, so the env is
+    silently inert on gfx1100 (the device code being compiled into the HIP build does not matter);
+    (2) it changes the computation (Q4_K gate/up + Q5_1 down on F16 matrix cores with F16
+    activations, F16 H and FP16 down rows — answers can differ), and the current output is the
+    accepted one; the possible prompt gain is optional, not a must, and upstream never measured P1A
+    on gfx1100 or on IQ3_S.
+  - **`"draft_costs": true` — dropped.** No lane-reachable path: no environment variable and no
+    launch flag carry it (the serve-config key is written by the app's settings, and `strata launch`
+    rewrites the run config from the preset at every start, so a hand edit does not survive) —
+    setting it would need a new entrypoint-fork change (the fork's change 4 pattern). Upstream
+    measured the fixed table at −1.5% code/chat against live costs on CUDA (HIP untested) and made
+    it Metal-only by default. Answer repeatability across starts is not a requirement here; the
+    current output stands.
