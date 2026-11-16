@@ -1,15 +1,18 @@
 #!/bin/sh
 # Fork of upstream's /opt/strata/entrypoint.sh for the llm-ops llama-swap lane.
 #
-# Changes from upstream v0.2.13 (image
-# ghcr.io/hurui200320/llm-ops-strata:0.2.13-rocm-gfx110x, terminal 0.2.13 / engine
-# 0.1.59; sha256
-# 0c660798a51cedb2352847cc91c8c90c59aaec22ca4294a13456c00fb6a6e9b1, still byte-identical to
-# the v0.2.12 entrypoint — itself the v0.2.11 one, which was the 0.2.10 one, itself the 0.2.9
-# one (sha256 10fe9c4f…) plus upstream's `--retune` line (#4779) and one comment; that 0.2.9
-# entrypoint was byte-identical to v0.2.8's, which was byte-identical to v0.2.7's
-# (which added only legacy_models_guard (#3421) to the v0.2.6 entrypoint, sha256
-# 7c74cfd3…)). The fork carries those upstream lines unchanged:
+# Changes from upstream v0.2.14.1 (image
+# ghcr.io/hurui200320/llm-ops-strata:0.2.14.1-rocm-gfx110x, terminal 0.2.14.1 / engine
+# 0.1.60; sha256
+# 1e6e0290fe5ca14617b15953aa138e76d3fe9448dfb86df42dc46e42ecd2137a, which drops the
+# llama.cpp seed link (the image no longer carries llama.cpp: the Terminal vendors gguf-py
+# at third_party/strata-gguf-py and the preparation tools fetch nothing) and drops the
+# DeepSeek note from the PARALLEL comment. The v0.2.13 entrypoint before it was
+# byte-identical to the v0.2.12 one — itself the v0.2.11 one, which was the 0.2.10 one,
+# itself the 0.2.9 one (sha256 10fe9c4f…) plus upstream's `--retune` line (#4779) and one
+# comment; that 0.2.9 entrypoint was byte-identical to v0.2.8's, which was byte-identical
+# to v0.2.7's (which added only legacy_models_guard (#3421) to the v0.2.6 entrypoint,
+# sha256 7c74cfd3…)). The fork carries those upstream lines unchanged:
 #   1. When no API key is given, pass `--no-api-key` to `strata launch` instead of
 #      letting it make one. Strata 0.2.4.2 allows a non-loopback bind without a key
 #      (with one warning), so the server can listen on 0.0.0.0 inside its own
@@ -37,7 +40,7 @@
 #      argv flags and the engine exits 2 on an unknown `--drafting`. The Qwen lanes
 #      pin mtp: DFlash2 was tried on 0.1.56 and reverted (16-18% slower decode, and
 #      it cannot run beside pipeline-windows; see deploy/llama-swap.config.yaml).
-# The script below is upstream v0.2.13 apart from the five changes above and the
+# The script below is upstream v0.2.14.1 apart from the five changes above and the
 # comment updates that describe them. A key given through API_KEY / API_KEY_FILE
 # still wins and is used exactly as upstream.
 #
@@ -67,7 +70,7 @@
 #   MODEL_PATH    GGUF files you already have, a folder or one .gguf, inside the container (mount it read-only)
 #   ALLOW_DOWNLOAD  1: go on and download the model although model files of the older layout (/data/models) were left unread (default: stop)
 #   CONTEXT       32k, 64k, 128k, 256k or a number of tokens
-#   PARALLEL      requests answered at the same time, 1 to 8 (empty: fit to the card; DeepSeek: one at a time)
+#   PARALLEL      requests answered at the same time, 1 to 8 (empty: fit to the card)
 #   DRAFTING      auto | mtp | dflash2 | off   the drafter for Qwen3.8-Flash-Next (default: Auto). Fork change 5:
 #                 passed to `strata launch --drafting`, so a lane can pin the drafter instead of following Auto.
 #   VISION        off | on | gpu | cpu  (pictures; the picture reader file is downloaded with the model)
@@ -119,10 +122,6 @@ if [ "$#" -gt 0 ] && [ "$1" != "run" ] && [ "$1" != "serve" ]; then
 fi
 
 mkdir -p /data/state /data/home /data/install /data/Strata-data /run 2>/dev/null || die "/data is not writable. Mount a volume there: -v strata-data:/data"
-# llama.cpp at the pinned commit is part of the image: link it into the install folder, so the first start fetches nothing from GitHub
-if [ -d /opt/strata/seed/third_party/llama.cpp ] && [ ! -e /data/install/third_party/llama.cpp ]; then
-  mkdir -p /data/install/third_party && ln -s /opt/strata/seed/third_party/llama.cpp /data/install/third_party/llama.cpp
-fi
 if ! grep -q " /data " /proc/self/mountinfo 2>/dev/null; then
   warn "/data is not a volume, so the model and your settings are lost when this container is removed. Add: -v strata-data:/data"
 fi

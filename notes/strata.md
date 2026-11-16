@@ -434,3 +434,63 @@ With `maya-ds4` serving the ISTA set faster on every axis ([notes/maya.md](maya.
   66.85, 85% pp 2,185.9 / tg 64.90 (accept 0.68) against the 0.2.12 control 2,080.2/66.40 and 2,161.3/64.20 —
   speed-neutral, within +1%. `deploy/strata/README.md` was updated in place (pins, engine-side table discovery,
   engine-log check line).
+
+# 20261116 Upgrade to 0.2.14.1 (engine 0.1.60) — Strata's own prompt kernels, split-trim default, equal prompt cuts
+
+Target release read via the upstream diff `v0.2.13..v0.2.14.1` (902 commits) and the 0.2.14 release notes. **The pin
+is split for the first time**: `v0.2.14.1` (2026-11-15) is a Control-only follow-up (Terminal 0.2.14.1 / Control
+0.1.60.1; Mac drafting-Off no longer downloads the 5.2 GB MTP layer, an offline-drafter explanation line, progress-word
+fixes) and has **no GitHub release object** — the signed feed and the 0.1.60 packages live in the `v0.2.14` release.
+The workflow therefore pins `STRATA_REF: v0.2.14.1` (sources, docker/) with `ENGINE_RELEASE: v0.2.14` (feed), which is
+exactly upstream's own shipped 0.2.14.1 pairing. (`v0.2.13.1` was a Control-only Intel-Arc hotfix — not relevant.)
+
+- **What changes for this box**:
+  - **Prompt experts on Strata's own fused kernels (the headline)**: llama.cpp's MMQ kernels are no longer built
+    into the engine (`-DSTRATA_MMQ=ON` is a source-build switch only — no runtime rollback; the previous image tag
+    is the rollback). Upstream measured prompts on other cards (R9700 Linux IQ3_S: 256 tok 255 vs 396 t/s, 2,048 tok
+    889 vs 1,231, 20k neutral) and did **not** run the Linux rx7900 package on hardware this release (again), so the
+    lanes' longctx spot carries the weight; KL checks upstream stayed fine, but answers can differ from 0.2.13 in
+    some words.
+  - **Layer split (#4522/#4549)**: the dense-weight trim is now the **default** for explicit and auto splits — the
+    lanes already pass `trim-stage-weights=on`, so only the new parts move the placement: the last card reserves the
+    drafter's head room (#4549), later-stage Q8_0 hyper-connection rows and the PLE key are priced, the trim's freed
+    bytes are credited to card 0 only. Upstream (2×A6000 held to 15.5 GB free): decode 75.88 vs 64.16 t/s (+18.3%)
+    against a no-trim base — not our baseline. Rollback: `STRATA_STAGE_TRIM=0` or `--no-trim-stage-weights`.
+  - **Equal prompt cuts**: long prompts are cut into equal pieces (two pieces need ≥5,400 tokens each, three or more
+    ≥6,144, at a chunk of 8,192+) instead of full pieces plus a short rest; upstream measured RTX 4090 8,279 tok
+    2,695 vs 3,501 ms.
+  - **Drafting fixes (0.2.14 + 0.2.14.1)**: setup downloads the drafter the start will use, a start's safety net
+    fetches its fallback drafter, Off stays Off, Auto-after-Off works, "Preparing the draft layer" prints only when
+    true. Our lanes pin `DRAFTING=mtp` with the layer present — inert here, but the "Auto started with no drafter"
+    bug class is gone.
+  - **Vision**: the GPU tower holds BF16 matrices as F16 with F16 inputs (closer to the float32 reference —
+    pictures can read slightly differently), the reader's context retries are bounded by time (18 s) and count (12),
+    and the READY line names the reader with a one-time fallback notice. `VISION_TOKENS` math unchanged; the AMD
+    on-demand default is unchanged (`VISION_ON_DEMAND_AMD_BY_DEFAULT = False` at both tags).
+  - **Draft costs**: "repeatable output" (`--draft-costs <table>`) is the default **on Metal only**
+    (`DRAFT_COSTS_DEFAULT_PLATFORMS = ("darwin",)`); CUDA and HIP keep live costs, so the lanes are unaffected.
+    `"draft_costs": true` in a run config opts in anywhere (upstream measured CUDA code/chat −1.5%, JSON +1.9%).
+  - **DFlash2**: per-device default changes are Strix Halo / Blackwell ≥48 GB only; gfx1100 keeps the 0.2.13 rules
+    and the lanes stay on MTP. The DeepSeek (`strata-dsv41`) engine sources are removed from upstream's repo, and
+    `serve/` refuses DeepSeek models — both irrelevant since the dsv41 retirement (20261104).
+  - **Docker/entrypoint**: upstream's entrypoint dropped the llama.cpp seed link and the PARALLEL DeepSeek note
+    (sha256 `0c660798…` → `1e6e0290…`); the image no longer carries llama.cpp at all — the Terminal vendors gguf-py
+    at `third_party/strata-gguf-py`, the prep tools use Strata's own `tools/strata_gguf.py` by default, and
+    `STRATA_GGUF_PY` is now only the byte-identical A/B override (kept two releases). The fork keeps its five
+    changes, rebased onto the v0.2.14.1 entrypoint. Both lane trees carry an old `/data/install/third_party/llama.cpp`
+    symlink (the 0.2.13 entrypoint's seed link) that dangles in the new image — nothing reads it; delete it at
+    cutover. `docker/fetch-engines.py` is unchanged, so the workflow gates carry over (variant rx7900, archs,
+    `hipblaslt_version 100200` — TheRock `7.10.0a20251120` default unchanged, the gate re-checks it at build). The
+    in-image `serve/test_tool_format.py` fixture gap persists (`tools/qwen4_intake_fixtures/` is still not copied
+    into the image; the same 7 in-image errors as 0.2.13, runtime unaffected).
+  - **Watch item**: upstream reports "the graphics driver paused the GPU for N ms" on R9700 (gfx1201) Linux with the
+    0.1.60 engine; gfx1100 is not named, but grep the lane logs once after cutover.
+- **Pins (0.2.14.1)**: image `ghcr.io/hurui200320/llm-ops-strata:0.2.14.1-rocm-gfx110x` (digest pending the CI
+  run); Terminal tag `v0.2.14.1`, commit `3af562d541ec76c8da63d568248a919c8a54906b` (Control `0.1.60.1`, app
+  `0.2.14`; the v0.2.14 sources commit is `09b603886925994d0d4461857b01321ef3aa431c`);
+  `strata-engine-0.1.60-linux-x86_64-hip-rx7900` (322,924,154 B per the release table; asset sha256, manifest
+  sha256, `BUILD.json` source and file count to be recorded from the build). hipBLASLt table expected unchanged
+  (`1bb8cd2e…`, version `100200`).
+- **Rollout (2026-11-16)**: pending — CI build and smoke first, then the fedora-tuf cutover (git pull, watchconfig
+  reload, one setup pass per lane `0.1.59 → 0.1.60`, dangling-seed-symlink cleanup, 6/6 llama-swap smokes, in-image
+  suites, placement figures, longctx spot vs the 0.2.13 control).

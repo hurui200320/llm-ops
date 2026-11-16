@@ -11,14 +11,15 @@ name: strata-image
 #      engine is byte-identical to what upstream puts in its own images;
 #   2. builds the image with upstream's docker/build.sh from the same tag, and smoke-tests it in-image.
 #
-# The result is exactly what an upstream 0.2.13-rocm-gfx110x build assembles: the released package, the Terminal
+# The result is exactly what an upstream 0.2.14.1-rocm-gfx110x build assembles: the released package, the Terminal
 # from the same tag, nothing added and no source patch. (v0.2.11 needed one build-context patch — upstream fix
 # 5d37280d, which makes docker/build.sh stage the metal/tools/ sources its own package_terminal.py copies;
-# v0.2.12 contains that commit and v0.2.13's docker/ is unchanged from v0.2.12's. Until 2026-11-04 the workflow
-# also compiled a gfx110x `strata-dsv41` DeepSeek engine into the image with the TheRock ROCm wheels; the DeepSeek
-# lane moved to Project Maya that day (notes/maya.md 20261104) and the build was removed — the record:
-# notes/strata.md 20261104.) The Dockerfile's verify stage re-checks the package (every listed file, binary_deps on
-# every ELF, ldd in the image).
+# v0.2.12 contains it. 0.2.14's docker/ then changed on its own: the image no longer carries llama.cpp — the
+# Terminal vendors gguf-py (third_party/strata-gguf-py) and the Dockerfile's seed stage is gone. Until 2026-11-04
+# the workflow also compiled a gfx110x `strata-dsv41` DeepSeek engine into the image with the TheRock ROCm wheels;
+# the DeepSeek lane moved to Project Maya that day (notes/maya.md 20261104) and the build was removed — the record:
+# notes/strata.md 20261104; 0.2.14 removed the dsv41 engine sources from upstream's repo.) The Dockerfile's verify
+# stage re-checks the package (every listed file, binary_deps on every ELF, ldd in the image).
 #
 # The upstream versions are PINNED in `env:` below, not workflow inputs: the image is bound to one Strata source tag
 # and one released engine package. The package gate is written against exactly that combination, so moving any of
@@ -41,28 +42,28 @@ on:
 env:
   IMAGE: ghcr.io/hurui200320/llm-ops-strata
   STRATA_REPO: Niko1221/Strata
-  # Terminal sources and the Dockerfile. v0.2.13's docker/ is byte-identical to v0.2.12's, which contains the
-  # metal/tools build-context fix (5d37280d) that v0.2.11 needed as a source patch, so this tag needs none.
-  STRATA_REF: v0.2.13
-  # The release that carries the signed feed and the Qwen engine packages. v0.2.13 rebuilds EVERY engine package
-  # at 0.1.59: the rx7900 engine folder changes 0.1.58 -> 0.1.59 and every lane re-runs setup once. Most of the
-  # release is Qwen4 groundwork (signed-feed model list, strata-q4-<shape> components) and Mac / Strix Halo /
-  # Windows / gfx12 / CUDA work that does not apply to 2x gfx1100. What matters here: the tool parser is now
-  # picked from the chat template (serve/toolformat.py) — the XML form every Strata model ships, our fixed Qwen
-  # template included, keeps the same OutputParser; only JSON-form templates (Qwen3, Hermes) get JsonOutputParser.
-  # The engine now finds tuning/<arch>-hipblaslt-<version>.txt beside itself (gfx1151 on its own, another card
-  # needs STRATA_HIPBLASLT_TABLE=on — the container env the lanes already pass), so the server no longer writes a
-  # table path into the run config. The parallel/GDN stack env the server used to set is gone (it never applied
-  # to HIP: those are the engine's defaults now). Linux #5327 / PR #5531 credits free pages + the file cache for
-  # an expert-arena shortfall again (the refusal stays for anonymous-RAM shortfalls and cgroup caps;
-  # STRATA_ARENA_FILE_CACHE=0 opts out), and the fused_gr dynamic-shared-memory opt-in is set per device instead
-  # of per process (our 2-card layer split runs that kernel on both). DFlash2 default changes are Strix Halo /
-  # Blackwell >= 48 GB only; gfx1100 is unchanged and the lanes stay on MTP. Upstream did NOT run the Linux
-  # rx7900 package on hardware this release, and the DFlash2 defaults were measured before the final 0.1.59
-  # packages, so the in-image smoke and the lanes' own longctx spot carry more weight than usual. No HIP
-  # toolchain change: the gate below re-checks hipBLASLt 100200 + the tuning table. The package is re-verified
-  # against the feed below (signature, manifest hash).
-  ENGINE_RELEASE: v0.2.13
+  # Terminal sources and the Dockerfile. v0.2.14.1 is the Control-only follow-up to v0.2.14 (Terminal 0.2.14.1 /
+  # Control 0.1.60.1: the Mac drafting-Off download fix, an offline-drafter explanation, progress-word fixes); the
+  # engines stay 0.1.60. Its docker/ drops the llama.cpp seed link from the entrypoint and the Dockerfile's seed
+  # stage (the Terminal vendors gguf-py at third_party/strata-gguf-py; the preparation tools fetch nothing), so
+  # this tag needs no source patch either.
+  STRATA_REF: v0.2.14.1
+  # The RELEASE that carries the signed feed and the Qwen engine packages — v0.2.14.1 has no release object, so the
+  # feed is fetched from v0.2.14 (whose assets carry both Control 0.1.60 and 0.1.60.1; the pairing of Terminal
+  # 0.2.14.1 sources with the 0.1.60 package is exactly upstream's shipped 0.2.14.1 update). v0.2.14 rebuilds EVERY
+  # engine package at 0.1.60: the rx7900 engine folder changes 0.1.59 -> 0.1.60 and every lane re-runs setup once.
+  # The headline: the prompt experts run on Strata's own fused kernels — llama.cpp's MMQ kernels are no longer
+  # built in (-DSTRATA_MMQ=ON is a source-build switch only, so there is no runtime rollback; the previous image
+  # tag is the rollback). Upstream measured prompt gains on other cards (R9700 Linux IQ3_S: 256 tok 255 vs 396 t/s)
+  # and did NOT run gfx1100 on hardware this release, so the in-image smoke and the lanes' longctx spot carry more
+  # weight than usual; answers can differ from 0.2.13 in some words (upstream's KL checks stayed fine). Also in:
+  # the layer-split dense-weight trim is now the default (#4522; the lanes already pass trim-stage-weights=on) and
+  # the last card keeps the drafter's head room (#4549), long prompts are cut into equal >=5,400/6,144-token pieces,
+  # setup fetches the drafter the start will use and Off stays Off (0.2.14.1), and the vision GPU tower holds BF16
+  # as F16 (reader retries bounded 18 s / 12). DFlash2's default changes are Strix Halo / Blackwell >= 48 GB only;
+  # gfx1100 is unchanged and the lanes stay on MTP. No HIP toolchain change: the gate below re-checks hipBLASLt
+  # 100200 + the tuning table. The package is re-verified against the feed below (signature, manifest hash).
+  ENGINE_RELEASE: v0.2.14
   # hipBLASLt version the package's gfx1100 tuning table must match (BUILD.json hipblaslt_version).
   HIPBLASLT_TABLE_VERSION: "100200"
 
