@@ -820,3 +820,98 @@ for DS4 (like GLM's `MAYA_GLM_PREFILL_STABLE`), revisit.
   0`): the arm's engine died at load behind its `--rm` container and the point script burned its health timeout.
   The point script now checks both cards' free VRAM before `docker run` (a lane woken between arms aborts the
   point instead of measuring a contended arm) and asserts the arm's engine version at start.
+
+# 20261116 Maya 1.1.64 upgrade: DeepSeek and GLM at parity on gfx1100
+
+Upgraded to `v1.1.64` (commit `d93d1499021b98a39bede20d33368907f1ea4ad8`, 80 commits over `v1.1.61` across the
+three releases 1.1.62/63/64; llama.cpp `3cf03257...`, ROCm `7.2.1-complete` base, `gfx1100`, the `100202`
+hipBLASLt table (62 rows), `setup.py` and the stamp mechanism all unchanged - both build gates passed as-is).
+Workflow run pushed `ghcr.io/hurui200320/llm-ops-maya:1.1.64-rocm-gfx1100`, digest
+`sha256:7d371e4f1ac39b433a73531b36f9f18e071360f9b4217aea921ec77b717e26de` (30,148,744,231 B; 1.1.61 was
+30,146,959,474 B). `project(strata VERSION 0.1.27)` unchanged (slots survive); pack tools byte-compatible
+(`iq_pack.py`'s format change only fires on `qwen4exp` mixed-type layers - GLM pack rows identical, DS pack
+tools untouched) - no repack either lane family. Deployed by `git pull` (`f6fad54`); llama-swap's
+`-watch-config` reloaded the three lane tags (llama-swap `GET /unload` empties all lanes, `POST` is 405; lane
+containers are auto-removed on stop, so engine logs must be captured per run).
+
+## Upstream changes reaching our image and lanes
+
+- **The release theme is inert here**: v1.1.62-64's headline is an AMD Halo APU (Strix/Gorgon) + NVIDIA GPU
+  "mixed-gpus" mode (GLM link helper, DS4 remote-expert helper, EXL3 on the pair, ~6k of the 8k diff lines).
+  Everything is gated on NVIDIA-card detection (`mixed_family()` / `nvidia_beside()` / `hlink::wanted()` /
+  `glmfast::repeatable(F->helper.linked())`) - absent on our 2x RX 7900 XTX hosts; the new `build-cuda`
+  second-engine path in `maya.py` never arms. GLM's "answers repeat run to run" knobs (`MAYA_GLM_REPEATABLE`,
+  `MAYA_GLM_FIXED_MOVES`, `MAYA_GLM_MTP_FIXED/_ADAPT`, `MAYA_GLM_CPU_CAL`) are helper-link-gated: not
+  applicable, do not chase.
+- **#956 (the one relevant change)**: since v1.1.58, DeepSeek on a layer split or `--tp` could keep its PCIe
+  expert lane on when it gained nothing (~4-5% decode on the reporters' PCs). v1.1.64 restores "3% faster or
+  off" on splits (one GPU keeps the tie-keeps rule); `DS4_STREAM_TIE=keep|off` forces either rule; the first
+  start after the update re-measures. Our lanes run `DS4_SPLIT=18,22` - but the A/B below measured **no
+  change**: tg unchanged, and the engine logs show identical placement both versions (3,512-expert RAM store,
+  10,803-10,818 CPU-lane experts in place, same fused kernel lines). This pair was not paying the tie cost.
+- The rest does not reach us: Qwen mixed-type expert quants (maya has no Qwen engine here - Qwen runs on
+  strata), MiniMax sha256 checks + NaN diagnostics (no mm3 lane), the DeepSeek Windows build fix (Linux),
+  the GLM server restart fix (helper-layout-specific; harmless for our llama-swap flows).
+
+## Verification (official CI image, on fedora-tuf)
+
+In-image smoke gates replicated after the pull (engines `--help`/`--version`, vision usage, `ldd`, stamps
+`src=d295b7c3aee9b21f` / vision `src=1c62b3015c165fdf` - 1.1.61 was `651b9f33...`/`19084ecc...`, venv imports,
+`maya.py --help`) - all pass; `maya-ds4 1.1.64 (build d93d1499...)`. All three lanes, **7/7 functional gates**
+through llama-swap (chat `SMOKE-OK`; `get_weather` -> `{"city":"Paris"}`; `reasoning_effort: none` -> `42`;
+first five primes; fenced `def sum_list`; 420x420 and 3840x2160 pictures) plus the `:ablation` alias on the
+GLM lane (9/9): 4K `prompt_tokens` **1,168 on both DS lanes** (within the 1140 image budget) and **10,574**
+on the GLM lane (137x77 grid, no downscale) plain and through the alias. The gate pictures are a fresh
+random-noise set, so the counts are that image's. `/props`: GLM vanilla `ablate.available: true, default:
+false`. Slots across the bump: abiray **217 conversations / 8.7 GB**, the main DS lane **9 / 0.5 GB**, GLM
+**4 / 0.9 GB** kept. Live `/data/config` diffs clean against `deploy/maya/configs/` on all three lanes, no
+entrypoint diff lines (no schema migrations).
+
+## Interleaved 512k A/B vs 1.1.61 (DeepSeek lane, 4 points per arm; GLM lane, 2 points per arm)
+
+Same harness as 20261114 (`ab64_point.sh` / `glm64_point.sh` in `/mnt/unenc-xfs/maya/tune/`, results
+`tune/ab64/results/`): tune trees, production config folders, repo entrypoint, A/B/A/B interleaved,
+`run_longctx.py --ctx 524288 --in-pcts 40,85 --out-pct 1 --reps 1`, `cache_n 0`, vram_sampler at 5 s, greedy
+seed-42 bits probe per point, engine log per point.
+
+| Lane / level | 1.1.61 (r1 / r2 / r3 / r4) | 1.1.64 (r1 / r2 / r3 / r4) | Mean delta |
+| --- | --- | --- | ---: |
+| **DS** pp 40 % | 1383.6 / 1369.7 / 1334.2 / 1385.0 | 1367.4 / 1371.2 / 1285.1 / 1363.8 | -1.6 % (1368.1 -> 1346.9) |
+| **DS** tg 40 % | 26.40 / 24.80 / 26.30 / 25.70 | 25.50 / 25.80 / 25.80 / 26.30 | +0.2 % (25.80 -> 25.85) |
+| **DS** pp 85 % | 1262.9 / 1265.7 / 1246.1 / 1272.1 | 1233.2 / 1219.7 / 1267.9 / 1231.5 | -1.9 % (1261.7 -> 1238.1) |
+| **DS** tg 85 % | 27.10 / 27.40 / 27.20 / 27.20 | 26.70 / 27.20 / 27.30 / 27.40 | -0.3 % (27.22 -> 27.15) |
+| **GLM** pp 40 % | 978.5 / 977.6 | 959.8 / 943.7 | -2.7 % (978.1 -> 951.8) |
+| **GLM** tg 40 % | 18.50 / 17.40 | 18.50 / 18.80 | +3.9 % (17.95 -> 18.65) |
+| **GLM** pp 85 % | 963.1 / 992.4 | 974.9 / 965.5 | -0.8 % (977.8 -> 970.2) |
+| **GLM** tg 85 % | 16.30 / 16.30 | 18.60 / 17.80 | +11.7 % (16.30 -> 18.20) |
+
+Verdict: **both engines at parity** - every delta is inside the run-to-run spread (n=2 on GLM), no config
+change. Both AGENTS.md targets hold with margin (DS pp >= 1000 both levels, tg 27.15 at 85 %). The #956 hope
+(tg +4-5 % if ties were keeping the lane on) did not materialize - this split was not paying it;
+`DS4_STREAM_TIE` stays unset (the new default rule is the right one for a split anyway). GLM's tg band on
+2026-11-16 night sits at 16.3-18.8 t/s for **both** versions - the recorded 19.1-20.65 (20261107/20261111)
+did not reproduce on either arm, with arm-identical VRAM floors (GLM 191-194 / 381-383 MiB vs the recorded
+271/434; DS 808-825 / 601-614 both arms matching 20261114's) - a desktop/page-cache conditions shift, not the
+release. A one-off production-lane GLM point taken right after the 8-point DS ladder (tg 16.70/18.20,
+`MemAvailable` ~10 GiB with ~19 GiB of ladder swap still held) first looked like a regression; the interleaved
+ladder disproves it - tonight's own 1.1.61 arms measure the same band.
+
+Bit-probes: the GLM tune-tree probes are **byte-identical across all 4 points including across versions**
+(`9eec69b5...`; fresh empty slots on the tune tree), while the DS probe keeps its boot-to-boot divergence with
+3 cross-version byte-identical pairs (one 4-way) - same conclusion as 20261114: the probe cannot attribute
+drift to the release; the gates' canonical answers are unchanged.
+
+## Method notes
+
+- The GLM tune tree (`tune/glm53f-iq2s-tune`, rsync of the production tree minus `slots/`/`config/`) was
+  first built with `--exclude "*.gguf"` (meant for the shard placeholders) - which also dropped the tree's
+  real GGUF files: the vision tower's `mmproj-GLM-5.3-Flash-F16.gguf` + vocab (entrypoint aborts with
+  "could not pin the vision encoder's footprint ... Nothing was started") and
+  `refusal-directions/GLM-5.3-Flash-refusal-direction.gguf` (the config's `ablate` key points at it; the
+  engine warms its tiers for ~45 s then hard-exits "cannot open ...refusal-direction.gguf"). Two ladder
+  attempts died on this within a minute each, before any measurement. Fix: copy the three files from the
+  production tree (`cp -a .../vision/*.gguf .../refusal-directions/*.gguf`); a `find <tree> -name "*.gguf"
+  -not -path "*/pack/*"` is the completeness check.
+- llama-swap keeps the last-used lane up (`GET /unload` on :8080 empties all lanes; the A/B driver's VRAM
+  guard aborts a point if a lane wakes between arms). Lane containers are auto-removed on stop - engine logs
+  (`/opt/maya/maya-<quant>-hip.log`) must be `docker cp`'d out per run or they are lost with the container.
