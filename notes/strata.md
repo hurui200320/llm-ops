@@ -551,3 +551,84 @@ exactly upstream's own shipped 0.2.14.1 pairing. (`v0.2.13.1` was a Control-only
     measured the fixed table at −1.5% code/chat against live costs on CUDA (HIP untested) and made
     it Metal-only by default. Answer repeatability across starts is not a requirement here; the
     current output stands.
+
+# 20261116 Upgrade to 0.2.15 (Terminal 0.2.15 / Control 0.1.61, engine stays 0.1.60) — serve/tool round, two carried build fixes
+
+Target release read via the upstream diff `v0.2.14.1..v0.2.15` (46 commits, 121 files) and the 0.2.15 release notes.
+For the first time since the split-pin rule existed there is **no split**: `v0.2.15` (2026-11-16) is a proper release
+object whose feed (sequence 127) carries the engines by **absolute URL into the `v0.2.14` release** — the 0.1.60
+rx7900 package is byte-identical to the one the lanes already run (manifest sha256 `09cb87e8…`, the package's own
+`SYSTEM-LIBS.txt` unchanged). So `STRATA_REF: v0.2.15` and `ENGINE_RELEASE: v0.2.15` — exactly upstream's own
+shipped 0.2.15 pairing (Terminal 0.2.15 + Control 0.1.61 + the 0.1.60 engines from v0.2.14). No new settings, no
+HIP toolchain change; the gate re-checked hipBLASLt `100200` + the tuning table (`1bb8cd2e…`) and passed untouched.
+
+- **What changes for this box (all serve/Terminal-side; zero engine change → no setup pass, no re-tuning)**:
+  - **#5979 (`serve/frontend.py`)**: a declared boolean tool argument written `True` / `False` (the model's Python
+    spelling) is now the boolean, not the string. Live-verified on the vanilla lane: a `set_flag` call came back as
+    raw arguments `{"user":"bob","notifications":true}`, `type: bool`.
+  - **#6055 (`serve/server.py`)**: a stop without `--shutdown-timeout` begins the drain and refuses new requests
+    with `503 server_draining` instead of accepting and cutting them off at 0 tokens. Operational check: `docker
+    stop -t 120` on the vanilla lane took **2.8 s** (0.2.12: 2.9, 0.2.13: 2.7) and `docker start` after it serves
+    again; the 503 window itself is not reachable through llama-swap on an idle lane (the listener closes inside
+    the first ~150 ms — a request fired 0.15 s into the stop got the proxy's 500, the rest connection-refused).
+  - **#5601 (`strata_control/runtime.py`)**: a start waiting for its owner reads an empty state file as not there
+    yet — softens the stopped-lane start race behind llama-swap (the instant-502-then-retry pattern still
+    reproduces as documented in the 20261030 entry).
+  - **Drafting-word persistence** (`strata_cli/launch/runner.py` `keep_saved_word`, `strata_control/drafting.py`):
+    a restart with no Drafting word keeps the saved word (Auto included; Off was 0.2.14.1), and DFlash2 no longer
+    stands in for a *chosen* MTP. Inert on these lanes — the fork passes `--drafting mtp` explicitly at every
+    start, so `s.drafting` is never None.
+  - `#5812` (Access-step key), the updater round (`--backend amd` on mixed-GPU PCs, libatomic naming, drafter
+    feed-sequence check) and the app-only fixes (llama-server never started, Qwen3.6 first-run downloads, the
+    Models-screen drafting choice) are inert here: keyless lanes, single AMD make, no `strata update`, and
+    `apps/host` + `apps/desktop` are not in the image.
+- **Two carried build fixes (both upstream bugs; drop conditions in the workflow, expected 0.2.16)**:
+  - **The `build.sh` `paths=` bug persists** (the 0.2.14.1 note expected the fix in 0.2.15): v0.2.15's
+    `paths=` list still omits `third_party/strata-gguf-py`, so the workflow's `--ctx` pre-stage stays as is.
+  - **New: the verify gate refuses the 0.1.60 package on libatomic (first CI run `43844311473` failed)**.
+    v0.2.15's `packaging/binary_deps.py` shrank `LINUX_OS` to glibc + libgcc/libstdc++ ("every 0.2.14 package
+    needs nothing else" — false for the AMD dGPU packages: upstream's own release notes say the RX 6000/7900/9000
+    Linux engines need `libatomic.so.1` until "the next engine build bundles the library"). Reproduced locally
+    with v0.2.15's checker against the fetched 0.1.60 archive: exactly one missing lib,
+    `librocm_sysdeps_numa.so.1: needs libatomic.so.1`, and the package's `SYSTEM-LIBS.txt` declares it. The image
+    runtime stage installs `libatomic1` (upstream's own Dockerfile), so only the static list is wrong. Fix:
+    carried patch [deploy/strata/patches/0.2.15-libatomic-verify.patch](../deploy/strata/patches/0.2.15-libatomic-verify.patch)
+    re-adds `libatomic.so.1` to `LINUX_OS`, applied by a new workflow step before the build (`git apply` on the
+    checked-out sources; verified with `git apply --check` against v0.2.15). Verify-only change: the served
+    engine is untouched.
+- **Pins (0.2.15)**: image `ghcr.io/hurui200320/llm-ops-strata:0.2.15-rocm-gfx110x`, digest
+  `sha256:9d866b9ec176c5b28a17ddc0c637d4ed7bf8ef3701f009a77509e67cbdf9fe42` (2,307,744,695 B on host, CI run
+  `43854371241`, job `133254736174`, built from commit `2a178e0`); Terminal tag `v0.2.15`, commit
+  `c77572806996349b49995e4f98d41b5294d36a21` (Control `0.1.61`, app `0.2.15`; in-image smoke `strata --version`
+  → `strata 0.2.15 (build 0.1.61; python 3.12.15 …)`); engine package unchanged from 0.2.14.1
+  (`strata-engine-0.1.60-linux-x86_64-hip-rx7900`, manifest sha256 `09cb87e8…`, fetched through the v0.2.15
+  feed by absolute URL); hipBLASLt table bytes unchanged (`1bb8cd2e…`, 845 B, version `100200`); upstream
+  `docker/` unchanged (entrypoint.sh sha256 `1e6e0290…` = v0.2.14.1's — the fork's five changes carry over, and
+  the workflow's fork-drift summary shows exactly those five).
+- **Rollout (2026-11-16, fedora-tuf)**: image pre-pulled (digest matches the CI push byte for byte); `git pull`
+  to `2a178e0` (llama-swap's watchconfig had already picked up the `0.2.15-rocm-gfx110x` tags from the config
+  commit). Both lanes were stopped; the first request through llama-swap started each on the new image. **No
+  setup pass on either lane** — both logs read `Engine 0.1.60 (hip) is installed. qwen IQ3_S is already installed
+  with these choices.`; packs and MTP reused, nothing downloaded. Vanilla first request 200 in 51.0 s, SC117 in
+  56.6 s; warm reload through llama-swap 200 in 50.1 s (0.2.14.1: 55.2 s; the documented instant-502 retry
+  reproduced once).
+- **Placement (serving starts, vision 8192 applied)**: vanilla `30.2 GiB` GPU caches, `22.0 GiB` RAM copy, lend
+  `2,816` slots — **the 0.2.14.1 record exactly** (8,253 + 7,609; the #4522 trim line `CUDA0 keeps only its own
+  layers' dense weights (1.85 GiB in all): CUDA0 0-25 (55 MiB freed)` and the #4549 `1536 MiB reserved (+0 MiB
+  for the draft head, …)` line both present). SC117: 30.1 GiB GPU caches, 22.1 GiB RAM copy, lend 2,817 (SC117
+  has no 0.2.14.1 record to diff against; it now sits essentially at the vanilla placement). `prefill gemm:
+  hipBLASLt tuning enabled (26 rows, gfx1100, version 100200)` throughout serving on both lanes; **zero**
+  `the graphics driver paused the GPU` lines.
+- **Verification (2026-11-16)**: vanilla — chat with the reasoning split, declared tool call (arguments carried a
+  real JSON boolean), multi-turn tool result, vision (`Red` on a 1×1 red PNG), `:npt` (reasoning split into
+  `reasoning_content`, content `4`), `/props` (`n_ctx 262144`, `build_info Strata 0.1.60`, all
+  `chat_template_caps` true, `modalities.vision true`), and the #5979 boolean spot; SC117 — declared tool call and
+  vision `Red`. In-image suites (throwaway container, the v0.2.15 fixtures downloaded to
+  `tools/qwen4_intake_fixtures` and mounted): `test_serve_robustness` + `test_tool_corpus` + `test_tool_format` +
+  `test_bool_args` (new) + the tool-name/envelope family + `test_frontend` + `test_request_accounting` +
+  `test_yield_accounting` — **140/140 OK**; without the mount `test_tool_format` still errors 7/12 — the
+  packaging fixture gap noted since 0.2.13 persists (upstream never runs this path; runtime serving does not read
+  the fixtures). Longctx: **skipped by decision** — the engine is byte-identical, so the 20261116 speed record in
+  [qwen3.8/Flash-Next.md](qwen3.8/Flash-Next.md) stands. `deploy/strata/README.md` and `deploy/README.md` were
+  updated in place (pins, the two carried fixes and their drop conditions, the local-build recipe now applying
+  the patch and the pre-stage).
