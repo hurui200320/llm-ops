@@ -437,3 +437,60 @@ With `maya-ds4` serving the ISTA set faster on every axis ([notes/maya.md](maya.
   GPU caches, `22.1 GiB` RAM copy, lend `2,817`). Passed all llama-swap smokes (including the #5979 boolean tool check)
   and in-image test suites (**140/140 OK** with `tools/qwen4_intake_fixtures` mounted); longctx skipped (engine
   unchanged from 0.2.14.1).
+
+# 20261119 Upgrade to 0.2.16 (engine 0.1.62) — Strata's own engine code, folder layout move, tool-parser round
+
+- **Pins (0.2.16)**: `ghcr.io/hurui200320/llm-ops-strata:0.2.16-rocm-gfx110x`, digest
+  `sha256:6a4df9df58e342e968daa6319adce8cee840eb202fbc9219069b50b40d5ada01` (1,592,102,392 B in CI, run `44455733670`,
+  job `135330174857`, commit `ee072d84acacf5d64c6cff36dc611d7c9ed8a875`; 2.04 GB uncompressed on host), built from
+  upstream `v0.2.16` commit `64524fb9fc82222ddce554c0643b64f056ec8366` (Terminal 0.2.16 / Control `0.1.62`). Engine
+  package `strata-engine-0.1.62-linux-x86_64-hip-rx7900.tar.gz` (276,843,935 B, asset sha256 `b0e14bf8…`, manifest
+  `b969c28214698147bba9a3c09fcdd8cd45ba9466de148263b0da5641ae692089`, 587 files, `variant rx7900`, archs
+  gfx1100/1101/1102); hipBLASLt table unchanged (`1bb8cd2e…`, 26 rows, version `100200`). 0.2.16 is a full engine
+  generation: the engines run **Strata's own code** (no ggml / llama.cpp matrix kernels) and the picture reader is
+  Strata's own (`strata-vision`) too. Control and the engines share one number from 0.2.16 on (no 0.1.61).
+- **Build & image changes**: upstream moved the top-level folders into `engine/ app/ terminal/ docs/ tools/`
+  (`docker/` → `tools/docker/`, `packaging/` → `tools/packaging/`, `third_party/` → `engine/third_party/`); all
+  workflow paths follow. The 0.2.15 libatomic verify patch is **gone**: the 0.1.62 packages bundle `libatomic.so.1`
+  themselves (`tools/packaging/notices/libatomic.txt` → `licenses/libatomic.txt` in the package; CI's `binary_deps`
+  verify stage passes without a patch). The gguf-py `--ctx` pre-stage stays (upstream `tools/docker/build.sh` still
+  omits `engine/third_party/strata-gguf-py`), now staged at `$ctx/terminal-src/engine/third_party/`. The entrypoint
+  fork is now **four** changes: upstream 0.2.16 forwards `DRAFTING` / `DRAFT_VOCAB` itself (fork change 5 retired) and
+  gained the `python_usable()` probe (issue #4309, carried); the fork keeps `--no-api-key`, the keyless warning, the
+  pack chat-template swap and the vision budget (upstream entrypoint sha256 `1150f912…`).
+- **Engine & serve changes for this box**: #6032 R1-R6 tool-call parser round (damaged openers, `<arguments>`+JSON,
+  XML element parameters, `<function=NAME` without `>`, Claude's `<invoke …>` dialect; recovery on by default) and
+  #4686 linear streamed tool-argument parsing; #6011 (a Stop reaches every stage of a layer split, stale checkpoint
+  parts cleared); #6055 follow-up (a request cut by a stop fails `503`, not "length" with 0 tokens); #5847/#5848
+  conversation-cache checkpoint plans/device tags; #5697 RAM gate + SSD tier and #2253 (park eviction); #5924
+  (`fit_max_tokens` never shortens below answer room); #4758/#4759/#5633 stream fixes; #5893 `/v1/models` reports
+  `context_length` + `meta.n_ctx`. New keyless `/v1` foreign-Origin check (owner 11-16): an origin equal to the
+  request's Host passes and other origins are judged against `allowed_hosts` (ports ignored), so
+  `STRATA_ALLOWED_HOSTS=fedora-tuf` covers the llama-swap UI; live-verified (own origin 200, foreign origin 403).
+  #6067 (RX 7000 Gyro trellis fused prompt kernels, default-on) is inert for Flash-Next IQ3_S; #5860's two-card
+  pipelined-decode knobs (`STRATA_PIPELINE_HIT_MIN` / `_LAZY_CHAIN` / `_LOOKUP_RUN`) are off by default — an A/B
+  candidate for later. DFlash2 still refuses beside `--pipeline-windows`, so the lanes stay MTP.
+- **Rollout (2026-11-19)**: host checkout pulled `ee072d84` (image tag + fork + config). `docker pull` from ghcr.io
+  fails on fedora-tuf (TLS EOF / SNI-level block); pulled through the local mihomo proxy with
+  `HTTPS_PROXY=http://127.0.0.1:2080 skopeo copy docker://… docker-daemon:…`, after checking the registry digest
+  (`6a4df9df…`, label 0.2.16) and the in-image inventory (`0.1.62 linux-x86_64 hip`, `usable: true`, no problems).
+  One setup pass per lane (the `0.1.60` run settings name the old engine folder and are dropped; packs/MTP reused):
+  cold ~60 s, warm 57 s on both lanes. The vision budget re-applied on the reload
+  (`Vision budget: strata-iq3_s.json: max_tokens=8192, min_tokens=1024`); the reader is the new own tower
+  (`strata-vision: own tower (qwen3vl_merger, 27 layers, width 1152) … on the GPU`; warm-up 0.7 s / 956 MiB at the
+  1024 default, 10.2 s / 1,161 MiB at 4096 tokens with the 8192 cap). Placement: vanilla first start (setup default
+  1024) `8,365 + 7,609 = 15,974`
+  slots; warm (vision 8192) **`8,249 + 7,609 = 15,858`** (14.96 + 15.25 GiB), RAM copy `21.99 GiB`, lend `2,816`,
+  MTP `1,348 MiB`, free 1,814/1,338 MiB; SC117 **`8,198 + 7,575 = 15,773`** (14.87 + 15.18 GiB), RAM copy `22.15 GiB`,
+  lend `2,817`.
+- **Verification**: 17/17 llama-swap gates on both lanes (reasoning → 391, `:npt` alias, declared `get_weather` with
+  `include_forecast: true` as a JSON bool (#5979), multi-turn tool result, vision red/blue through the own reader,
+  `SMOKE-OK`, `/props` n_ctx 262144, own-Origin 200 / foreign-Origin 403). In-image serve suite: **1,931 tests,
+  11 errors — all environment-only** (repo-only files absent from the image: app `Monitor.tsx`, the
+  `qwen4_intake_fixtures`, and the `web_i18n` / `make_profile` / `test_strata_tokenizer` modules), 88 skipped; the
+  focused parser suites **124/124 OK** and `test_tool_format` **12/12 OK** with `terminal/tools/qwen4_intake_fixtures`
+  mounted from the upstream v0.2.16 tree. Graceful stop 2.77 s (vanilla) / 3.84 s (SC117); no GPU-pause or engine
+  error lines after the starts. Longctx spot matched to 0.2.14.1 (`--out-pct 10`, 60/85%, 2 reps):
+  `2,592.9/66.90` and `2,660.7/64.15` vs `2,529.2/66.65` and `2,710.0/65.55` — prompts and decode neutral
+  ([`qwen3.8/Flash-Next.md`](qwen3.8/Flash-Next.md) 20261119).
+

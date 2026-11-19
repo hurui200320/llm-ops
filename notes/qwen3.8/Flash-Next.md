@@ -548,3 +548,28 @@ lend 2,816 all RAM-backed — the full rollout record is [../strata.md](../strat
 
 Records: `bench/results/longctx/qwen3.8-flash-next-iq3s-20261116-142510.json` and `.log` (runner). Upgrade,
 pins, rollout and verification: [../strata.md](../strata.md) 20261116.
+
+# 20261119 Strata 0.2.16 (engine 0.1.62) longctx spot — prompts and decode neutral vs 0.1.60
+
+Engine generation change (Strata's own engine code, no ggml / llama.cpp matrix kernels; upstream measured token
+identity on an R9700, gfx1100 not measured). Same box, same lane/settings (MTP `--spec 4`, `spec-min-p 0.7`,
+`pipeline-windows 2`, layer split 26, `kv fp16`), matched protocol
+`run_longctx.py --ctx 262144 --out-pct 10 --in-pcts 60,85 --reps 2`, cold prefill every rep (`cache 0`):
+
+| Run | 60% pp / tg | 85% pp / tg | acceptance |
+| --- | --- | --- | --- |
+| 0.2.16 (2026-11-19) | 2592.9 / 66.90 | 2660.7 / 64.15 | 0.695 / 0.674 |
+| 0.2.14.1 control (2026-11-16) | 2529.2 / 66.65 | 2710.0 / 65.55 | 0.676 / 0.680 |
+
+Prompts +2.5% (60%) / −1.8% (85%), decode +0.4% / −2.1% — neutral within the box's spread; draft acceptance
+0.695/0.674 vs 0.676/0.680. The SC117 lane has no earlier longctx record; its same-engine `--out-pct 1` spot
+(60% 2575.2 / 60.0, 85% 2631.1 / 59.1, acceptance 0.683 / 0.640) matches the vanilla `--out-pct 1` run
+(2561.9 / 58.0, 2644.9 / 60.1) on the same protocol — the short-decode tg is noisier, which is why the upgrade
+comparison above uses the matched 0.2.14.1 protocol. The first `--out-pct 1` pair ran while the in-image
+1,931-test suite was using the CPU (dev containers share the host); the matched re-run on the quieter host
+recovered the 0.1.60 decode.
+
+Placement, rollout and verification: [../strata.md](../strata.md) 20261119. Records:
+`bench/results/longctx/qwen3.8-flash-next-iq3s-20261119-142315.json` (out-pct 10),
+`qwen3.8-flash-next-iq3s-20261119-135812.json` (vanilla out-pct 1),
+`qwen3.8-flash-next-sc117-iq3s-20261119-140944.json` (SC117 out-pct 1).

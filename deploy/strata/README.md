@@ -10,8 +10,8 @@ upstream's own `tools/docker/build.sh` assembles from the same tag; nothing is a
 
 0.2.16 is a full engine generation (0.1.62): the engines run on **Strata's own code** — no ggml and no llama.cpp
 matrix kernels; the picture reader is Strata's own too. Upstream's token checks gave the same answers as 0.2.15 on
-the cards it measured (its 10-prompt A/B sets; the Radeon R9700 passed 10/10), but gfx1100 was not measured, so the
-lanes' 262144 longctx spot re-verifies speed and output on this pair. The layer split trims each card's dense weights
+the cards it measured (its 10-prompt A/B sets; the Radeon R9700 passed 10/10), but gfx1100 was not measured, so this
+pair is covered by the functional smokes and the 262144 longctx spot. The layer split trims each card's dense weights
 (#4522) and cuts long prompts into equal ≥5,400/6,144-token pieces; `trim-stage-weights=on` stays in the lanes'
 `STRATA_SET`. The serve-side headline is the #6032 R1-R6 tool-call parser round (damaged openers, `<arguments>`+JSON
 bodies, XML element parameters, Claude's `<invoke …>` dialect), layer-split Stop handling (#6011), the #6055 drain
