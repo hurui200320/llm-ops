@@ -344,8 +344,8 @@ models:
   # Qwen3.8 Flash-Next IQ3_S on Strata.
   # Picture reader budget (entrypoint fork change 4): 8192 image tokens at most,
   # 1024 at least — one token per 1024 px, so a 4K picture fits. See notes/strata.md.
-  # DRAFTING=mtp pins the drafter explicitly (entrypoint fork change 5): upstream
-  # Auto would pick the same here, but a pin cannot change under a later upgrade.
+  # DRAFTING=mtp pins the drafter explicitly (upstream's entrypoint env since 0.2.16):
+  # upstream Auto would pick the same here, but a pin cannot change under a later upgrade.
   # DFlash2 was tried on 0.1.56 (2026-11-03) and REVERTED: it cannot run beside
   # --pipeline-windows (its plan treats the flag as "several requests at once",
   # and that flag is our big pp win). The A/B on this pair: DFlash2 60% pp/tg
@@ -371,7 +371,7 @@ models:
         -e VISION_MIN_TOKENS=1024
         -e DRAFTING=mtp
         -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1"
-        ghcr.io/hurui200320/llm-ops-strata:0.2.15-rocm-gfx110x
+        ghcr.io/hurui200320/llm-ops-strata:0.2.16-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
@@ -429,7 +429,7 @@ models:
         -e VISION_MIN_TOKENS=1024
         -e DRAFTING=mtp
         -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1"
-        ghcr.io/hurui200320/llm-ops-strata:0.2.15-rocm-gfx110x
+        ghcr.io/hurui200320/llm-ops-strata:0.2.16-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health

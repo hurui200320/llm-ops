@@ -1,22 +1,18 @@
 #!/bin/sh
 # Fork of upstream's /opt/strata/entrypoint.sh for the llm-ops llama-swap lane.
 #
-# Changes from upstream v0.2.14.1 (image
-# ghcr.io/hurui200320/llm-ops-strata:0.2.14.1-rocm-gfx110x, terminal 0.2.14.1 / engine
-# 0.1.60; sha256
-# 1e6e0290fe5ca14617b15953aa138e76d3fe9448dfb86df42dc46e42ecd2137a, which drops the
-# llama.cpp seed link (the image no longer carries llama.cpp: the Terminal vendors gguf-py
-# at third_party/strata-gguf-py and the preparation tools fetch nothing) and drops the
-# DeepSeek note from the PARALLEL comment. The v0.2.13 entrypoint before it was
-# byte-identical to the v0.2.12 one — itself the v0.2.11 one, which was the 0.2.10 one,
-# itself the 0.2.9 one (sha256 10fe9c4f…) plus upstream's `--retune` line (#4779) and one
-# comment; that 0.2.9 entrypoint was byte-identical to v0.2.8's, which was byte-identical
-# to v0.2.7's (which added only legacy_models_guard (#3421) to the v0.2.6 entrypoint,
-# sha256 7c74cfd3…)). The fork carries those upstream lines unchanged:
+# Changes from upstream v0.2.16 (image
+# ghcr.io/hurui200320/llm-ops-strata:0.2.16-rocm-gfx110x, terminal 0.2.16 / engine
+# 0.1.62; sha256
+# 1150f912a9d72311e49870c2cfa3b175f729638313e42b7dce392a15c1cefe57). Upstream now
+# documents and forwards DRAFTING / DRAFT_VOCAB itself, so the fork's old change 5
+# (DRAFTING -> `strata launch --drafting`) is retired; upstream also gained the
+# python_usable() probe for the bundled Python (issue #4309), carried unchanged. The
+# fork carries upstream's lines otherwise and makes four changes:
 #   1. When no API key is given, pass `--no-api-key` to `strata launch` instead of
-#      letting it make one. Strata 0.2.4.2 allows a non-loopback bind without a key
-#      (with one warning), so the server can listen on 0.0.0.0 inside its own
-#      container network while only 127.0.0.1:${PORT} is published on the host.
+#      letting it make one. Strata allows a non-loopback bind without a key (with one
+#      warning), so the server can listen on 0.0.0.0 inside its own container network
+#      while only 127.0.0.1:${PORT} is published on the host.
 #   2. Do not print upstream's "Strata made one" warning in that case: no key is
 #      made when --no-api-key is used.
 #   3. When CHAT_TEMPLATE_PATH is set, replace every prepared pack's
@@ -33,16 +29,6 @@
 #      Patching the config keeps the repo the source of truth and survives the
 #      config being written again (setup keeps the value: max_tokens for the same
 #      reader device, min_tokens as a key setup does not write).
-#   5. When DRAFTING is set, pass `strata launch --drafting <value>`
-#      (auto | mtp | dflash2 | off) so a lane's drafter is an explicit choice and
-#      cannot change under it when upstream changes Auto's resolution. This is a
-#      launch flag, never a STRATA_SET key: lowercase STRATA_SET keys become engine
-#      argv flags and the engine exits 2 on an unknown `--drafting`. The Qwen lanes
-#      pin mtp: DFlash2 was tried on 0.1.56 and reverted (16-18% slower decode, and
-#      it cannot run beside pipeline-windows; see deploy/llama-swap.config.yaml).
-# The script below is upstream v0.2.14.1 apart from the five changes above and the
-# comment updates that describe them. A key given through API_KEY / API_KEY_FILE
-# still wins and is used exactly as upstream.
 #
 # Why: the llama-swap lane (deploy/llama-swap.config.yaml, macro
 # docker-server-strata-rocm) runs on the default Docker bridge, not --network host.
@@ -51,9 +37,9 @@
 #
 # Maintenance: on every image bump, extract the new entrypoint from the image
 #   docker run --rm --entrypoint /bin/sh IMAGE -c 'cat /opt/strata/entrypoint.sh'
-# and diff it against this file; re-apply the five changes above (the key
-# conditional, the final warning, the pack chat-template swap, the
-# picture-reader token budget, and the DRAFTING launch flag) and nothing else.
+# and diff it against this file; re-apply the four changes above (the key
+# conditional, the final warning, the pack chat-template swap, and the
+# picture-reader token budget) and nothing else.
 #
 # Upstream text follows.
 #
@@ -71,10 +57,10 @@
 #   ALLOW_DOWNLOAD  1: go on and download the model although model files of the older layout (/data/models) were left unread (default: stop)
 #   CONTEXT       32k, 64k, 128k, 256k or a number of tokens
 #   PARALLEL      requests answered at the same time, 1 to 8 (empty: fit to the card)
-#   DRAFTING      auto | mtp | dflash2 | off   the drafter for Qwen3.8-Flash-Next (default: Auto). Fork change 5:
-#                 passed to `strata launch --drafting`, so a lane can pin the drafter instead of following Auto.
 #   VISION        off | on | gpu | cpu  (pictures; the picture reader file is downloaded with the model)
 #   KV            int8 | q4_0 | k8v4 | fp16  (conversation memory format)
+#   DRAFTING      auto | mtp | dflash2 | off  (which drafter guesses ahead)
+#   DRAFT_VOCAB   cjk | en | cyrillic | fr | latin  (which tokens the drafter may guess; every one but cjk keeps English and code)
 #   GPU / GPUS    card numbers, e.g. 0 or 0,1 (empty or "all": the engine's choice)
 #   GPU_ROLES     a role for each card, e.g. 1=main,0=helper (main, helper or off; cards you do not name are off; not together with GPU / GPUS)
 #   TUNE          quick | thorough | skip   (done once; RETUNE=1 tunes again)
@@ -93,7 +79,20 @@ set -u
 
 APP=/opt/strata
 STRATA="$APP/terminal/bin/strata"
-PYBIN="$APP/terminal/python/bin/python3"; [ -x "$PYBIN" ] || PYBIN=$(command -v python3 || echo python3)
+
+# Is this a Python this container can start? `test -x` alone is not a reliable yes/no: a container
+# runtime's seccomp profile can deny access(X_OK) and make it answer false for a file the shell can
+# still execute. Measured in this image on Docker 19.03.15's default profile: `[ -x .../python3 ]` is
+# false, `[ -e .../python3 ]` is true, and the same path runs `python3 -V` normally. The launcher in
+# bin/strata carries the same helper for the same reason (issue #4309).
+python_usable() {
+  [ -f "$1" ] || return 1        # a directory can be executable too, and it is never a Python
+  [ -x "$1" ] && return 0        # the usual case, and the one a seccomp profile can answer wrongly
+  "$1" -c 'pass' 2>/dev/null     # access(X_OK) denied but the file is there: let the interpreter answer
+}
+
+PYBIN="$APP/terminal/python/bin/python3"
+python_usable "$PYBIN" || PYBIN=$(command -v python3 || echo python3)
 STATE_DIR="${XDG_STATE_HOME:-/data/state}/strata"
 KEY_FILE="${STRATA_KEY_FILE:-/data/state/api-key}"
 PHASE_FILE=/run/strata-phase
@@ -325,12 +324,6 @@ fi
 [ -n "$model_path" ]      && { set -- "$@" --model-path "$model_path"; have=1; }
 [ -n "${CONTEXT:-}" ]     && { set -- "$@" --context "$CONTEXT"; have=1; }
 [ -n "${PARALLEL:-}" ] && [ "${PARALLEL}" != "auto" ] && { set -- "$@" --parallel "$PARALLEL"; have=1; }
-if [ -n "${DRAFTING:-}" ]; then
-  case "$(printf '%s' "$DRAFTING" | tr 'A-Z' 'a-z')" in
-    auto|mtp|dflash2|off) set -- "$@" --drafting "$(printf '%s' "$DRAFTING" | tr 'A-Z' 'a-z')"; have=1 ;;
-    *) die "DRAFTING=$DRAFTING is not one of auto, mtp, dflash2, off." 2 ;;
-  esac
-fi
 [ -n "${KV:-}" ]          && { set -- "$@" --kv "$KV"; have=1; }
 if [ -n "${VISION:-}" ]; then
   case "$(printf '%s' "$VISION" | tr 'A-Z' 'a-z')" in
@@ -362,6 +355,8 @@ if [ -n "$roles" ]; then
   set -- "$@" --gpu-roles "$roles"; have=1
 fi
 [ -n "${STRATA_SET:-}" ] && { for kv in $STRATA_SET; do set -- "$@" --set "$kv"; done; have=1; }
+[ -n "${DRAFTING:-}" ] && { set -- "$@" --drafting "$DRAFTING"; have=1; }
+[ -n "${DRAFT_VOCAB:-}" ] && { set -- "$@" --draft-vocab "$DRAFT_VOCAB"; have=1; }
 if [ -n "$key" ]; then
   set -- "$@" --api-key-env STRATA_LAUNCH_KEY
 else

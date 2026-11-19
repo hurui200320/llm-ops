@@ -2,29 +2,28 @@ name: strata-image
 
 # Builds a Strata (AMD HIP, RDNA 3: gfx1100 / gfx1101 / gfx1102) image for the llm-ops lanes and pushes it to GHCR.
 #
-# Upstream builds these images from signed release engine packages with docker/build.sh (nothing is compiled), but
+# Upstream builds these images from signed release engine packages with tools/docker/build.sh (nothing is compiled), but
 # since 0.2.5 it ships one engine-less installer per OS and has published no Docker image at all after 0.2.3. This
 # workflow therefore:
 #
-#   1. fetches the released qwen engine package through upstream's own docker/fetch-engines.py — the signed feed,
+#   1. fetches the released qwen engine package through upstream's own tools/docker/fetch-engines.py — the signed feed,
 #      the archive's SHA-256, the manifest hash, the package signature and every file are checked there — so the
 #      engine is byte-identical to what upstream puts in its own images;
-#   2. builds the image with upstream's docker/build.sh from the same tag, and smoke-tests it in-image.
+#   2. builds the image with upstream's tools/docker/build.sh from the same tag, and smoke-tests it in-image.
 #
-# The result is what an upstream 0.2.15-rocm-gfx110x build assembles: the released package, the Terminal
-# from the same tag. Two deviations, both upstream bugs worked around locally:
-#   1. upstream's docker/build.sh forgets to stage third_party/strata-gguf-py (the folder package_terminal.py's
-#      INSTALLER_THIRD_PARTY puts into the Terminal bundle), so the build step pre-stages it into an explicit --ctx
-#      context — upstream's own tracked tree, staged byte for byte, nothing else added;
-#   2. 0.2.15's verify gate (packaging/binary_deps.py) removed libatomic.so.1 from the "OS base" list, but the
-#      0.1.60 rx7900 package needs it from the OS (see the patch step) — one carried patch:
-#      deploy/strata/patches/0.2.15-libatomic-verify.patch.
-# (History: v0.2.11 needed one build-context patch — upstream fix 5d37280d,
-# which makes docker/build.sh stage the metal/tools/ sources its own package_terminal.py copies; v0.2.12 contains
-# it. 0.2.14's docker/ then changed on its own: the image no longer carries llama.cpp — the Terminal vendors
-# gguf-py (third_party/strata-gguf-py) and the Dockerfile's seed stage is gone, but the same release left the
-# folder out of build.sh's staging list (see the build step; still unfixed on v0.2.15, first seen as our CI run
-# 43801311873).
+# The result is what an upstream 0.2.16-rocm-gfx110x build assembles: the released package and the Terminal from the
+# same tag. One deviation, an upstream build-context bug worked around locally: upstream's tools/docker/build.sh does
+# not stage engine/third_party/strata-gguf-py (the folder tools/packaging/package_terminal.py's INSTALLER_THIRD_PARTY
+# puts into the Terminal bundle), so the build step pre-stages it into an explicit --ctx context — upstream's own
+# tracked tree, staged byte for byte, nothing else added.
+# (History: v0.2.11 needed one build-context patch — upstream fix 5d37280d, which makes tools/docker/build.sh stage
+# the metal/tools/ sources its own package_terminal.py copies; v0.2.12 contains it. 0.2.14's docker/ then changed on
+# its own: the image no longer carries llama.cpp — the Terminal vendors gguf-py — but the same release left the
+# folder out of build.sh's staging list (see the build step; first seen as our CI run 43801311873, still unfixed on
+# v0.2.16). 0.2.15 additionally needed deploy/strata/patches/0.2.15-libatomic-verify.patch: its verify gate
+# (packaging/binary_deps.py) had dropped libatomic.so.1 from the "OS base" list while the 0.1.60 package needed it
+# from the OS. 0.2.16's packages bundle libatomic.so.1 (tools/packaging/notices/libatomic.txt), so that patch is
+# gone.)
 # Until 2026-11-04 the workflow also compiled a gfx110x `strata-dsv41` DeepSeek engine into the image with the
 # TheRock ROCm wheels; the DeepSeek lane moved to Project Maya that day (notes/maya.md 20261104) and the build was
 # removed — the record: notes/strata.md 20261104; 0.2.14 removed the dsv41 engine sources from upstream's repo.)
@@ -52,30 +51,24 @@ on:
 env:
   IMAGE: ghcr.io/hurui200320/llm-ops-strata
   STRATA_REPO: Niko1221/Strata
-  # Terminal sources and the Dockerfile. v0.2.15 is an app/Terminal round (Terminal 0.2.15 / Control 0.1.61: a
-  # chosen drafter stays chosen across a restart with no Drafting word, serve #5979 makes a declared boolean tool
-  # argument written True / False the boolean, serve #6055 makes a stop without --shutdown-timeout begin the drain
-  # and refuse new requests with 503 server_draining instead of accepting and cutting them off, #5601 reads an
-  # empty state file as not there yet); the engines stay 0.1.60, so no lane re-runs setup. Its docker/ is
-  # byte-identical to v0.2.14.1's (entrypoint sha 1e6e0290…), so the entrypoint fork carries over untouched — but
-  # its build.sh still forgets to stage the vendored gguf-py folder into the build context, and its verify gate
-  # refuses the 0.1.60 package on libatomic (both worked around locally: the pre-stage in the build step and the
-  # carried patch deploy/strata/patches/0.2.15-libatomic-verify.patch; drop both when upstream fixes them,
-  # expected 0.2.16).
-  STRATA_REF: v0.2.15
-  # The RELEASE that carries the signed feed and the Qwen engine packages. 0.2.15's feed (sequence 127) lists the
-  # engine packages with absolute URLs into the v0.2.14 release: the 0.1.60 rx7900 files are byte-identical to the
-  # ones the lanes already run (manifest sha256 09cb87e8…), and the pairing — Terminal 0.2.15 sources with the
-  # sequence-127 feed — is exactly upstream's own shipped 0.2.15 update. The feed's Ed25519 signature and the
-  # package (size, SHA-256, manifest hash, every file) are verified below. Engine folder name unchanged, so the
-  # lanes keep their install records, packs and MTP are reused, and no lane re-runs setup. The headline is
-  # serve/Terminal-only: #5979 (a declared boolean tool argument written True / False is the boolean — a
-  # tool-calling fix), #6055 (a stop without --shutdown-timeout drains and refuses new requests with 503
-  # server_draining instead of accepting and cutting them off), #5601 (an empty state file is not there yet), and
-  # the drafting-word persistence (a chosen drafter stays chosen; DFlash2 no longer stands in for a chosen MTP —
-  # the lanes pass --drafting mtp explicitly, so inert here). No new settings and no HIP toolchain change: the
-  # gate below re-checks hipBLASLt 100200 + the tuning table.
-  ENGINE_RELEASE: v0.2.15
+  # Terminal sources and the Dockerfile. v0.2.16 is a Terminal/engine round (Terminal 0.2.16 / Control 0.1.62; engines
+  # 0.1.62 on every platform — Control and the engines share one number from here, there is no 0.1.61). The top-level
+  # folders moved into engine/, app/, terminal/, docs/ and tools/ (docker/ → tools/docker/, packaging/ →
+  # tools/packaging/, third_party/ → engine/third_party/), so every path below follows. The engines are Strata's own
+  # code (no ggml, no llama.cpp matrix kernels; upstream measured token-identical answers on an R9700), and upstream's
+  # entrypoint now forwards DRAFTING / DRAFT_VOCAB itself, so the entrypoint fork carries four changes (the key
+  # conditional, the final warning, the chat-template swap, the picture budget). Its build.sh still forgets to stage the
+  # vendored gguf-py folder into the build context (worked around in the build step).
+  STRATA_REF: v0.2.16
+  # The RELEASE that carries the signed feed and the Qwen engine packages. 0.2.16's feed (sequence 128) lists the 0.1.62
+  # packages as assets of this same release: strata-engine-0.1.62-linux-x86_64-hip-rx7900.tar.gz (276,843,935 B, sha256
+  # b0e14bf8…). The feed's Ed25519 signature and the package (size, SHA-256, manifest hash, every file) are verified
+  # below. The engine folder name changes (0.1.60 → 0.1.62), so each lane runs one setup pass (packs and the MTP layer
+  # are reused). What changes for this box: #6032 R1-R6 tool-call parser round, layer-split Stop handling (#6011),
+  # the #6055 drain follow-up (a request cut by a stop fails 503), conversation-cache checkpoint fixes (#5847/#5848),
+  # and a new keyless /v1 foreign-Origin check (covered by STRATA_ALLOWED_HOSTS=fedora-tuf). No HIP toolchain change:
+  # the gate below re-checks hipBLASLt 100200 + the tuning table.
+  ENGINE_RELEASE: v0.2.16
   # hipBLASLt version the package's gfx1100 tuning table must match (BUILD.json hipblaslt_version).
   HIPBLASLT_TABLE_VERSION: "100200"
 
@@ -128,7 +121,7 @@ jobs:
       - name: Fetch the released qwen engine package (signed feed, every file verified)
         run: |
           set -euo pipefail
-          python3 strata/docker/fetch-engines.py --release-tag "$ENGINE_RELEASE" \
+          python3 strata/tools/docker/fetch-engines.py --release-tag "$ENGINE_RELEASE" \
             --flavors rocm-gfx110x --out pkgs > fetch.out
           cat fetch.out
           line="$(tail -1 fetch.out)"
@@ -181,34 +174,21 @@ jobs:
             echo "ENGINE_MANIFEST_SHA=$(sha256sum "$PKG_DIR/engine-component.json" | cut -d' ' -f1)"
           } >> "$GITHUB_ENV"
 
-      - name: Apply the carried verify patch (libatomic OS list)
-        run: |
-          set -euo pipefail
-          # 0.2.15's verify gate (packaging/binary_deps.py) removed libatomic.so.1 from the "OS base" list,
-          # betting the engine packages bundle it. The 0.1.60 rx7900 package (the v0.2.14 files) does NOT
-          # bundle it yet: its librocm_sysdeps_numa.so.1 imports libatomic.so.1 and the package's own
-          # SYSTEM-LIBS.txt declares it as an OS requirement (first seen as our CI run 43844311473:
-          # "REFUSED: ... needs libatomic.so.1, which is neither bundled nor an OS / GPU driver library").
-          # The image runtime stage installs libatomic1 anyway (upstream's own Dockerfile), so the package
-          # is correct and only the static list is wrong for this engine generation. The patch re-adds
-          # libatomic.so.1 to LINUX_OS; verified to apply on v0.2.15. Drop the patch when upstream bundles
-          # libatomic in the engine package (expected 0.2.16).
-          git -C strata apply --verbose "$GITHUB_WORKSPACE/deploy/strata/patches/0.2.15-libatomic-verify.patch"
-
       - name: Build the image from the engine package (nothing else is compiled)
         run: |
           set -euo pipefail
-          # Upstream v0.2.15's docker/build.sh does not stage third_party/strata-gguf-py into the build
-          # context (package_terminal.py's INSTALLER_THIRD_PARTY copies it into the Terminal bundle; the
-          # paths= list was not updated when the folder replaced the llama.cpp seed — first seen as our
-          # CI run 43801311873, still unfixed on v0.2.15). Until upstream fixes the list (expected 0.2.16),
-          # pre-stage the folder into an explicit --ctx context: build.sh merges its own staging into it,
-          # and the Dockerfile's COPY terminal-src/ /src/ carries it into the terminal stage. The folder
-          # is upstream's own tracked tree, staged byte for byte.
+          # Upstream v0.2.16's tools/docker/build.sh does not stage engine/third_party/strata-gguf-py into the build
+          # context (tools/packaging/package_terminal.py's INSTALLER_THIRD_PARTY copies it into the Terminal bundle;
+          # the paths= list was not updated when the folder moved under engine/ — first seen as our CI run 43801311873,
+          # still unfixed on v0.2.16). Until upstream fixes the list, pre-stage the folder into an explicit --ctx
+          # context: build.sh merges its own staging into it, and the Dockerfile's COPY terminal-src/ /src/ carries it
+          # into the terminal stage. In the container /src is the staged terminal-src tree, so package_terminal.py's
+          # engine_part() resolves the folder at engine/third_party/strata-gguf-py below it. The folder is upstream's
+          # own tracked tree, staged byte for byte.
           ctx="$(mktemp -d /tmp/strata-ctx.XXXXXX)"
-          mkdir -p "$ctx/terminal-src/third_party"
-          cp -a strata/third_party/strata-gguf-py "$ctx/terminal-src/third_party/"
-          strata/docker/build.sh --flavor hip --engine "$PKG_DIR" --repo strata \
+          mkdir -p "$ctx/terminal-src/engine/third_party"
+          cp -a strata/engine/third_party/strata-gguf-py "$ctx/terminal-src/engine/third_party/"
+          strata/tools/docker/build.sh --flavor hip --engine "$PKG_DIR" --repo strata \
             --version "$IMAGE_VERSION" --tag "$IMAGE:$IMAGE_TAG" --ctx "$ctx"
           rm -rf "$ctx"
           docker image inspect "$IMAGE:$IMAGE_TAG" --format 'built {{.RepoTags}} {{.Size}} bytes'
@@ -251,13 +231,13 @@ jobs:
           {
             echo "### entrypoint fork"
             echo ""
-            echo "deploy/strata/entrypoint-local.sh is upstream's /opt/strata/entrypoint.sh plus five changes"
+            echo "deploy/strata/entrypoint-local.sh is upstream's /opt/strata/entrypoint.sh plus four changes"
             echo "(--no-api-key when no key is set, no false \"made one\" warning, the pack chat-template swap,"
-            echo "the picture-reader token budget, and the DRAFTING launch flag)."
-            echo "The diff below is expected to be non-empty; if upstream changed anything beyond those five,"
+            echo "and the picture-reader token budget; upstream forwards DRAFTING / DRAFT_VOCAB itself)."
+            echo "The diff below is expected to be non-empty; if upstream changed anything beyond those four,"
             echo "re-apply the fork before the first start."
             echo '```diff'
-            diff -u strata/docker/entrypoint.sh deploy/strata/entrypoint-local.sh | head -200 || true
+            diff -u strata/tools/docker/entrypoint.sh deploy/strata/entrypoint-local.sh | head -200 || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
