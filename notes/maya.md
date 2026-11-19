@@ -355,3 +355,57 @@ Upgraded to `v1.1.65` (commit `c81fab6c9d63cf69b928f92460e0a662b28aa9ec`, 45 com
   180 s (exit 3) and #827 logged the exact stage (`the prompt: layer 23`) and token position. Force power-off restored
   16 GT/s x4 with 0 errors and `b65-r3` completed cleanly (full record:
   [notes/hardware-failure.md](hardware-failure.md) 20261116).
+
+# 20261119 Maya 1.1.67 upgrade: GLM expert-tier correctness fix, both engines at parity
+
+Upgraded to `v1.1.67` (commit `56b5216ab4464ac41c26b1be32eb63b98de53d0a`, 41 commits over `v1.1.65` across
+1.1.66-1.1.67, CI run `44454418707` / job `135325853855`, `ghcr.io/hurui200320/llm-ops-maya:1.1.67-rocm-gfx1100`,
+digest `sha256:c5797740e83ca0500db7d409ad3486f14b6f25d3115938ccb702cdd7d94dbba0`, 30,145,736,189 B, stamps
+`src=11955178a26fb65b` / vision `src=95d632a5d503389d`; the llama.cpp pin `3cf03257...`, the ROCm base digest
+`3db551c4...` and the `engine=0.1.27` session ABI are unchanged - the slots survived).
+
+- **Upstream changes that matter here**: **c38b974** fixes GLM computing an expert with another expert's weights
+  (a refill move and a route could land the same expert in two VRAM slots under one key; the clean-up then freed a
+  RAM slot the device still pointed at, and a later route read another expert's bytes - silent, no error, frequency
+  growing with the share of experts in the RAM tier). Our GLM lane runs `MAYA_GLM_RAM_GB=36` with most experts
+  outside VRAM, so it is in the affected class; upstream says answers on affected PCs can differ after the fix
+  because they are now correct, speed unchanged. Also here: **#906** (a STOP during a shared start no longer
+  disturbs the next turn - the DS lanes keep conversations in slots), **#1004** (a GLM prompt GPU fault names the
+  GPU and layer; `MAYA_GLM_PREFILL_CHECK=1` names the stage), **#951** (idle sleeps as settings:
+  `MAYA_GLM/DS4_SERVICE_NAP_US` / `_SLEEP_MS`, defaults = the lengths used so far), **#880** (`MAYA_PAR_MAX`,
+  inert without `--parallel`), **#923/#972/#973/#927** (setup/web-chat fixes, setup path only) and the EXL3
+  `reorder.py` tool (#929; our lanes are GGUF). Inert on this host: the 1.1.66/1.1.67 helper-link decode work
+  (AMD APU + NVIDIA, +19 % / +4 %) is gated on `helper.linked()`; the verify-window timed choice is `auto` only
+  on compute capability 7.0 and only where every routable expert is in VRAM/helper (unset on gfx1100 still means
+  the staggered groups - the "experts outside VRAM ... no timed choice" line never fired in the engine logs); the
+  #501 drafter-route profile counts only apply with a drafter (`--suffix-draft 0` on both DS lanes).
+- **Verification**: all 3 lanes passed the 7/7 functional gates plus the `:ablation` alias on GLM (6/6 + 4K plain
+  and through the alias; 4K `prompt_tokens` 10,579 on GLM - unchanged - and 1,146 on both DS lanes). Slots kept
+  across the bump: abiray 217 conversations / 9.28 GB, the main DS lane 81 / 12.37 GB (accumulated since
+  20261116; 1 stale conversation removed), GLM 4 / 6.06 GB; live configs clean, no entrypoint diff lines.
+- **Tier-table probe**: one 160-token decode on the GLM tune tree with `MAYA_GLM_TIER_VERIFY=1` (128 boundaries a
+  card): **all counters zero** - no stale RAM entries, no expert in two VRAM slots, no entry-host splits, no
+  routes through a stale entry or a promoted copy (the check is diagnostic only, off by default).
+- **Interleaved 512k A/B vs 1.1.65** on the tune trees (`cache_n 0`, `run_longctx --ctx 524288 --in-pcts 40,85
+  --out-pct 1 --reps 1`, 2 points an arm each):
+
+  | Lane / level | 1.1.65 (r1 / r2) | 1.1.67 (r1 / r2) | Mean Δ | Floors (other / mon) & notes |
+  | --- | ---: | ---: | ---: | --- |
+  | **DS** pp 40 % | 1,380.0 / 1,330.3 (1,355.2) | 1,381.6 / 1,344.1 (1,362.9) | +0.6 % | 854-873 / 541-561 MiB; `MemAvailable` 12.9-13.5 GiB, swap >=63.8 GiB free |
+  | **DS** tg 40 % | 26.00 / 25.50 (25.75) | 25.40 / 26.00 (25.70) | -0.2 % | — |
+  | **DS** pp 85 % | 1,235.5 / 1,258.1 (1,246.8) | 1,263.1 / 1,231.0 (1,247.1) | 0.0 % | — |
+  | **DS** tg 85 % | 26.60 / 27.30 (26.95) | 26.90 / 27.50 (27.20) | +0.9 % | — |
+  | **GLM** pp 40 % | 967.5 / 967.9 (967.7) | 962.7 / 967.4 (965.1) | -0.3 % | 149-159 / 342-354 MiB; `MemAvailable` 11.6-11.9 GiB, swap >=69.5 GiB free |
+  | **GLM** tg 40 % | 17.70 / 17.70 (17.70) | 17.00 / 18.60 (17.80) | +0.6 % | acceptance 0.749-0.750 vs 0.731-0.787 |
+  | **GLM** pp 85 % | 970.4 / 976.7 (973.6) | 965.7 / 980.3 (973.0) | -0.1 % | — |
+  | **GLM** tg 85 % | 16.80 / 16.30 (16.55) | 16.70 / 18.00 (17.35) | +4.8 % | acceptance-led (0.728 vs 0.752) |
+
+  Both engines at parity; the GLM tg deltas sit inside the lane's 16.3-18.8 t/s band and track draft acceptance,
+  pp (the clean compute signal) is unchanged.
+- **Answer identity**: all 4 DS bit-probes are byte-identical (`a68ac5c2...`); all 4 GLM probes are byte-identical
+  and keep the `9eec69b5...` hash of the 1.1.64/1.1.65 rounds. The tier fix is a race (upstream saw it on 3x V100
+  with `MAYA_GLM_REPEATABLE=1`), so a clean probe does not contradict it - the fix is why this RAM-heavy lane is
+  trusted after the bump.
+- **Deployment**: the three `deploy/llama-swap.config.yaml` lanes now point at `1.1.67-rocm-gfx1100` (commit
+  `3f104b5`); llama-swap picked the new image up through its config watcher, and the first starts printed clean
+  config installs and the slot restores above.

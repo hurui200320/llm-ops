@@ -263,27 +263,31 @@ lane. The DeepSeek identity carries the ABI plus `ds4.txt`/`engram.bin`/
 1.1.55 -> 1.1.56 bump and its 134 (11.51 GB), the GLM lane's 4, survived 1.1.57 -> 1.1.58 (no pack or ABI
 change). Records: [notes/maya.md](../../notes/maya.md) 20261107/20261111.
 
-Measured on the deployed config (2026-11-16, Maya 1.1.65): the 1.1.65 bump was verified with the 7/7 functional
+Measured on the deployed config (2026-11-19, Maya 1.1.67): the 1.1.67 bump was verified with the 7/7 functional
 gates on all three maya lanes plus the `:ablation` alias on the GLM lane (6/6 + 4K plain and through the alias;
 chat, tool call, `reasoning_effort: none`, primes, fenced code, 420x420 and 3840x2160 pictures): 4K
 `prompt_tokens` 10,579 on the GLM lane plain and through the alias (the 137x77 grid, no downscale) and 1,146 on
 both DS lanes (the canonical count for the deterministic gate image). Slots kept across the bump: abiray 217
-conversations / 9.28 GB, the main DS lane 8 / 0.39 GB, GLM 4 / 6.06 GB; live configs clean, no entrypoint diff
-lines. Interleaved 512k A/Bs against 1.1.64 on the tune trees (`cache_n 0`; DS 2 points per arm, GLM 2+1 — one
-b65 85 % point was lost to the second GPU1 link drop, [notes/hardware-failure.md](../../notes/hardware-failure.md)
-20261116, and re-ran clean after the recovery): **both engines at parity** — DS pp -0.3 / -0.1 %, tg -0.6 /
--1.1 % at 40 / 85 % (tg 26.7 t/s at 85 %), GLM pp -0.1 / +1.5 %, tg +4.0 / +9.9 % (acceptance-led, inside the
-lane's 16.3-18.8 t/s both-version band; pp is the clean compute signal and it is unchanged). The release's
-active changes here are the #899 Linux-HIP pool-check wait (never waited on this host — frees read back
-promptly), the #860 drafting-stall report (report-only, never fired) and the #827 engine-error reporting
-(observed live when the hardware drop hung the engine: the 503 carried the exit code, the reason, the stage and
-the position); the #794 DeepSeek fix is Windows-only and the mixed-GPU work is gated on an NVIDIA card — inert
-on an all-AMD host. GLM tune-tree answers were byte-identical across all 5 points including across versions
-(`9eec69b5...`, the same hash as the morning 1.1.64 round); the DS bit-probe keeps its boot-to-boot divergence
-with 3 of 4 byte-identical. The 1.1.64 bump (2026-11-16 morning): 7/7 gates + alias, interleaved A/B vs 1.1.61
-at parity on both engines (DS pp -1.6 / -1.9 %, tg +0.2 / -0.3 %; GLM pp -2.7 / -0.8 %, tg +3.9 / +11.7 %, all
-inside the run-to-run spreads; the #956 tie-rule fix changed nothing on this `DS4_SPLIT=18,22` pair). The
-1.1.61 bump (2026-11-14): 7/7 gates (4K tokens
+conversations / 9.28 GB, the main DS lane 81 / 12.37 GB, GLM 4 / 6.06 GB; live configs clean, no entrypoint diff
+lines. Interleaved 512k A/Bs against 1.1.65 on the tune trees (`cache_n 0`; DS 2 points per arm, GLM 2): **both
+engines at parity** — DS pp +0.6 / 0.0 %, tg -0.2 / +0.9 % at 40 / 85 % (tg 27.2 t/s at 85 %), GLM pp -0.3 /
+-0.1 %, tg +0.6 / +4.8 % (acceptance-led, inside the lane's 16.3-18.8 t/s both-version band; pp is the clean
+compute signal and it is unchanged). The release's active change here is the GLM expert-tier correctness fix
+(c38b974): an expert could be computed with another expert's weights when part of the experts sit in RAM, and
+this lane keeps 36 GB of them in the RAM tier - answers can differ from 1.1.65 because they are now correct, and
+a 160-token `MAYA_GLM_TIER_VERIFY=1` probe on the tune tree read 128 boundaries a card with all counters zero.
+#906 (a STOP during a DS shared start) and #1004 (a GLM prompt fault naming the GPU and layer) also land here;
+the 1.1.66/1.1.67 helper-link decode work (APU + NVIDIA) is gated on a linked NVIDIA card and the verify-window
+timed choice on compute capability 7.0 - both inert on this all-AMD host, as is #501 with `--suffix-draft 0`.
+All 4 GLM tune-tree answers were byte-identical including across versions (`9eec69b5...`) and the 4 DS probes too
+(`a68ac5c2...`). The 1.1.65 bump (2026-11-16): 7/7 gates + alias, interleaved A/B vs 1.1.64 at parity on both
+engines (DS pp -0.3 / -0.1 %, tg -0.6 / -1.1 %; GLM pp -0.1 / +1.5 %, tg +4.0 / +9.9 %, acceptance-led), slots
+abiray 217 / 9.28 GB, DS 8 / 0.39 GB, GLM 4 / 6.06 GB; the #899 Linux-HIP pool-check wait, the #860
+drafting-stall report and the #827 engine-error reporting were the active changes, the #794 DeepSeek fix is
+Windows-only. The 1.1.64 bump (2026-11-16 morning): 7/7 gates + alias, interleaved A/B vs 1.1.61 at parity on
+both engines (DS pp -1.6 / -1.9 %, tg +0.2 / -0.3 %; GLM pp -2.7 / -0.8 %, tg +3.9 / +11.7 %, all inside the
+run-to-run spreads; the #956 tie-rule fix changed nothing on this `DS4_SPLIT=18,22` pair). The 1.1.61 bump
+(2026-11-14): 7/7 gates (4K tokens
 10,579 / 1,146), DS slots 9 / 1.15 GB and GLM 4 / 1.50 GB kept, and its interleaved DS A/B vs 1.1.60 measured
 **pp +4.4 % at 40 % and +8.6 % at 85 %** (the RDNA3 expert-unpack and sparse-attention changes, matching
 upstream's +8-9 % claim) at unchanged tg; boot-to-boot answer divergence noted there. The 1.1.60/1.1.59 bumps
@@ -301,16 +305,16 @@ picture turn (2026-11-06, camera check; the vision budget unchanged): `prompt_to
 with no downscale, answer correct, **527 MiB monitor free idle, 1164 MiB during the turn** (349 MiB on the other
 card), 2,265 + 2,304 = 4,569 experts in VRAM; the encoder lends 4.76 GB from the pool for the ~15 s encode and
 gives it back (the 1.1.60 gate run: 10,581 tokens, no downscale). The tuning arms, the 1.1.53
-numbers and the against-setup deltas: [notes/glm/5.3-flash.md](../../notes/glm/5.3-flash.md); the 1.1.57-1.1.65
-A/Bs and bump records: [notes/maya.md](../../notes/maya.md) 20261110/20261111/20261114/20261116; the #861
+numbers and the against-setup deltas: [notes/glm/5.3-flash.md](../../notes/glm/5.3-flash.md); the 1.1.57-1.1.67
+A/Bs and bump records: [notes/maya.md](../../notes/maya.md) 20261110/20261111/20261114/20261116/20261119; the #861
 repack and the picture budget: [notes/maya.md](../../notes/maya.md) 20261107. Ready in ~31 s cold, stop 1-2 s.
 
 The lane's own bring-up (2026-11-06, the config above) measured the same within noise: auto split `[0,24)` /
 `[24,45)+MTP`, 2,265 + 2,304 = 4,569 experts, int8 KV, 16K chunks, 35.98 GB RAM tier; ready in 28 s; 7/7
 functional gates including the 4K picture (`prompt_tokens` 10,579, no downscale); min free VRAM 445 / 286 MiB,
-13.5 GiB `MemAvailable`, swap flat. Its 1.1.65 restart repeats the 7/7 gates plus the `:ablation` alias
+13.5 GiB `MemAvailable`, swap flat. Its 1.1.67 restart repeats the 7/7 gates plus the `:ablation` alias
 (10,579 picture tokens) on the new image. Record:
-[notes/maya.md](../../notes/maya.md) 20261106/20261107/20261110/20261111/20261112/20261116.
+[notes/maya.md](../../notes/maya.md) 20261106/20261107/20261110/20261111/20261112/20261116/20261119.
 
 The kept knobs above are what moves this lane; the rejected ones (per-card CPU lanes, promotion limits,
 `SPEC_WIN`, `MV_RDNA`, `GU22_TUNED`, DFlash2, no MTP at all (`MAYA_GLM_NO_MTP`, -19 % tg), the disk-skip
