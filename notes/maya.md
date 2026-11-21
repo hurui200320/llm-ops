@@ -409,3 +409,95 @@ digest `sha256:c5797740e83ca0500db7d409ad3486f14b6f25d3115938ccb702cdd7d94dbba0`
 - **Deployment**: the three `deploy/llama-swap.config.yaml` lanes now point at `1.1.67-rocm-gfx1100` (commit
   `3f104b5`); llama-swap picked the new image up through its config watcher, and the first starts printed clean
   config installs and the slot restores above.
+
+# 20261121 Maya 1.1.70 upgrade: DS picture-turn start protection, GLM conversation-switch bounce, both engines at parity
+
+Upgraded to `v1.1.70` (commit `b6632a0b11dffd2b197c3bbdcb140bbabbe9fa12`, 188 commits over `v1.1.67` across
+1.1.68-1.1.70, CI run `44877650534` / job `136765792643`, `ghcr.io/hurui200320/llm-ops-maya:1.1.70-rocm-gfx1100`,
+digest `sha256:3e0329d0e8f8e49a494bb4ad0c8ecc9d2c8556ee4e2ef8f3847c2511ac92998d`, 30,151,233,667 B, stamps
+`src=407b05da1087c538` / vision `src=79c45ead63434ff5`; the llama.cpp pin `3cf03257...`, the ROCm base digest
+`3db551c4...` and the `engine=0.1.27` session ABI are unchanged - the slots survived). The bump spans three
+releases whose headline (v1.1.68's new Hy4-Flash model with its `maya-hy4` engine, ~30k added lines) does not
+touch our lanes: `ENGINES=maya,maya-ds4` unchanged, no maya-hy4 build (tracked in [notes/TODO.md](TODO.md)
+pending an external score for the model).
+
+- **Integration points verified unchanged before the bump** (v1.1.67..v1.1.70 diff): setup.py's llama.cpp pin,
+  `compile_engine_hip`'s cmake line, `PY_PACKAGES`, the gfx1100 hipBLASLt table (62 rows), the session ABI
+  (`strata VERSION 0.1.27`) and every deployed `DS4_*` / `MAYA_GLM_*` / `MAYA_DS4_SLOT_*` knob. One new knob:
+  `MAYA_DS4_ARENA_THP` (below). No breaking changes.
+- **Upstream changes that matter here**:
+  - **#1007 (DS)**: prompts with pictures keep restore points - "a client that sends only its newest picture
+    had the whole conversation read again for every new picture" (upstream: 284 vs 24,743 tokens on a 24.7K
+    chat). The server now asks the engine for restore points on picture prompts too (`marks=`/`shared=`; the
+    start log carries "restore points a request asks for: up to 4 a conversation, 2.7 MB of RAM each",
+    `MAYA_DS4_RESTORE_POINTS` 4).
+  - **#1042 (DS)**: the experts' RAM arena no longer asks for transparent huge pages by default (start 296 s ->
+    105 s upstream under a full page cache); `MAYA_DS4_ARENA_THP=1` restores the old behavior. Kept the new
+    default (this host runs the DS lanes under documented page-cache/swap pressure).
+  - **#1070 (DS, AMD)**: the vision tower's cuBLAS handle/streams are made at the first picture, not at load
+    (upstream measured prompts ~25% slower with the tower loaded first on 3x RX 7900 XT). Our start log now
+    reads "the model's vision tower runs in the engine (GPU 0: none between pictures, ~332 MiB while one is
+    read, lent by the prompt buffers)".
+  - **#1006 (DS)**: a short request right after the load waits for the prompt path's GEMM warm-up instead of
+    risking the two-GPU warm-up hang (our llama-swap lanes' first request after a cold start is that shape).
+  - **#1037 (GLM, AMD)**: conversation switches copy through one pinned 64 MiB buffer kept for the engine's
+    life - "a switch no longer stops the answer". Active on our lane: "glm slots: pinned bounce 64 MB (AMD:
+    conversation switches free no registered memory)" in the start log.
+  - **#935 (DS)**: a failed GGUF expert-cache move is discarded instead of used; **#860** (GLM) names what a
+    stalled drafting step waits for; **#1058**: /metrics and request rows count every engine call after a tool
+    call or resumed answer; **#1007/3872b40**: an engine abort is no longer reported as "out of RAM"; #1014:
+    the tokenizer names token-table corruption.
+  - **New knob `cold=1`** (#1012, DS serve): a request line that reads its prompt from the first token, keeping
+    nothing from earlier requests - a maya-specific benchmarking control, NOT adopted in bench/ (the runners
+    must stay engine-agnostic across llama.cpp/strata/maya).
+  - **Expected inert here (verified in code)**: the DS peer all-reduce fixes (#1053, #1059) fire only for
+    tensor-parallel groups (`nm > 1`); our lanes are layer-split (`DS4_SPLIT=18,22`, the start log reads "layer
+    split across GPUs [0, 1]"). The EXL3-on-AMD kernel work (#968/#1000/#1008, `MAYA_DS4_HC_FUSE` on EXL3) and
+    the second-generation IQ2/IQ3 CPU-lane rows don't apply: both DS packs are `format gguf` with GPU-computed
+    experts. The GLM Windows-Radeon pin fix (#1035/#924) is Windows-only; the `MAYA_GLM_PREFILL_BLAS` scratch
+    sizing (#1047) only fires with that setting on (we don't set it); tools/vision changed MSVC-only.
+- **Verification**: all 3 lanes passed the 7/7 functional gates on the new image through llama-swap, plus the
+  `:ablation` alias on GLM (6/6 plain + 6/6 through the alias; 4K `prompt_tokens` 10,579 on GLM plain and
+  through the alias - unchanged - and 1,146 on both DS lanes). Cold starts: DS 30 s / 30 s, GLM 63 s (the GLM
+  wake also re-warmed the 37.9 GB expert RAM tier after two idle days). Live configs clean, no entrypoint diff
+  lines; the GLM direction file loads off as before; vision budgets unchanged (1140 DS, 12288 + the 4711 MiB
+  footprint pin GLM).
+- **Slots across the bump**: the main DS lane 80 conversations / 12.35 GB and GLM 4 / 6.06 GB - kept. The
+  abiray lane kept 2 / 0.02 GB and removed **215 as "not this model's or incomplete"**: not a 1.1.70 change -
+  the `MAYA_DS4_SLOT_DAYS` 7-day age limit (identical in 1.1.67) expired the lane's 2026-11-12..11-14-era
+  conversations (its bring-up and eval days); the 2 survivors' mtimes (11-15, 11-19) sit inside the window and
+  their recorded identities match what 1.1.70 computes (byte-compared from the `.meta`). Cache states, not
+  data; those conversations re-prefill on return.
+- **#1007 on our lanes** (`gate_pics.py`/`gate_pics2.py`, run on the production 1.1.70 lane and a 1.1.67 tune
+  arm): the **append path** (turn 2 keeps the old picture and adds a new one) restores fully on **both**
+  versions - turn 2 read `cache_n 1161` of 1,694 prompt tokens (wall 37 s -> 6 s) - that is the conversation
+  slot, unchanged behavior. The **edited-history path** (turn 2 drops the old picture, as #1007's client) read
+  the whole prompt on **both** versions (`cache_n 0`) in a stateless-request harness: the restore points are
+  active (the server asks for them; the feature needs the client's conversation continuity to fire, which a
+  keyless OpenAI request does not carry). No regression on either path; the fix's gain needs a client that
+  keeps the conversation key, which ours do not use.
+- **Interleaved 512k A/B vs 1.1.67** on the tune trees (`cache_n 0`, `run_longctx --ctx 524288 --in-pcts 40,85
+  --out-pct 1 --reps 1`, 2 points an arm each, `ab70_run.sh`/`glm70_run.sh` from the 1.1.67 templates):
+
+  | Lane / level | 1.1.67 (r1 / r2) | 1.1.70 (r1 / r2) | Mean Δ | Floors (card0 / card1) & notes |
+  | --- | ---: | ---: | ---: | --- |
+  | **DS** pp 40 % | 1,362.5 / 1,352.1 (1,357.3) | 1,339.5 / 1,326.4 (1,333.0) | -1.8 % | 819-843 / 868-882 MiB; `MemAvailable` 11.2-11.7 GiB, swap >=62.3 GiB free; the delta sits inside the lane's historical run-to-run spread (1,285-1,385 across recent rounds; the 1.1.61->1.1.64 A/B called -1.6 % parity), and no release change touches the DS GGUF prompt path |
+  | **DS** tg 40 % | 26.00 / 25.30 (25.65) | 25.50 / 26.10 (25.80) | +0.6 % | — |
+  | **DS** pp 85 % | 1,262.7 / 1,255.2 (1,259.0) | 1,236.5 / 1,263.7 (1,250.1) | -0.7 % | — |
+  | **DS** tg 85 % | 27.30 / 27.20 (27.25) | 27.20 / 27.30 (27.25) | 0.0 % | — |
+  | **GLM** pp 40 % | 966.0 / 965.1 (965.6) | 966.3 / 967.2 (966.8) | +0.1 % | 159-165 / 650-673 MiB; `MemAvailable` 9.5-9.9 GiB, swap >=65.1 GiB free |
+  | **GLM** tg 40 % | 17.30 / 18.70 (18.00) | 19.10 / 17.10 (18.10) | +0.6 % | acceptance 0.78-0.79 both arms |
+  | **GLM** pp 85 % | 958.1 / 961.9 (960.0) | 961.1 / 973.1 (967.1) | +0.7 % | — |
+  | **GLM** tg 85 % | 18.70 / 18.00 (18.35) | 19.30 / 16.50 (17.90) | -2.5 % | acceptance-led (0.794/0.756 vs 0.752/0.731); all points inside the lane's 16.3-18.8 t/s band |
+
+  Both engines at parity: pp (the clean compute signal) is unchanged on GLM and inside the spread on DS; tg
+  tracks draft acceptance as on every recent round.
+- **Answer identity**: DS - the 1.1.70 arms are byte-identical to each other and to the canonical
+  `a68ac5c2...` hash of the 1.1.64/1.1.65/1.1.67 rounds (3 of 4 points; the a67-r2 probe diverged
+  `7362338b...`, the lane's documented boot-to-boot variance). GLM - the two arms of each interleaved round
+  are byte-identical to each other (r1 `9fa82f8a...` on both, r2 `9eec69b5...` on both; the latter is the
+  canonical hash of the previous rounds, reproduced on 1.1.70), with round-to-round boot variance as
+  documented since 1.1.61 - no version effect.
+- **Deployment**: the three `deploy/llama-swap.config.yaml` lanes point at `1.1.70-rocm-gfx1100` (commit
+  `5fdc4bf`); llama-swap picked the new image up through its config watcher, and the first starts printed
+  clean config installs and the slot states above. The lanes are left unloaded (lazy start on demand).
