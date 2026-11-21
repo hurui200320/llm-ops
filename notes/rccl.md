@@ -78,3 +78,51 @@ Tensor mode's reduced weight traffic is outweighed by communication; estimated
 pp/tg slowdown is 2–4x. An OpenJev (Qwen 3.8 27B derivative) prompt-only run
 confirmed slower **pp** than layer mode; tg was not measured. Keep layer split;
 the baseline below already includes its negligible PCH handoff cost.
+
+# 20261120 Pipeline parallelism is also blocked: RCCL p2p fails, not just collectives
+
+The 20261004 verdict was based on collectives (all-reduce). vLLM's
+`--pipeline-parallel-size 2 --tensor-parallel-size 1` needs only point-to-point, so it
+was worth re-testing as an escape hatch. It is blocked too.
+
+**vLLM startup** (vLLM 0.34.0, `vllm/vllm-openai-rocm:latest`, Qwen3-Embedding-8B,
+PP=2/TP=1, 32768 max len): RCCL's `ncclCommInitRank` and vLLM's process groups
+initialize fine; the failure is the one-element warm-up all-reduce in
+`PyNcclCommunicator._init_comm`, which runs before any weights are loaded:
+
+```text
+RuntimeError: NCCL error: unhandled cuda error
+Last error:
+HIP failure 'the operation cannot be performed in the present state'
+  at /__w/rockrel/rockrel/build/comm-libs/rccl/build/hipify/src/enqueue.cc:2119
+```
+
+**Minimal probe** (`torch.distributed`, 2 ranks, 1 KB tensor, `send`/`recv` only -
+the sole op PP needs): `init_process_group('nccl')` succeeds on both ranks, then the
+first `irecv` enqueue fails with the identical `enqueue.cc:2119` error.
+
+| flags | `init_process_group` | first `send`/`recv` |
+|---|---|---|
+| none | OK | **fail** `enqueue.cc:2119` |
+| `NCCL_P2P_DISABLE=1` | OK | **fail** `enqueue.cc:2119` |
+| `NCCL_P2P_DISABLE=1 HSA_ENABLE_SDMA=0` | OK | **fail** `enqueue.cc:2119` |
+
+`NCCL_P2P_DISABLE` is honored - RCCL logs `NCCL_P2P_DISABLE set by environment to 1`
+and still builds `Ring 0 : 1 -> 0 -> 1 ... type PHB/PIX, nChannels 1`. Disabling P2P
+only changes the chosen transport; the enqueue still faults, so the SHM fallback is
+not a workaround here.
+
+Related RCCL warning on this host, unrelated to the atomics routing limitation:
+`Missing "iommu=pt" from kernel command line which can lead to system instability or
+hang!` (and `DMA_BUF Support Enabled ... pci_p2pdma`).
+
+Conclusions:
+
+- No RCCL-based engine is viable on this pair, at any parallelism degree. This covers
+  vLLM PP as well as TP, and any torch-distributed path.
+- For stateless workloads (embeddings), run **N independent TP=1 replicas** instead of
+  one PP/TP job - no RCCL, no pipeline bubble, and each replica keeps full per-GPU
+  memory. Do not spend more time on RCCL flags.
+- `HSA_ENABLE_SDMA=0` is a workaround for genuine SDMA ring hangs, not for atomics or
+  this enqueue fault. The SDMA timeouts in `hardware-failure.md` were a symptom of an
+  already-removed device, not a cause.
