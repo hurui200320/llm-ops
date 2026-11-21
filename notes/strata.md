@@ -494,3 +494,73 @@ With `maya-ds4` serving the ISTA set faster on every axis ([notes/maya.md](maya.
   `2,592.9/66.90` and `2,660.7/64.15` vs `2,529.2/66.65` and `2,710.0/65.55` — prompts and decode neutral
   ([`qwen3.8/Flash-Next.md`](qwen3.8/Flash-Next.md) 20261119).
 
+# 20261121 Upgrade to 0.2.17 (engine 0.1.63) — tool-call value/number parser round, #6149 single trim, gguf-py build fix upstream
+
+- **Pins (0.2.17)**: `ghcr.io/hurui200320/llm-ops-strata:0.2.17-rocm-gfx110x`, digest
+  `sha256:6eb6d626c409fa9b878698707ef919e2b24c61f8f235780a38f924159e910233` (CI run `44878386430`), built from upstream
+  `v0.2.17` commit `12d491da4a6904eb49aaa6f2f63ec4b1a17582e3` (Terminal 0.2.17 / Control `0.1.63`; engines `0.1.63` on
+  every platform — Control and the engines share one number). Engine package
+  `strata-engine-0.1.63-linux-x86_64-hip-rx7900.tar.gz` (276,956,684 B, asset sha256 `537cc480…`, manifest `ebb4bc45…`,
+  `build_id 01d81206d420+rocm`, 587 files, feed sequence 129); hipBLASLt table **byte-identical** (`1bb8cd2e…`, 26 rows,
+  version `100200`) — the gate passed without a pin change. Upstream `entrypoint.sh` sha256 `ff4dcd96…` (was
+  `1150f912…`): 0.2.17 only reworded the Podman/CUDA help messages (a Podman line in the card-mismatch text, a longer
+  CUDA hint); the HIP branch is unchanged, and the fork re-applied its four changes on top (verified: exactly five diff
+  hunks, `sh -n` OK).
+- **Build simplification**: v0.2.17's `tools/docker/build.sh` stages `engine/third_party/strata-gguf-py` itself (the
+  `paths=` entry the 0.2.14 layout move forgot), so the workflow's `--ctx` pre-stage is **retired** — the build step is
+  now a plain upstream build, and `deploy/strata/README.md`'s "one deviation remains" paragraph is gone.
+- **Checked and inert here**: the route tail skip now defaults off everywhere, but 0.2.16's default-on was CUDA +
+  gfx1200/1201 only (`generate.cpp`), so gfx1100 answers do not change; the two-card split CPU prefill share is
+  hard-gated to CUDA builds (`default_share_layout(..., cuda=false)` keeps the HIP split off); `STRATA_ADAPT_FETCH=2`,
+  the sm_120 short-read/decode switches and the PCIe-link share rule are cc12/sm_120-only; DFlash2 still refuses beside
+  `--pipeline-windows` (lanes stay MTP); the Terminal stdin guard fires only when no model is named (our lanes always
+  pass `--model-path`/`--preset`); the RAM−17 budget rule exempts IQ3_S and our explicit `resident-budget-gib=28` wins
+  anyway (no config migration); the #4866 NUMA-balancing guard is inert on fedora-tuf (`kernel.numa_balancing = 0`)
+  but protective. `STRATA_POOL_DEP` is on by default in the CPU expert pool (bit-exact upstream, −2.9% window; our
+  ~22 GiB CPU-side experts run through it, same 15-worker layout in the start log).
+- **What changes for this box**: the tool-call parser round — #5883 (a tool-call value holding `</parameter>` then
+  `</function>` and more of the file is kept whole; the case behind the 20261106 `write_file` repro), #6138, #4754
+  (declared numbers written `+10`/`010`/`.5`), #6120 (a refused tool call is not re-declared from history),
+  #5605/#5640 (quote before end-of-thinking); **#6149** — with an explicit `--layer-split` + `--trim-stage-weights`
+  (both in our `STRATA_SET`) the post-search trim no longer frees and re-loads CUDA0's dense projections: the startup
+  now shows one `162 native projection matrices … in 0.5 s` load and the old second `(55 MiB freed)` + reload line is
+  gone (it had run on every start since 0.2.14.1); the HIP Linux NUMA guard (#4866, measured upstream on gfx1100 +
+  Flash-Next IQ3_S); cgroup-v1 RAM-probe credits; setup merges the hipBLASLt table into the run config's env instead
+  of replacing it (#4296). Engine correctness fixes ride along (#2955 NaN-preserve in PLE/prefill, verify-window
+  stalls, #5841 IQ4_XS draft head).
+- **Rollout (2026-11-21)**: host checkout pulled `93459b7` (workflow + fork + config + READMEs). `docker pull` from
+  ghcr.io worked **directly** this time (the 0.2.16 TLS block did not recur); digest matched CI. In-image inventory:
+  `strata 0.2.17 (build 0.1.63)`, engine `0.1.63 linux-x86_64-hip`, `usable: true`, no problems. One setup pass per
+  lane (the 0.1.62 run settings name the old engine folder and are dropped; packs/MTP reused, `Vision budget:
+  max_tokens=8192, min_tokens=1024` re-applied on the reload). Placement: vanilla **8,324 (15.10 GiB) + 7,609
+  (15.25 GiB) = 15,933** slots (0.2.16: 15,858), RAM copy 21.85 GiB, lend 2,816; SC117 **8,279 + 7,575 = 15,854**
+  (0.2.16: 15,773), RAM copy 22.0 GiB, lend 2,817; MTP 1,348 MiB; `session is up (engine 0.1.63)`. Graceful stop
+  2.6 s (vanilla).
+- **Verification**: 13 API gates per lane through llama-swap — chat, `/props` n_ctx 262144, declared bool tool arg
+  (`include_forecast: true`), multi-turn tool result, `:npt` alias answers, vision red/blue through the own reader,
+  **#5883 write_file repro kept whole (`<tail-marker/>` survives)**, **#4754 `.5` number arg parses**, own-Origin 200 /
+  foreign-Origin 403. In-image suites: parser set (all `test_parser_*` + `test_value_closer_pair` + bool/cut args)
+  **94/94**, tool suites (`test_tool_format` with `qwen4_intake_fixtures` mounted from the upstream v0.2.17 tree,
+  `test_tool_corpus`, argument types, dialect wrappers) **32/32**; full serve discover **2,076 tests, 88 skipped,
+  4 errors — all environment-only** (repo-only `test_strata_tokenizer` / `make_profile` / `web_i18n` modules and the
+  app `Monitor.tsx` absent from the image) — and 1 failure: `test_telemetry_adl.test_reader_choice` expects the ADL2
+  reader "when sysfs reads nothing", but on this real AMD host the mocked `os.name=nt` still finds readable sysfs, so
+  `_AmdWin` is correctly never called; the test and the `monitor_reader` gate are byte-identical in 0.2.16 and it
+  passes on upstream's GPU-less CI runner — test hermeticity, not a regression.
+- **`:npt` finding (not a regression)**: `preserve_thinking` in `chat_template_kwargs` is **silently dropped** by
+  Strata's OpenAI request path in 0.2.16 and 0.2.17 alike (`serve/frontend.py` forwards only `enable_thinking: false`
+  and `reasoning_effort` to the render; `enable_thinking` verified working live: prompt 67→27 and reasoning suppressed).
+  The alias therefore never stripped historical thinking — single-turn replies keep `reasoning_content`, and
+  `prompt_tokens` are identical with and without `:npt`. Upstream-worthy report if the strip matters later.
+- **Longctx spot (262144, `--out-pct 10`, 60/85%, 2 reps, vanilla)**: 60% pp **2,574.0** / tg **66.15**, 85% pp
+  **2,674.4** / tg **65.25**, accept 0.68 — vs 0.2.16's 2,592.9/66.90 and 2,660.7/64.15: prompts and decode neutral
+  (all within ±2%; per-rep pp/tg 2,566.2/66.40, 2,581.8/65.90, 2,662.8/65.70, 2,685.9/64.80;
+  [`qwen3.8/Flash-Next.md`](qwen3.8/Flash-Next.md) 20261121).
+- **One watchdog stall, first in the log's history**: the spot's first calibration after a fresh engine start hit
+  `no progress for 60 s (reading the prompt, from token 0)` — GPU 0's prompt work "still running" at the layer-26
+  hand-off while the host sat idle 60 s, then the engine's own `#267` release reported "the GPU finished in 0 ms"
+  (a lost GPU event) and the watchdog restarted the engine; every later prefill was clean. Two targeted repros
+  (fresh start, big prompt as the very first request, one per lane) were both clean (125,065 tokens, 200 in ~2 min).
+  The `#267` recovery path is unchanged from 0.2.16; the stall did not occur once in the 0.2.14.1–0.2.16 log history.
+  Recorded as an intermittent first-request race, self-healed; re-check if it recurs in daily use.
+

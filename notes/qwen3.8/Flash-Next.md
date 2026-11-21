@@ -573,3 +573,20 @@ Placement, rollout and verification: [../strata.md](../strata.md) 20261119. Reco
 `bench/results/longctx/qwen3.8-flash-next-iq3s-20261119-142315.json` (out-pct 10),
 `qwen3.8-flash-next-iq3s-20261119-135812.json` (vanilla out-pct 1),
 `qwen3.8-flash-next-sc117-iq3s-20261119-140944.json` (SC117 out-pct 1).
+
+# 20261121 Engine 0.1.63 (Strata 0.2.17) longctx spot — neutral
+
+Same matched protocol (`run_longctx.py --ctx 262144 --out-pct 10 --in-pcts 60,85 --reps 2`, cold prefill every rep,
+vanilla lane, engine 0.1.63 / Terminal 0.2.17, same `STRATA_SET`), after one watchdog stall on the spot's very first
+calibration (recovered by the engine's auto-restart; see [../strata.md](../strata.md) 20261121):
+
+| Run | 60% pp / tg | 85% pp / tg | acceptance |
+| --- | --- | --- | --- |
+| 0.2.17 (2026-11-21) | 2574.0 / 66.15 | 2674.4 / 65.25 | 0.676 / 0.687 |
+| 0.2.16 (2026-11-19) | 2592.9 / 66.90 | 2660.7 / 64.15 | 0.695 / 0.674 |
+
+Prompts −0.7% (60%) / +0.5% (85%), decode −1.1% / +1.7% — neutral within the box's spread (all four reps within
+±1% of their level means; per-rep pp/tg 2566.2/66.40, 2581.8/65.90, 2662.8/65.70, 2685.9/64.80). `STRATA_POOL_DEP`
+(default-on in 0.1.63's CPU expert pool) ran in this measurement. Placement moved +75/+81 CUDA0 slots vs 0.2.16
+(15,933 / 15,854 total per lane). Rollout and verification: [../strata.md](../strata.md) 20261121. Record:
+`bench/results/longctx/qwen3.8-flash-next-iq3s-20261121-164846.json`.
