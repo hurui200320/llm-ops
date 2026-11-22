@@ -1,11 +1,11 @@
 #!/bin/sh
 # Fork of upstream's /opt/strata/entrypoint.sh for the llm-ops llama-swap lane.
 #
-# Changes from upstream v0.2.17 (image
-# ghcr.io/hurui200320/llm-ops-strata:0.2.17-rocm-gfx110x, terminal 0.2.17 / engine
-# 0.1.63; sha256
-# ff4dcd96a74c92e80379331e0a0c8df38e749771d33bab7652bd92670c39d94b). Upstream's
-# 0.2.17 entrypoint only reworded the Podman/CUDA help messages (a Podman line in
+# Changes from upstream v0.2.19 (image
+# ghcr.io/hurui200320/llm-ops-strata:0.2.19-rocm-gfx110x, terminal 0.2.19 / engine
+# 0.1.65; sha256
+# ff4dcd96a74c92e80379331e0a0c8df38e749771d33bab7652bd92670c39d94b — tools/docker/entrypoint.sh is byte-identical
+# since v0.2.17, whose entrypoint only reworded the Podman/CUDA help messages (a Podman line in
 # the card-mismatch text and a longer CUDA hint); the HIP branch is unchanged.
 # Upstream documents and forwards DRAFTING / DRAFT_VOCAB itself, and carries the
 # python_usable() probe for the bundled Python (issue #4309), both unchanged. The
