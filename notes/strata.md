@@ -564,3 +564,69 @@ With `maya-ds4` serving the ISTA set faster on every axis ([notes/maya.md](maya.
   The `#267` recovery path is unchanged from 0.2.16; the stall did not occur once in the 0.2.14.1–0.2.16 log history.
   Recorded as an intermittent first-request race, self-healed; re-check if it recurs in daily use.
 
+# 20261122 Upgrade to 0.2.19 (engine 0.1.65) — RDNA3 default-on kernel suites, first speed win on the lanes
+
+- **Pins (0.2.19)**: `ghcr.io/hurui200320/llm-ops-strata:0.2.19-rocm-gfx110x`, digest
+  `sha256:65ee080cea6da437665a705604389b7fb111a47382b10aeee182c53523191e5b` (CI run `45034259605`, repo commit
+  `d695d3cc`), built from upstream `v0.2.19` commit `c6f6427d9de9016fd92d13e29740f65625261df7` (Terminal 0.2.19 /
+  Control `0.1.65`; engines `0.1.65` on every platform — Control and the engines share one number; the 0.2.18
+  Hy4-Flash round, engines 0.1.64, was skipped). Engine package
+  `strata-engine-0.1.65-linux-x86_64-hip-rx7900.tar.gz` (271,188,189 B, asset sha256 `bd2e9d46…`, manifest
+  `c78e1250…`, `build_id 26350e4387b8+rocm`, 587 files, feed sequence 131); hipBLASLt table **byte-identical**
+  (`1bb8cd2e…`, 26 rows, version `100200`) — the gate passed without a pin change. Upstream `entrypoint.sh` sha256
+  `ff4dcd96…`, byte-identical to v0.2.17 (0.2.18/0.2.19 did not touch `tools/docker/entrypoint.sh`), so the fork
+  re-applied as-is (its four changes stand; header updated).
+- **Build (no deviations)**: the workflow stays a plain upstream build. v0.2.19's `tools/docker/build.sh` grew an
+  optional `--shape-engine` flag (unused — no shape engine is staged) and its `fetch-engines.py` now also downloads
+  the feed's `strata-hy4` 0.1.64 (from the v0.2.18 release) and `strata-inkling` 0.1.65 rx7900 shape packages into
+  `pkgs/shapes/` (~200 MB extra CI download); the gate's `cut -f1`/`cut -f3` parsing survives the new output
+  columns and only the main qwen engine enters the image.
+- **What changes for this box (the RDNA3 round)**: the engine applies two default-on switch suites on discrete
+  gfx1100/1101/1102 (`gfx11_extra.hpp`; the start log names them) — **24 bitwise-exact** switches (GDN_HEAD,
+  GDN_PP, Q8/Q6_PACKED, EXPERT_V2/V2K, SMALL_UNR, …) and **11 KL-validated matrix-core** switches (HIP_WMMA,
+  PF_F16, PF_P1A_L2, DFLASH_WMMA, HIP_FAST_DEC, …; upstream quotes 1.44–2.10x prefill / +17–22% decode on RX 7900
+  XT). **HC-Q8 is on by default** (8-bit hyper-connection weights, quantized at load — answers can differ slightly;
+  `STRATA_HC_Q8=0` keeps the bf16 read), `PcieAuto` defaults on for discrete RDNA3 (the split probed 27.6 GB/s
+  host→device → `pcie_frac 0.15`, CUDA1 7.0 GB/s → `0.19`), and the bare `--prefill auto` chunk ceiling rises to
+  32,768 on Linux — the split's serve plan still **chose** 8,192-token chunks with the 96-slot ring (the ceiling is
+  a maximum, not the chosen size). `STRATA_Q6_PACKED` packed the MTP draft head (+212.9 MiB). The CPU-side expert
+  pool moved to the **resident-RAM adaptive-swap mode** (23.16 GiB page-locked in RAM, adaptive swaps with the GPU
+  cache, "R4 hit path"/"token graph hit path" in the log). Serve-side: Claude Code's per-request
+  `x-anthropic-billing-header` stamp is pinned llama.cpp-style (agent prompts keep conversation-cache reuse past
+  the first 16K; carried, not gate-tested here).
+- **Checked and inert here**: the IQ2_XS/NVFP4-only LDS decode kernels (our lane is IQ3_S), the sm_120/89/86 CUDA
+  rounds, the parallel-slot suite (only fires at `--batch ≥ 2`; the lanes run `PARALLEL=1`), and DFlash2's 3.1x
+  WMMA drafter — **DFlash2 still refuses beside `--pipeline-windows`** (`generate.cpp`, same message), so the lanes
+  stay MTP (notes/TODO.md updated; also carries the new Inkling-2-Mini lane candidate — the shape engine rides the
+  feed but is not staged into our image).
+- **Rollout (2026-11-22)**: host checkout pulled `d695d3cc` (workflow + READMEs + llama-swap config; llama-swap's
+  `-watch-config` hot-reloaded it — the lane came up on the 0.2.19 image without a llama-swap restart). `docker
+  pull` from ghcr.io worked directly; digest matched CI. In-image inventory: `strata 0.2.19 (build 0.1.65)`,
+  engine `0.1.65 linux-x86_64-hip rx7900`, `usable: true`, no problems. One setup pass per lane via the init
+  recipe (the 0.1.63 run settings name the old engine folder and are dropped; packs/MTP reused); warm lane starts
+  54 s (vanilla) / 61 s (SC117) through llama-swap. The fork's vision budget re-applied on the lane start
+  (`Vision budget: strata-iq3_s.json: max_tokens=8192, min_tokens=1024`; reader warm-up 10.6 s / 1,161 MiB at
+  4096 tokens). Placement: vanilla **8,106 (14.70 GiB) + 7,195 (14.42 GiB) = 15,301** slots (0.2.17: 15,933), RAM
+  copy 23.16 GiB (was 21.85), lend 2,855, file tier 0.0 GiB, MTP 1,348 MiB + 212.9 MiB packed head; SC117
+  **8,116 + 7,162 = 15,278** (0.2.17: 15,854), RAM copy 23.3 GiB, lend 2,857. `prefill gemm: hipBLASLt tuning
+  enabled (26 rows, gfx1100, version 100200)` on every start; no `paused the GPU` lines; **no watchdog stall**
+  this time (the spot's first ~157k-token prompt after a fresh start was clean — the 20261121 first-request race
+  did not recur).
+- **Verification**: 10/10 API gates on each lane through llama-swap — chat SMOKE-OK, `/props` n_ctx 262144
+  (`build_info: Strata 0.1.65`, the repo's fixed template installed), declared bool tool arg, multi-turn tool
+  result, `:npt` alias answers (and `preserve_thinking` is **still silently dropped** by the OpenAI path in 0.2.19
+  — the 20261121 finding stands), vision red/blue through the own reader, the #5883 write_file repro kept whole
+  (`</parameter>`, `</function>` and `<tail-marker/>` all survived; needs `max_tokens ≥ 1200` — the model reasons
+  first), #4754 `.5` → JSON number `0.5`, own-Origin 200 / foreign-Origin 403 (against the lane's direct port —
+  llama-swap owns `/v1/models` and does not proxy `/props`, so those two gates run lane-direct).
+- **Longctx spot (262144, `--out-pct 10`, 60/85%, 2 reps, vanilla)**: 60% pp **2,903.4** / tg **74.20**, 85% pp
+  **3,010.3** / tg **71.35**, accept 0.689 — vs 0.2.17's 2,574.0/66.15 and 2,674.4/65.25: **prompts +12.8%/+12.6%,
+  decode +12.2%/+9.4%** — the first real speed win on this box since the lane exists, from the default-on RDNA3
+  suites with zero `STRATA_SET` changes (details: [`qwen3.8/Flash-Next.md`](qwen3.8/Flash-Next.md) 20261122).
+- **Bench-infrastructure findings (not Strata)**: (a) llama-swap does **not** enforce GPU exclusivity between the
+  two strata lanes — requesting a lane while the other holds the cards starts a second engine beside it (VRAM
+  starved, the lane fails and llama-swap answers 502; first bench attempt hit this). Keep one lane at a time; stop
+  the other lane before a lane-local benchmark. (b) The workstation's shell exports `http_proxy=127.0.0.1:2080`
+  and `fedora-tuf` does not resolve locally, so LAN HTTP from the workstation 502s through the proxy — host-side
+  benches run on fedora-tuf itself against `http://127.0.0.1:8080` (the two later 502s were this, not Strata).
+

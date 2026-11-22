@@ -590,3 +590,27 @@ Prompts −0.7% (60%) / +0.5% (85%), decode −1.1% / +1.7% — neutral within t
 (default-on in 0.1.63's CPU expert pool) ran in this measurement. Placement moved +75/+81 CUDA0 slots vs 0.2.16
 (15,933 / 15,854 total per lane). Rollout and verification: [../strata.md](../strata.md) 20261121. Record:
 `bench/results/longctx/qwen3.8-flash-next-iq3s-20261121-164846.json`.
+
+# 20261122 Engine 0.1.65 (Strata 0.2.19) longctx spot — first real speed win (RDNA3 default-on suites)
+
+Same matched protocol (`run_longctx.py --ctx 262144 --out-pct 10 --in-pcts 60,85 --reps 2`, cold prefill every rep,
+vanilla lane, engine 0.1.65 / Terminal 0.2.19, same `STRATA_SET` — zero lane changes; the 0.1.65 RDNA3 defaults
+(24 exact + 11 matrix-core switches, HC-Q8, PcieAuto) apply by themselves, no watchdog stall this time):
+
+| Run | 60% pp / tg | 85% pp / tg | acceptance |
+| --- | --- | --- | --- |
+| 0.2.19 (2026-11-22) | 2903.4 / 74.20 | 3010.3 / 71.35 | 0.689 / 0.689 |
+| 0.2.17 (2026-11-21) | 2574.0 / 66.15 | 2674.4 / 65.25 | 0.676 / 0.687 |
+| 0.2.16 (2026-11-19) | 2592.9 / 66.90 | 2660.7 / 64.15 | 0.695 / 0.674 |
+
+Prompts **+12.8% (60%) / +12.6% (85%)**, decode **+12.2% / +9.4%** over 0.2.17 — the first real speed win on this
+box since the lane exists, from engine 0.1.65's default-on RDNA3 kernel suites (upstream quotes more on single-GPU
+other-quant setups; this is our 2-card layer-split IQ3_S with `pipeline-windows=2` + MTP, where the split's serve
+plan still chunks at 8,192/ring 96). Draft acceptance 0.689 vs 0.676/0.687 — MTP unchanged. Per-rep pp/tg
+2859.8/73.20, 2947.0/75.20, 3002.7/71.10, 3017.8/71.60 (all four within ±2% of their level means). Placement moved
+−218/−447 slots vs 0.2.17 (15,301 / 15,278 total per lane) — the Q6-packed MTP head and the pipeline-window
+verifiers take VRAM, paid back by the resident-RAM adaptive-swap tier (23.2/23.3 GiB page-locked, adaptive swaps
+with the GPU cache, file tier 0.0 GiB). Calibration prefills already showed it: 157k in 52.7 s, 222k in 74.7 s
+(~2,980 tok/s). Rollout and verification: [../strata.md](../strata.md) 20261122. Record:
+`bench/results/longctx/qwen3.8-flash-next-iq3s-20261122-231716.json` (run on the host against
+`http://127.0.0.1:8080` — see the bench-infrastructure findings there).
