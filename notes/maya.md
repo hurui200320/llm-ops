@@ -501,3 +501,92 @@ pending an external score for the model).
 - **Deployment**: the three `deploy/llama-swap.config.yaml` lanes point at `1.1.70-rocm-gfx1100` (commit
   `5fdc4bf`); llama-swap picked the new image up through its config watcher, and the first starts printed
   clean config installs and the slot states above. The lanes are left unloaded (lazy start on demand).
+
+# 20261123 Maya 1.1.74 upgrade: #1026 VRAM-reserve honesty, #860 GLM drafting-stall fix, both engines at parity
+
+Upgraded to `v1.1.74` (commit `e8d4f297f434091082e4d297ea78dea0c7be3f57`, 196 commits over `v1.1.70` across
+1.1.71-1.1.74, CI run `45033542905` / job `137242165184`, `ghcr.io/hurui200320/llm-ops-maya:1.1.74-rocm-gfx1100`,
+digest `sha256:a9afb8b2625838ebf180319f2ae929b666bf11743b9dfb03140d8fc51eeccd28`, 30,157,889,908 B, stamps
+`src=9782082d9bdd98b7` / vision `src=b84305885f76723c`; the llama.cpp pin `3cf03257...`, the ROCm base digest
+`3db551c4...` and the `engine=0.1.27` session ABI are unchanged - the slots survived). The bump's bulk is
+Hy4-Flash (not built; tracked in [notes/TODO.md](TODO.md)) and the new Inkling-2-Mini engine `maya-ik2` (#1095,
+1.1.72-1.1.74: one 24 GB NVIDIA card, then experts-in-RAM, Volta/Turing, two GPUs, 1M ctx, and AMD Linux RDNA
+3/3.5/4 in 1.1.73 with RX 7000 "built but untested" upstream - experiment candidate, [notes/TODO.md](TODO.md)):
+`ENGINES=maya,maya-ds4` unchanged, no ik2 build, and `maya.py` compiles only the engines a config needs - first
+starts stayed at 27-49 s.
+
+- **Integration points verified unchanged before the bump** (v1.1.70..v1.1.74 diff): setup.py (llama.cpp pin,
+  `PY_PACKAGES`), `compile_engine_hip`'s cmake configure line (only the build step gained a multi-target
+  `also=`, irrelevant to our explicit `maya,maya-ds4` targets), `tools/hip/` gfx1100 tables, upstream
+  `entrypoint.sh` (our repo-carried copy needs no change), `tools/iq_pack.py` and `tools/ds4/` (no pack repack;
+  GLM `dense.bin` size stable), `serve/server.py`'s `chat_template_path()` (still swaps GLM-5 packs for
+  `serve/glm5_chat_template.jinja` - the lane mount stays valid), and every deployed `DS4_*` / `MAYA_GLM_*` /
+  slot knob. The vision binary recompiles in the image (`tools/vision/strata_vision.cpp` changed for ik2;
+  `glm5next_patch.py` unchanged; upstream: GLM/Qwen pictures "read the same"). No breaking changes.
+- **Upstream changes that matter here**:
+  - **#1026 (DS in 1.1.73, GLM/MiniMax/Hy4 in 1.1.74): the VRAM reserve is now kept for the whole run,
+    honestly.** Before, the engine's post-pool allocations (request buffers, the picture turn's transient) came
+    out of the reserve; now the engine measures them (the least free VRAM once loaded and between requests,
+    `late`), keeps that free **beside** the reserve, and records it per GPU/pack/build/settings in
+    `<pack>/vram-late.txt` (`MAYA_DS4_LATE_FILE` / `MAYA_GLM_LATE_FILE`, `=none` opts out; fixed
+    `MAYA_*_LATE_MB`). On the start that measures it the engine "may restart once by itself" - conditional, and
+    none of our starts ever restarted (the figure always fit inside what the reserve already kept). Our lanes set
+    reserves by hand, so the pool shrinks once `late` is recorded:
+    - DS lanes: 64/64 MiB at load, **416/416 after serving** (the 512k ladder's own transient buffers; the
+      abiray lane recorded 384/416 over its gate sequence). Next start keeps `1664 + 416` free: tune-tree
+      placement 2440+2108 = 4548 -> 2392+2067 = 4459 (+384 arm: 4466).
+    - GLM lane: 32/32 at load, **224/224 after serving**. Next start keeps `1200/650 + 224`: tune-tree
+      placement 2265+2304 = 4569 -> 2236+2277 = 4513.
+    - The A/B measured **no speed cost** from the smaller pools (below), so no re-tuning: the honest floor is
+      the feature, and the displaced experts land in the RAM tier's coldest slots. Fixed-figure opt-outs
+      (`MAYA_DS4_LATE_MB` / `MAYA_GLM_LATE_MB`) noted but not adopted.
+  - **#860 (GLM): the drafting stall regression since 1.1.53 is fixed** (an expert just moved VRAM->RAM could
+    stall a draft step waiting for its copy, then error). Our lane drafts MTP on a 36 GB RAM tier - in the
+    hole: both b74 GLM ladder arms ran with zero `glm stall:` lines, acceptance 0.72-0.78. New knobs
+    `MAYA_GLM_DRAIN_WAIT` / `MAYA_GLM_WIN_SUBMIT` default on.
+  - **#1086/#1027 (DS): the two-AMD-GPU hang fix** (the expert-table update between windows waited for the
+    second GPU's whole stream and never returned). We never needed `--no-expert-cache`; the fix retires the
+    risk. **#1076**: DS keeps reading a file unbuffered after an EFAULT refusal (logged once) instead of
+    demoting it to the page cache.
+  - **Inert on these lanes (verified in the diff/code, one probed)**: `MAYA_DS4_AR2_DECODE=1|2` (#1094, the
+    decode windows' all-reduces of a tensor-parallel group of two; probed on the tune tree: "no group of two -
+    not used" - the `DS4_SPLIT=18,22` layer split has none), `DS4_INDEX_TC_GFX12` (#1097, RDNA 4), the DS NUMA
+    copies (#1083, two-node hosts), the `DS4_SPLIT n@g` / `DS4_DSPARK_SAMPLE` opt-ins, #1026's
+    CLI-flag-into-config writing (our lanes carry `--reserve-mib` in their config args already), the #1089
+    `web_ui: false` opt-out (not adopted; the dashboard stays) and setup-keeps-everything fix, #1090's
+    read-only-folder GEMM-timings note (`HY4_LT_STORE` et al.; our packs live in writable `/data`, no log
+    line), the MiniMax two-GPU copy fix (#1100), and all the Hy4-Flash work (#1066, #1082, #1084, #1091/#1092,
+    #1100, #1122).
+- **Verification, gates, and the interleaved 512k A/B**: all 3 lanes passed the 7/7 functional gates on the new
+  image through llama-swap (6/6 `gate.py`-family + the 4K picture gate; GLM plain and through `:ablation`): 4K
+  `prompt_tokens` 10579 on GLM plain and through the alias (unchanged, no downscale) and 1146 on both DS lanes.
+  Cold starts 27 / 49 / 29 s (DS / GLM / abiray). Live configs clean, no entrypoint diff lines. Slots across the
+  bump: DS 82 conversations / 12.39 GB, GLM 3 / 5.83 GB, abiray 1 / 0.01 GB - each lane removed exactly one
+  stale slot ("not this model's or incomplete"; cache state only, the conversations re-prefill on return).
+  Reserves now read honest: DS free-with-loaded 1640/1620 (reserve 1664), GLM 1196/646 (1200/650). Vision
+  budgets unchanged (1140 DS, 12288 + the 4711 MiB footprint GLM). Interleaved 512k A/B vs 1.1.70 on the tune
+  trees (`cache_n 0`, `run_longctx --ctx 524288 --in-pcts 40,85 --out-pct 1 --reps 1`; `ab74_point.sh` /
+  `glm74_point.sh` from the 1.1.70 templates, arms `a70`/`b74`, the bits probe hardened to ride out a potential
+  #1026 measuring restart that never fired; 2 points an arm + one extra DS b74 point):
+
+  | Lane / level | 1.1.70 (r1 / r2) | 1.1.74 (r1 / r2 / r3) | Mean Δ | Notes |
+  | --- | ---: | ---: | ---: | --- |
+  | **DS** pp 40 % | 1,374.6 / 1,375.9 (1,375.3) | 1,370.6 / 1,360.5 / 1,374.0 (1,368.4) | −0.5 % | parity; the b74 arms ran the full pool (r1), then reserve+416 (r2), reserve+384 (r3) |
+  | **DS** tg 40 % | 26.3 / 26.4 (26.35) | 25.7 / 25.0 / 25.9 (25.5) | −3.1 % | a70's draws sit at the top of the lane's band; b74's mean is the historical mean (25.8 across the 1.1.61-1.1.70 rounds); band 25.0-26.5 |
+  | **DS** pp 85 % | 1,264.5 / 1,245.6 (1,255.1) | 1,257.4 / 1,265.8 / 1,256.9 (1,260.0) | +0.4 % | parity |
+  | **DS** tg 85 % | 26.5 / 25.7 (26.1) | 26.9 / 27.2 / 27.2 (27.1) | +3.8 % | all points in the 25.7-27.4 band |
+  | **GLM** pp 40 % | 966.7 / 965.8 (966.3) | 963.4 / 949.5 (956.5) | −1.0 % | inside the lane's 943-978 band; the dip concentrates in the reduced-pool point (r2) |
+  | **GLM** tg 40 % | 17.1 / 18.5 (17.8) | 18.0 / 17.0 (17.5) | −1.7 % | acceptance-led (0.77 vs 0.77); band 16.3-18.8 |
+  | **GLM** pp 85 % | 981.3 / 986.3 (983.8) | 977.6 / 967.4 (972.5) | −1.1 % | — |
+  | **GLM** tg 85 % | 16.3 / 17.6 (17.0) | 16.8 / 18.6 (17.7) | +4.4 % | acceptance 0.725 vs 0.745; acceptance-led as every round |
+
+  Both engines at parity: pp (the clean compute signal) is unchanged on DS and inside the band on GLM (its −1 %
+  mean concentrates in the reduced-pool r2 point; the same-pool r1 point is −0.4 %), tg is acceptance/sampling
+  led with every point inside the documented bands. **Answer identity**: DS - both a70 arms and b74-r2/r3 are
+  byte-identical to the canonical `a68ac5c2...` hash of the 1.1.64-1.1.70 rounds; b74-r1 diverged `50e9af4a...`
+  (the lane's documented boot-to-boot expert-admission variance, as a67-r2 did in the 1.1.70 round). GLM - all
+  four arms are byte-identical and reproduce the canonical `9eec69b5...` hash. No version effect.
+- **Deployment**: the three `deploy/llama-swap.config.yaml` lanes point at `1.1.74-rocm-gfx1100` (commit
+  `4c85720`, "maya build 1.1.74"); llama-swap's config watcher picked it up, the lanes ran the gates above, and
+  they are left unloaded (lazy start on demand). The tune-tree scripts (`ab74_point.sh` / `ab74_run.sh`,
+  `glm74_point.sh` / `glm74_run.sh`, arms `a70`/`b74`) live next to the 1.1.70 ones.
