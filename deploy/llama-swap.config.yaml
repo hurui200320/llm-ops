@@ -375,6 +375,12 @@ models:
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
+    # Strata 0.2.22's serve rejects a request whose model name looks like a Strata
+    # catalog ID but does not match the loaded one (#6621, in with the 0.2.20 round):
+    # "The model '...' is not loaded; currently serving '...'". The pack serves
+    # `qwen3.8-flash-next-iq3_s` (family + quant; not the file name), the public
+    # alias stays `...iq3s` — rewrite the model field on the way upstream.
+    useModelName: qwen3.8-flash-next-iq3_s
     # The graceful stop llama-swap allows is bounded by this value, so the
     # 120 s `docker stop` fits inside it with room to spare.
     healthCheckTimeout: 600
@@ -433,6 +439,9 @@ models:
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
     checkEndpoint: /health
+    # Same upstream model ID as the vanilla lane (family + quant, not the file's
+    # "abliterated"): 0.2.22's strict model check needs the same rewrite here.
+    useModelName: qwen3.8-flash-next-iq3_s
     healthCheckTimeout: 600
     concurrencyLimit: 20
     capabilities:

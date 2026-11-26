@@ -630,3 +630,85 @@ With `maya-ds4` serving the ISTA set faster on every axis ([notes/maya.md](maya.
   and `fedora-tuf` does not resolve locally, so LAN HTTP from the workstation 502s through the proxy — host-side
   benches run on fedora-tuf itself against `http://127.0.0.1:8080` (the two later 502s were this, not Strata).
 
+# 20261127 Upgrade to 0.2.22 (engine 0.1.69) — strict model-name check breaks the alias, lend-reserve A/B is flat
+
+- **Pins (0.2.22)**: `ghcr.io/hurui200320/llm-ops-strata:0.2.22-rocm-gfx110x`, digest
+  `sha256:9ce0be0c83c13c966ff78a28f262710ba6cead205d37fa46f0266ac76b508249` (2,025,370,001 B on host, built
+  1,580,510,883 B in CI, run `45799913085` job `139840145766`, repo commit `170302e`), built from upstream
+  `v0.2.22` commit `b28ca95e3` (Terminal 0.2.22 / Control 0.1.69; Qwen engines 0.1.69 — Inkling AMD/Intel/Apple
+  and Hy4 stay 0.1.67). Engine package `strata-engine-0.1.69-linux-x86_64-hip-rx7900.tar.gz` (276,779,151 B,
+  sha256 `b3104784…`, manifest `412db55b…`, `build_id a5bfe0369bfb+rocm`, 1,166,018,584 B installed; feed
+  sequence 136). hipBLASLt table unchanged (`1bb8cd2e…`, 26 rows, version `100200`) — the gate passed and every
+  start logs `prefill gemm: hipBLASLt tuning enabled (26 rows, gfx1100, version 100200)`. 0.2.20 / 0.2.21 /
+  0.2.21.1 were skipped (unified 4-tier planner round, engines 0.1.66; Inkling speed round, 0.1.67 + Control
+  0.1.68/.1) — 0.2.22 folds in the never-published 0.2.21.2 Control fixes.
+- **Build (no deviations)**: `tools/docker/build.sh`, `tools/docker/fetch-engines.py` and the `Dockerfile` that
+  build.sh renders are byte-unchanged v0.2.19..v0.2.22 (the shape-engine staging lives in `Dockerfile.src`, the
+  CUDA source-build path build.sh does not use). `tools/docker/entrypoint.sh` changed (`ff4dcd96…` →
+  `ce022f87…`: model-file checks accept `.strata`/`.safetensors` — a safetensors-index layout too — plus
+  `die()`/start-message rewording); the fork re-applied its four changes and nothing else (new fork sha256
+  `e28f196f…`). CI's package gate, `ldd` gate and component smoke passed (`strata 0.2.22 (build 0.1.69)`, engine
+  `0.1.69 linux-x86_64-hip`, `usable: true`, no problems); `docker pull` worked directly this time.
+- **Serve breaking change found during rollout (not in the release notes) — strict model names (#6621)**:
+  0.2.22's `serve/server.py check_model()` rejects a request whose model name *looks like* a Strata catalog ID but
+  does not match the loaded one — `The model '…' is not loaded; currently serving 'qwen3.8-flash-next-iq3_s'`
+  (`model_not_found`); 0.2.19 accepted any name. Both packs serve `qwen3.8-flash-next-iq3_s` (family + quant, not
+  the file name — the SC117 pack too), while the public llama-swap aliases are `…-iq3s` / `…-sc117-iq3s`, so every
+  proxied request 404'd although `/health` passed. Fixed in the repo: both llama-swap entries carry
+  `useModelName: qwen3.8-flash-next-iq3_s` (llama-swap v268 rewrites the request's model field upstream; the
+  public aliases and `/v1/models` listing are unchanged). Verified through llama-swap on both lanes.
+- **A/B — `STRATA_SPLIT_LEND_RESERVE` (#7089): flat here, not adopted.** Since 0.1.66 a 2-card split reserves
+  RAM for the prompt-path lend regions before filling the coldest expert tail; 0.2.22 keeps that default and adds
+  the opt-out (`0` fills the expert complement first, `1..99` = percent; the engine logs
+  `FileExpertSource: the stage lend reservation takes N%` when not 100). Vanilla lane, 262144 ctx, `--out-pct 10`,
+  60/85%, 2 reps: `LEND_RESERVE=0` 60% pp **2,902.5** / tg **74.55**, 85% pp **3,003.4** / tg **72.50** vs the
+  default's 2,923.2/74.20 and 3,017.1/72.30 — prompts −0.7%/−0.5%, decode +0.5%/+0.3%, i.e. **noise**. Our lend
+  slots are all RAM-backed already (2,856 of 2,856 keep their experts in RAM, RAM copy ~23.3 GiB on a 62 GiB
+  box), so both fill orders give the same resident set; the upstream +5.5–9% decode was measured on RAM-tight
+  pairs where the reservation pushed part of the decode copy out of RAM. Lanes stay on the default.
+- **Env-key persistence trap (confirmed, pre-existing)**: an uppercase `STRATA_*` key passed in `STRATA_SET` is
+  merged into the preset's `extra` and the launch config's `env`; a later launch re-adds it even after the key is
+  removed from `STRATA_SET`/the compose command — 0.2.11's `arg_layers.py` explicit layer (`launch_set` /
+  `user_args`) manages **flags only, not env keys**. Removing the A/B arm therefore also needed the key deleted
+  from the lane's `config/strata/launch-presets/docker.json` `extra` + a restart; verify with
+  `/proc/<engine pid>/environ` and the `lend reservation takes N%` line. (`STRATA_HIPBLASLT_TABLE` and
+  `STRATA_SCORES_THREAD` follow the same path, which is why `STRATA_SCORES_THREAD=1` lands in the engine env.)
+- **What changes for this box**:
+  - **#6776** (`gr_write_norm_rs` keeps the scalar sum-of-squares order in its vector path): Qwen prompt-reading
+    accuracy fix — answers can differ slightly from 0.2.19 after a few tokens; speed unchanged.
+  - **#7070**: 0.2.20 made a request with no sampling greedy under `--mtp` on every model; 0.2.22 restores the
+    model card's sampling for Flash-Next (only Qwen3.6 stays greedy) — the jump over 0.2.20/0.2.21 skips the
+    regression.
+  - RDNA2-4 Wave32 WMMA/DP4A HIP kernel round (0.2.20; 70.7 TFLOPS dense prefill, 451–583 GB/s decode upstream)
+    plus its 65535-safe grid striding / zero-amax NaN guards: first-class for K-quants/IQ3_XXS/IQ4_XS/NVFP4,
+    **IQ3_S has partial coverage only** — the longctx spot is neutral (below).
+  - #7060: the engine READY wait now re-arms on every sign of life (≤2 h) instead of a hard 15-min cut.
+  - #7044: Control's RAM-based conversation-cache auto-sizing is kept out by the lanes' explicit
+    `conversation-cache-mib=8192` (the engine derives `--conversation-cache-min-tokens 1024` on top).
+  - Inert here: the unified 4-tier planner defaults we already pin, `--layer-split auto`, #7022 (Inkling-fit K/V
+    planning), the Inkling/HY-4 work, macOS, WDDM, DSpark.
+- **Rollout (2026-11-27)**: one setup pass per lane (engine folder 0.1.65 → 0.1.69; the old run settings named
+  the 0.1.65 engine folder and were dropped; packs/MTP reused; the vision budget re-applied on SC117's first
+  lane start, vanilla already carried 8192/1024). Vanilla **8,134 + 7,195 = 15,329** slots (14.75 + 14.42 GiB;
+  later starts 8,024–8,134 — `expert-cache auto` sizes from free VRAM at plan time), RAM copy 23.1–23.3 GiB,
+  lend 2,854–2,856, MTP 1,348 MiB + 212.9 MiB packed head, ~2.08 GiB free after the cache (310 MiB taken since);
+  SC117 **8,079 + 7,161 = 15,240** (0.2.19: 15,278), RAM copy 23.28 GiB, lend 2,857. No `paused the GPU` or
+  watchdog lines in the new starts. **VRAM is the same plan as 0.2.19** (±0.2 GiB planning noise); at 85% context
+  the monitor reads ~23.4/22.9 GiB because the F16 K/V grows into the designed reserve (`vram-reserve-mib=1536`,
+  +256 MiB later-allocations pricing on CUDA1, 284 MiB second verifier) — not a regression.
+- **Verification**: 10/10 llama-swap gates on both lanes — chat SMOKE-OK, `/props` n_ctx 262144, declared bool
+  tool arg (`include_forecast: true` as JSON bool), multi-turn tool result, `:npt` alias, vision red/blue through
+  the own reader (2,126 prompt tokens, "red, blue"), **#5883** write_file repro kept whole (`<tail-marker/>`
+  survives), **#4754** `.5` → JSON `0.5`, own-Origin 200 / foreign-Origin 403, SC117 chat — plus the new
+  strict-model gate (both aliases through `useModelName`). Graceful stop **3.48 s** (0.2.19: 2.6 s). In-image
+  serve suite: **2,373 tests, 90 skipped, 116 errors — all environment-only**: 89 Inkling tests (our image carries
+  no `strata-inkling` shape engine and the image has no `tests/data/inkling/chat_template.jinja`), 12 tool tests
+  (repo-only `qwen4_intake_fixtures/`), 6 HY-4 dialect (`tests/data/hy4/chat_template.jinja`), 2 import errors
+  (`web_i18n`, `test_hy4_tokenizer`), 2 Qwen tokenizer/profile tests (`test_strata_tokenizer`, `make_profile`),
+  1 app `Monitor.tsx`, 1 Intel `server_intel.py`, 2 thread noise — **zero on the Flash-Next serve/parser paths**.
+- **Longctx spot (262144, `--out-pct 10`, 60/85%, 2 reps, vanilla, default arm)**: 60% pp **2,923.2** / tg
+  **74.20**, 85% pp **3,017.1** / tg **72.30**, accept 0.673/0.679 — vs 0.2.19's 2,903.4/74.20 and 3,010.3/71.35:
+  prompts +0.7%/+0.2%, decode 0%/+1.3%, i.e. **neutral** (IQ3_S sits outside the new kernel round). No watchdog
+  stall, no GPU pause. `:npt` re-check: `preserve_thinking` is still silently dropped by the OpenAI path in 0.2.22
+  (`serve/frontend.py` forwards `enable_thinking`/`reasoning_effort` only; the 20261121 finding stands).
+

@@ -267,6 +267,14 @@ macro.
   `STRATA_HIPBLASLT_TABLE=on` and `DRAFTING=mtp` (Qwen lanes). Never `KV=`, never
   `--slot-save-path`, never `DRAFTING` inside `STRATA_SET`. No entry passes `PRESET`: the
   image default `docker` is saved per lane under each tree's `config/strata/launch-presets/`.
+- **Upstream model name (`useModelName`)**: Strata 0.2.22's serve rejects a request whose
+  model name looks like a Strata catalog ID but does not match the loaded one (#6621, in
+  with the 0.2.20 round; not named in the release notes): `The model '…' is not loaded;
+  currently serving 'qwen3.8-flash-next-iq3_s'`. Both packs serve
+  `qwen3.8-flash-next-iq3_s` (family + quant, not the file name — the SC117 pack too),
+  while the public llama-swap aliases stay `…-iq3s`; both Qwen entries therefore set
+  `useModelName: qwen3.8-flash-next-iq3_s`. Without it every request 404s
+  (`model_not_found`) even though `/health` passes — 0.2.19 did not check the name.
 - **Uncensored Qwen lane (`qwen3.8-flash-next-sc117-iq3s`)**: serves the SC117 abliterated IQ3_S
   transplant with the same configuration as the vanilla lane, differing only in its `/data` mount
   (`/mnt/unenc-xfs/strata/sc117-Flash-Next-uncensored`) and `MODEL_PATH`. It requires its own
