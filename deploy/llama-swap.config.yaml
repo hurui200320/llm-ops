@@ -342,6 +342,14 @@ models:
 
 
   # Qwen3.8 Flash-Next IQ3_S on Strata.
+  # 512K context with YaRN x2 and INT8 KV (2026-11-27; provisional until the full
+  # bench suite re-passes): CONTEXT=512k makes setup re-run once and derive the
+  # rope config itself — past the trained 262144 it writes `--rope-scaling yarn
+  # --rope-scale 2` with the factor taken as context / 262144, so do not pin
+  # rope flags in STRATA_SET. kv=int8 is the install record's own value (setup's
+  # default; kv=fp16 overrode it from 2026-10-22 until now): at int8 the
+  # 524288-token slot takes about the VRAM the F16 262144 slot took. History:
+  # notes/qwen3.8/Flash-Next.md 20261127.
   # Picture reader budget (entrypoint fork change 4): 8192 image tokens at most,
   # 1024 at least — one token per 1024 px, so a 4K picture fits. See notes/strata.md.
   # DRAFTING=mtp pins the drafter explicitly (upstream's entrypoint env since 0.2.16):
@@ -357,12 +365,12 @@ models:
   # pipeline-windows=2/spec-min-p=0.7 from STRATA_SET.
   "qwen3.8-flash-next-iq3s":
     name: "Qwen3.8 Flash-Next IQ3_S"
-    description: "262144 ctx, F16 KV, Strata layer split over 2x7900XTX, fully resident @28 GiB, MTP, image 1024-8192 tok"
+    description: "524288 ctx (YaRN x2), INT8 KV, Strata layer split over 2x7900XTX, fully resident @28 GiB, MTP, image 1024-8192 tok"
     cmd: |
       ${docker-server-strata-rocm}
         -v /mnt/unenc-xfs/strata/ISTA-DASLab-Flash-Next:/data
         -e MODEL=IQ3_S
-        -e CONTEXT=256k
+        -e CONTEXT=512k
         -e GPUS=0,1
         -e PARALLEL=1
         -e MODEL_PATH=/models/strata/ISTA-DASLab-Flash-Next
@@ -370,7 +378,7 @@ models:
         -e VISION_TOKENS=8192
         -e VISION_MIN_TOKENS=1024
         -e DRAFTING=mtp
-        -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1"
+        -e STRATA_SET="kv=int8 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1"
         ghcr.io/hurui200320/llm-ops-strata:0.2.22-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
@@ -391,12 +399,12 @@ models:
     # context + text but drop tools and image. Strata's /props IS llama.cpp-shaped
     # (`chat_template_caps`, `modalities`: measured 2026-10-21), so a future
     # upstream that reports `owned_by: llamacpp` would make probing complete.
-    # Values here are from that live /props (tools on, GPU vision, n_ctx 262144).
+    # Values here are from that live /props (tools on, GPU vision, n_ctx 524288).
     capabilities:
       in: [text, image]
       out: [text]
       tools: true
-      context: 262144
+      context: 524288
       disableAuto: true
     filters:
       # Qwen3.8-style templates honour preserve_thinking, so chat_template_kwargs
@@ -416,17 +424,18 @@ models:
 
 
   # SC117 abliterated (uncensored) transplant of the same ISTA GSQ-RCO IQ3_S.
-  # Same picture-reader budget and the same MTP arm (DRAFTING=mtp) as the vanilla
-  # lane — DFlash2 was tried and reverted; see there for the numbers and the
+  # Same 512K/YaRN x2/INT8 KV change, picture-reader budget and MTP arm as the
+  # vanilla lane (mirrored 2026-11-27; the mechanism and history are there).
+  # DFlash2 was tried and reverted; see there for the numbers and the
   # future re-test path.
   "qwen3.8-flash-next-sc117-iq3s":
     name: "Qwen3.8 Flash-Next SC117 IQ3_S (abliterated)"
-    description: "262144 ctx, F16 KV, Strata layer split over 2x7900XTX, uncensored, MTP; image 1024-8192 tok"
+    description: "524288 ctx (YaRN x2), INT8 KV, Strata layer split over 2x7900XTX, uncensored, MTP; image 1024-8192 tok"
     cmd: |
       ${docker-server-strata-rocm}
         -v /mnt/unenc-xfs/strata/sc117-Flash-Next-uncensored:/data
         -e MODEL=IQ3_S
-        -e CONTEXT=256k
+        -e CONTEXT=512k
         -e GPUS=0,1
         -e PARALLEL=1
         -e MODEL_PATH=/models/strata/sc117-Flash-Next-uncensored
@@ -434,7 +443,7 @@ models:
         -e VISION_TOKENS=8192
         -e VISION_MIN_TOKENS=1024
         -e DRAFTING=mtp
-        -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1"
+        -e STRATA_SET="kv=int8 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1"
         ghcr.io/hurui200320/llm-ops-strata:0.2.22-rocm-gfx110x
     cmdStop: docker stop -t 120 ${MODEL_ID}
     proxy: http://127.0.0.1:${PORT}
@@ -448,7 +457,7 @@ models:
       in: [text, image]
       out: [text]
       tools: true
-      context: 262144
+      context: 524288
       disableAuto: true
     filters:
       # Same pack template as vanilla (9,993 chars); the :npt alias is identical.

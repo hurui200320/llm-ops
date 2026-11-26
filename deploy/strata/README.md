@@ -88,13 +88,13 @@ docker run -d --name strata-init --init --rm \
   -v /mnt/unenc-xfs/llm-ops/deploy/strata/entrypoint-local.sh:/entry-local.sh:ro \
   -v /mnt/unenc-xfs/llm-ops/templates:/templates:ro \
   -v /mnt/unenc-xfs/strata/ISTA-DASLab-Flash-Next:/data -v /mnt/unenc-xfs/models:/models:z \
-  -e MODEL=IQ3_S -e CONTEXT=256k -e GPUS=0,1 -e PARALLEL=1 \
+  -e MODEL=IQ3_S -e CONTEXT=512k -e GPUS=0,1 -e PARALLEL=1 \
   -e MODEL_PATH=/models/strata/ISTA-DASLab-Flash-Next \
   -e STRATA_HIPBLASLT_TABLE=on \
   -e CHAT_TEMPLATE_PATH=/templates/qwen3.8/Flash-Next-chat-template-fixed.jinja \
   -e VISION_TOKENS=8192 -e VISION_MIN_TOKENS=1024 \
   -e DRAFTING=mtp \
-  -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1" \
+  -e STRATA_SET="kv=int8 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1" \
   ghcr.io/hurui200320/llm-ops-strata:0.2.22-rocm-gfx110x
 docker logs -f strata-init    # wait for one-time setup to finish, then stop the container
 ```
@@ -110,10 +110,20 @@ override").
   `/data` (`Strata-data/`). Make sure each lane's GGUFs and `mmproj` stay co-located in its flat
   folder (a missing shard fails fast, whereas a missing `mmproj` causes setup to download ~907 MB into
   the data tree).
-- **Use `kv=fp16` in `STRATA_SET`, never `KV=fp16`.** Passing `KV=fp16` re-runs setup and rewrites the
-  install record. The lanes stay installed with default `int8`, and **`kv=fp16` in `STRATA_SET`**
-  appends `--kv fp16` to the engine argv after setup's own `--kv int8` is stripped, so
-  `desc_matches()` keeps matching on every start.
+- **KV cache: `kv=int8` in `STRATA_SET`, never `KV=`.** Setup's default is `int8` (the install
+  record carries `--kv int8`); the lane pins that value explicitly in `STRATA_SET`, which appends
+  `--kv int8` after setup's own copy is stripped, so `desc_matches()` keeps matching on every
+  start. Passing `KV=int8`/`KV=fp16` instead changes the launcher's own setting and re-runs setup
+  to rewrite the install record — use the `STRATA_SET` key. INT8 KV is half the bytes per token
+  (int8 codes + an fp16 scale per 64 values), which is what makes 524288 fit in the F16-262144
+  footprint; it is provisional until the full bench suite re-passes (AGENTS.md KV-quant rule).
+- **Context past 262144 is setup-owned YaRN.** `CONTEXT=512k` fails `desc_matches()` once, re-runs
+  setup warm, and setup derives the rope config from the context (`resolve_rope`: past the trained
+  262144 an omitted method is `yarn`, factor = context / 262144 = 2) and writes
+  `--rope-scaling yarn --rope-scale 2` into the run config. Do not pin rope flags in `STRATA_SET` —
+  they would drift from a later context change. The engine logs the resolved config
+  (`rope scaling yarn, factor 2 …, --max-context 524288 against a trained context of 262144`) and
+  the MTP drafter rotates through the same resolved scaling.
 - **`PARALLEL` defaults to "fit to the card"** (3 on 24 GB) and `strata launch` turns that into a
   profile override → `--batch 3` (batch slots are otherwise opt-in and disable `--pipeline-windows 2`).
   Set `PARALLEL=1` for the single-request lane (llama-swap's `concurrencyLimit: 20` is only its queue
@@ -263,7 +273,7 @@ macro.
   declared, not probed. llama-swap selects its prober from `/v1/models`' `owned_by`, which Strata
   omits, so discovery would fall back to the listing-only prober (context + text; no tools/image).
 - **Env passthrough**: `MODEL`, `CONTEXT`, `GPUS=0,1`, `PARALLEL=1` (Qwen lanes), `MODEL_PATH`, and
-  the `STRATA_SET` string (with `kv=fp16` on Qwen); plus the container env
+  the `STRATA_SET` string (with `kv=int8` on Qwen); plus the container env
   `STRATA_HIPBLASLT_TABLE=on` and `DRAFTING=mtp` (Qwen lanes). Never `KV=`, never
   `--slot-save-path`, never `DRAFTING` inside `STRATA_SET`. No entry passes `PRESET`: the
   image default `docker` is saved per lane under each tree's `config/strata/launch-presets/`.

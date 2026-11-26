@@ -614,3 +614,117 @@ with the GPU cache, file tier 0.0 GiB). Calibration prefills already showed it: 
 (~2,980 tok/s). Rollout and verification: [../strata.md](../strata.md) 20261122. Record:
 `bench/results/longctx/qwen3.8-flash-next-iq3s-20261122-231716.json` (run on the host against
 `http://127.0.0.1:8080` — see the bench-infrastructure findings there).
+
+# 20261127 512K context (YaRN x2) + INT8 KV — baseline, rollout and speed
+
+Closes the "Qwen3.8 Flash Next with YaRN x2 for 512k context?" TODO item ([../TODO.md](../TODO.md)).
+Both Qwen lanes move from 262144/F16 KV to **524288 with YaRN x2 and INT8 KV**; the declared state is
+[`deploy/llama-swap.config.yaml`](../../deploy/llama-swap.config.yaml) (both Qwen entries), and the
+operational mechanics — setup-owned rope (`resolve_rope()` derives yarn + factor 2 from the context, no
+rope flags in `STRATA_SET`), `kv=int8` as the install record's own value, and why int8 is what makes
+524288 fit (half the bytes per token: the 524288 int8 slot takes about the VRAM the F16 262144 slot
+took) — are in [`deploy/strata/README.md`](../../deploy/strata/README.md). INT8 KV is **provisional**
+until the full bench suite (tool call, reasoning, coding) re-passes: per AGENTS.md the lane only stays
+on it if the manual re-run shows no regression.
+
+## Baseline (0.2.22, 262144, F16 KV) — the first Flash-Next.md speed record on 0.2.22
+
+`run_longctx.py --ctx 262144 --out-pct 10 --in-pcts 60,85 --reps 2` through llama-swap, vanilla lane,
+cold prefill every rep (`cache_n` 0), run right before the restart:
+
+| Run | 60% pp / tg | 85% pp / tg | acceptance |
+| --- | --- | --- | --- |
+| baseline (2026-11-27) | 2,908.6 / 74.80 | 3,007.6 / 72.70 | 0.682 / 0.686 |
+| 0.2.22 upgrade spot ([strata.md](../strata.md) 20261127) | 2,923.2 / 74.20 | 3,017.1 / 72.30 | 0.673 / 0.679 |
+
+Per rep: 60% 2,865.3/74.60, 2,951.9/75.00; 85% 3,006.2/73.20, 3,009.0/72.20 (all `cache_n` 0,
+`finish stop`, latency 386/364/381/426 s). Within noise of the upgrade spot; this run is the adjacent
+control for the 512K spot below. Record
+`bench/results/longctx/qwen3.8-flash-next-iq3s-20261127-031019.json`.
+
+## 512K rollout landmarks (vanilla lane, 2026-11-27)
+
+First request after the `git pull` (llama-swap reload) started the lane in 62 s: one warm setup pass
+(setup printed its own `512K is more than the model was trained on (256K) … Setup adds rope scaling`
+warning), packs/MTP/mmproj reused, then a normal engine load. Verified live:
+
+- Engine argv / run config: `--max-context 524288 --rope-scaling yarn --rope-scale 2 --kv int8`
+  (the `args` in `/data/install/strata-iq3_s.json`; setup's `describe_config()` derives context/kv
+  from them, so later starts match and skip setup again). The vision budget kept
+  `max_tokens 8192 / min_tokens 1024`.
+- Engine log: `rope scaling yarn, factor 2 (freq_scale 0.5, base 1e+07, mscale 1.069315),
+  --max-context 524288 against a trained context of 262144` plus the magnitude-correction note; no
+  watchdog or `paused the GPU` lines.
+- `/props`: n_ctx **524288**, total_slots 1.
+- Placement vs 0.2.22: expert caches 7,829 (14.20 GiB) + 6,994 (14.02 GiB) = **14,823 slots**
+  (0.2.22: 15,219–15,329; −3%), RAM complement 24.05 GiB page-locked (was 23.1–23.3), lend
+  2,848/2,848 RAM-backed (5.44 GiB), file tier 0.0 GiB, MTP draft layer 1,396 MiB + 212.9 MiB
+  packed head, ~1.76 GiB free after the cache. The slightly smaller expert cache is the price of the
+  per-session state that does not halve with int8 KV (rope tables / indexer keys scale with cells);
+  layer split 26 and `pipeline-windows 2` are unchanged (284 MiB of CUDA0 kept out).
+- INT8 KV measured on the conversation cache: the needle conversation (317,898 tokens) parked in
+  5.95 GB = **18.7 KB/token**, against the F16 256K baseline's ~31.9 KB/token parks (222,528 tokens
+  in 7.10 GB) — the K/V halves; the remainder is per-conversation state that does not shrink.
+
+## 512K speed (524288, YaRN x2, INT8 KV)
+
+Both runs through llama-swap, vanilla lane, `--out-pct 10`, `--reps 2`, cold prefill every rep
+(`cache_n` 0 on all eight reps). Run A is the new operating point (60/85% of 524288); Run B is the
+matched-depth control (30/42.5% of 524288 → 157,286 / 222,822 tokens, the baseline's exact depths):
+
+| Run | Depth (tokens) | pp t/s | tg t/s | acceptance |
+| --- | ---: | ---: | ---: | ---: |
+| A 60% | 314,572 | 3,201.4 | 68.55 | 0.673 |
+| A 85% | 445,644 | 3,301.3 | 66.15 | 0.705 |
+| B 30% | 157,286 | 3,329.8 | 74.45 | 0.683 |
+| B 42.5% | 222,822 | 3,375.6 | 71.45 | 0.677 |
+| baseline 256K/F16 @ 60% (157,286) | 157,286 | 2,908.6 | 74.80 | 0.682 |
+| baseline 256K/F16 @ 85% (222,822) | 222,822 | 3,007.6 | 72.70 | 0.686 |
+
+**Matched-depth delta vs the baseline** (the config change alone: YaRN x2 + int8 KV + the 14,823-slot
+placement): prompt **+14.5% / +12.2%**, decode **-0.5% / -1.7%** (inside this box's 2-3%
+sample-to-sample spread), acceptance unchanged 0.677-0.683 against 0.682-0.686. The prompt gain is
+the int8 attention reading half the K/V bytes; YaRN itself adds no measurable cost, and the MTP
+drafter accepts at the same rate through the scaled rope.
+
+**Depth cost on the 512K config** (A vs B): at 445,644 tokens prompt is 3,301 against 3,376 at
+222,822 (-2.2%) and decode 66.15 against 71.45 (-7.4%). **Targets at 85% of the new context** (pp ≥
+1,000, tg ≥ 25): pp **3,301** (3.3×) and tg **66.2** (2.6×) — met with room.
+
+Per rep, Run A: 60% 3,336.9/69.90 (isl 314,331, osl 32,329) and 3,065.9/67.20 (310,060, 49,681);
+85% 3,331.9/63.40 (445,507, 9,591 — the model stopped early) and 3,270.7/68.90 (435,688, 25,467).
+Run B: 30% 3,291.0/75.00 and 3,368.5/73.90; 42.5% 3,332.9/71.20 and 3,418.3/71.70. Latencies 285-841 s;
+calibration prefills 157k in 47.0 s, 222k in 66.4 s, 314k in 91.9 s, 445k in 133.3 s. Records:
+`bench/results/longctx/qwen3.8-flash-next-iq3s-20261127-034333.json` (A),
+`-20261127-042419.json` (B).
+
+Conversation parking at the new depths: 442-461k-token conversations parked in 7.6-7.9 GB, under the
+8 GiB `conversation-cache-mib` budget (0-7 evictions as slots recycle); a conversation that used the
+full 524,288 tokens would park at ~8.9-9.0 GB, just over the budget, so only that edge re-prefills on
+return. Left unchanged — the box is RAM-tight and the budget already held full 256K conversations.
+
+## Smoke (vanilla lane, 2026-11-27)
+
+All ten gates pass through llama-swap (lane-direct only for `/props` and the `/v1` Origin check):
+
+- chat `SMOKE-OK`; `/props` n_ctx 524288, 1 slot.
+- declared `get_weather{city:"Paris", include_forecast:true}` (bool arg), multi-turn tool result
+  (21 °C / clear / sunny), `:npt` alias answers.
+- vision red/blue through the own reader ("Red Blue").
+- #5883 write_file keeps `</parameter>`, `</function>` and `<tail-marker/>` in one piece; #4754
+  `.5` → JSON `0.5`; own-Origin 200 / foreign-Origin 403 on `/v1/models` (the rule is on `/v1`
+  paths only — a `/props` probe is not covered, which is how this gate was first mis-run).
+- **Beyond-native needle**: a 317,710-token prompt (past the trained 262,144) with the marker at
+  ~30% depth recalled `PINEAPPLE-LANTERN-7742` — the YaRN extension works past native.
+
+## Verdict
+
+Smoke and speed both pass; at matched depths the 512K lane is faster on prompt (+12–14.5%) and
+neutral on decode (within the box's spread). The open gate is quality: **INT8 KV + YaRN x2 is
+provisional** until the full bench suite (tool calling, reasoning, coding) re-runs against the 512K
+lane; per AGENTS.md the change only stays if that manual re-run shows no regression. SC117 mirrors
+the config but was not re-measured (same quant/geometry; its pack differs only in the transplanted
+tensors). Fallback if the full bench regresses: `CONTEXT=256k` + `kv=fp16` (setup re-runs once and
+the F16 256K placement returns). Next record: the full bench re-run in [`notes/bench.md`](../bench.md)
+and this entry's "provisional" line replaced with the result.
+
