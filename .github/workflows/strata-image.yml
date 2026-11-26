@@ -11,7 +11,7 @@ name: strata-image
 #      engine is byte-identical to what upstream puts in its own images;
 #   2. builds the image with upstream's tools/docker/build.sh from the same tag, and smoke-tests it in-image.
 #
-# The result is what an upstream 0.2.19-rocm-gfx110x build assembles: the released package and the Terminal from the
+# The result is what an upstream 0.2.22-rocm-gfx110x build assembles: the released package and the Terminal from the
 # same tag, no local deviations.
 # (History: v0.2.11 needed one build-context patch — upstream fix 5d37280d, which makes tools/docker/build.sh stage
 # the metal/tools/ sources its own package_terminal.py copies; v0.2.12 contains it. 0.2.14's docker/ then changed on
@@ -51,31 +51,33 @@ on:
 env:
   IMAGE: ghcr.io/hurui200320/llm-ops-strata
   STRATA_REPO: Niko1221/Strata
-  # Terminal sources and the Dockerfile. v0.2.19 spans two upstream releases: 0.2.18 was the Hy4-Flash shape-engine
-  # round (Terminal 0.2.18 / engines 0.1.64, no Qwen engine change we need) and 0.2.19 is Terminal 0.2.19 /
-  # Control 0.1.65 with engines 0.1.65 on every platform — Control and the engines share one number. 0.2.19 is the
-  # RDNA3 round: discrete gfx1100/1101/1102 gains default-on exact + WMMA kernel suites (engine/src/core/
-  # gfx11_extra.hpp; opt-outs STRATA_GFX11_DEFAULTS=0 / STRATA_GFX11_WMMA_DEFAULTS=0; a switch set in STRATA_SET
-  # always wins), PcieAuto defaults on for discrete RDNA3, and the bare --prefill auto chunk ceiling rises to
-  # 32768 on Linux. Upstream's build.sh stages engine/third_party/strata-gguf-py itself (in since v0.2.17) and grew
-  # an optional --shape-engine flag (unused here: our image stays a qwen-engine image). The entrypoint fork still
-  # carries four changes (the key conditional, the final warning, the chat-template swap, the picture budget);
-  # tools/docker/entrypoint.sh is byte-identical v0.2.17..v0.2.19 (sha256 ff4dcd96…), so the fork re-applies as-is.
-  STRATA_REF: v0.2.19
-  # The RELEASE that carries the signed feed and the Qwen engine packages. 0.2.19's feed (sequence 131) lists the
-  # 0.1.65 packages as assets of this same release: strata-engine-0.1.65-linux-x86_64-hip-rx7900.tar.gz
-  # (271,188,189 B, sha256 bd2e9d46…, manifest c78e1250…, build_id 26350e4387b8+rocm). The feed's Ed25519 signature
-  # and the package (size, SHA-256, manifest hash, every file) are verified below. The feed also lists the
-  # strata-hy4 0.1.64 (from the v0.2.18 release) and strata-inkling 0.1.65 shape engines for this flavor, and
-  # fetch-engines.py downloads them into pkgs/shapes/ as well — they are NOT staged into the image (the build step
-  # passes only --engine). The engine folder name changes (0.1.63 → 0.1.65), so each lane runs one setup pass (packs
-  # and the MTP layer are reused). What changes for this box (the RDNA3 round): the default-on gfx11 exact + WMMA
-  # kernel suites and PcieAuto (see STRATA_REF above), the Linux --prefill auto chunk ceiling 8192 → 32768, the
-  # IQ2_XS/NVFP4-only LDS decode kernels (inert on our IQ3_S), and a 3.1x WMMA DFlash2 that still refuses beside
-  # --pipeline-windows (lanes stay MTP). Upstream quotes 1.44–2.10x prefill / +17–22% decode on RX 7900 XT — to be
-  # re-measured with the longctx spot after cutover. No HIP toolchain change expected: the gate below re-checks
-  # hipBLASLt 100200 + the tuning table.
-  ENGINE_RELEASE: v0.2.19
+  # Terminal sources and the Dockerfile. v0.2.22 spans three upstream releases after 0.2.19: 0.2.20 was the
+  # unified 4-tier MoE planner round (engines 0.1.66, feed sequence 132), 0.2.21 / 0.2.21.1 the Inkling-2-Mini
+  # speed round (engines 0.1.67, Control 0.1.68/0.1.68.1), and 0.2.22 is Terminal 0.2.22 / Control 0.1.69 with
+  # the Qwen engine 0.1.69 (Inkling AMD/Intel/Apple and Hy4 stay 0.1.67 — Control and the Qwen engine share one
+  # number again). For this box (2x7900XTX, Qwen3.8 Flash-Next IQ3_S, layer split 26): the 2-card split's lend
+  # reservation (#6583, in since 0.1.66) lands here, with the new opt-out STRATA_SPLIT_LEND_RESERVE (0 fills the
+  # expert complement first; #7089); a Qwen prompt-reading accuracy fix (#6776 — answers can differ slightly
+  # from 0.2.19 after a few tokens, speed unchanged); 65535-safe grid striding and zero-amax NaN guards on HIP
+  # (the #879 long-prompt class, riding in 9e3ad2778); the RDNA2-4 Wave32 WMMA/DP4A HIP kernel round (K-quants,
+  # IQ3_XXS, IQ4_XS, NVFP4 first-class; IQ3_S has partial coverage — measured, not assumed); and a
+  # slower-disk-tolerant engine READY wait (#7060). 0.2.20's greedy-under-MTP sampling regression was fixed for
+  # Flash-Next in 0.2.22 (#7070) — the jump skips it. build.sh, fetch-engines.py and the Dockerfile build.sh
+  # renders are byte-unchanged v0.2.19..v0.2.22 (the shape-engine staging lives in Dockerfile.src, the CUDA
+  # source-build path build.sh does not render), so this stays a plain upstream build. tools/docker/entrypoint.sh
+  # changed (sha256 ff4dcd96… → ce022f87…: model-file checks accept .strata/.safetensors, die()/start-message
+  # rewording); the entrypoint fork re-applies its four changes on top (deploy/strata/entrypoint-local.sh).
+  STRATA_REF: v0.2.22
+  # The RELEASE that carries the signed feed and the Qwen engine packages. 0.2.22's feed (sequence 136) lists the
+  # 0.1.69 packages as assets of this same release: strata-engine-0.1.69-linux-x86_64-hip-rx7900.tar.gz
+  # (276,779,151 B, sha256 b3104784…, manifest 412db55b…, build_id a5bfe0369bfb+rocm, 1,166,018,584 B installed).
+  # The feed's Ed25519 signature and the package (size, SHA-256, manifest hash, every file) are verified below. The
+  # feed also lists the strata-hy4 0.1.67 and strata-inkling shape engines for this flavor, and fetch-engines.py
+  # downloads them into pkgs/shapes/ as well — they are NOT staged into the image (the build step passes only
+  # --engine). The engine folder name changes (0.1.65 → 0.1.69), so each lane runs one setup pass (packs and the
+  # MTP layer are reused). hipBLASLt is expected unchanged — the gate below re-checks hipBLASLt 100200 + the
+  # tuning table (the feed does not name the version, so CI is the arbiter; the 0.2.22 notes name no re-tune).
+  ENGINE_RELEASE: v0.2.22
   # hipBLASLt version the package's gfx1100 tuning table must match (BUILD.json hipblaslt_version).
   HIPBLASLT_TABLE_VERSION: "100200"
 
@@ -188,7 +190,7 @@ jobs:
           # 0.2.14 layout move forgot; worked around from 0.2.14.1 to 0.2.16 by pre-staging the folder into an
           # explicit --ctx context, first seen as our CI run 43801311873; fixed upstream in v0.2.17). build.sh
           # assembles its own temporary context when --ctx is not given, so this stays a plain upstream build;
-          # v0.2.19's new --shape-engine flag is unused (no shape engine is staged).
+          # the --shape-engine flag (in since v0.2.19) is unused (no shape engine is staged).
           strata/tools/docker/build.sh --flavor hip --engine "$PKG_DIR" --repo strata \
             --version "$IMAGE_VERSION" --tag "$IMAGE:$IMAGE_TAG"
           docker image inspect "$IMAGE:$IMAGE_TAG" --format 'built {{.RepoTags}} {{.Size}} bytes'

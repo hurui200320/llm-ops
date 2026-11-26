@@ -1,28 +1,36 @@
 # Strata (AMD / HIP) deployment
 
-The Strata image the lanes run is **our own build**, `ghcr.io/hurui200320/llm-ops-strata:0.2.19-rocm-gfx110x`,
+The Strata image the lanes run is **our own build**, `ghcr.io/hurui200320/llm-ops-strata:0.2.22-rocm-gfx110x`,
 made by [`.github/workflows/strata-image.yml`](../../.github/workflows/strata-image.yml). It carries upstream's
-Terminal 0.2.19 (serve + the GGUF preparation tools and the `strata` CLI), upstream's signed-feed 0.1.65 Qwen engine
+Terminal 0.2.22 (serve + the GGUF preparation tools and the `strata` CLI), upstream's signed-feed 0.1.69 Qwen engine
 package, the picture reader (`strata-vision`, CPU and GPU), and the ROCm runtime for the whole RDNA 3
 dGPU family (gfx1100 = RX 7900 XTX/XT, gfx1101 = RX 7800/7700 XT, gfx1102 = RX 7600) — byte for byte what
 upstream's own `tools/docker/build.sh` assembles from the same tag; nothing is added. The host needs only the
 `amdgpu` kernel driver: no ROCm, no compiler.
 
-0.2.19 (Control and the engines share 0.1.65, Strata's own code — no ggml and no llama.cpp matrix kernels; the
-picture reader is Strata's own too) is the **RDNA3 round**. On discrete gfx1100/1101/1102 the engine now turns on
-two default-on kernel suites (`gfx11_extra.hpp`): ~24 bitwise-exact prompt/decode switches and 12 KL-validated
+0.2.22 (Terminal 0.2.22; Control and the Qwen engine share 0.1.69, Strata's own code — no ggml and no llama.cpp
+matrix kernels; the picture reader is Strata's own too) keeps the **RDNA3 default-on kernel suites** that 0.2.19
+turned on (`gfx11_extra.hpp`, unchanged since): ~24 bitwise-exact prompt/decode switches and 12 KL-validated
 matrix-core switches (`STRATA_HIP_WMMA`, `STRATA_PF_F16=2`, `STRATA_PF_P1A_L2`, `STRATA_DFLASH_WMMA`,
-`STRATA_HIP_FAST_DEC`, …) — upstream measures 1.44–2.10x faster prefill and +17–22% faster decode on RX 7900 XT.
+`STRATA_HIP_FAST_DEC`, …) — upstream measured 1.44–2.10x faster prefill and +17–22% faster decode on RX 7900 XT.
 Opt-outs: `STRATA_GFX11_DEFAULTS=0` (all), `STRATA_GFX11_WMMA_DEFAULTS=0` (only the rounding-changing half), and
-any switch set in `STRATA_SET` still wins (none of ours collide). `PcieAuto` defaults on for discrete RDNA3, and
-the bare `--prefill auto` prompt-chunk ceiling rises 8,192 → 32,768 on Linux. DFlash2 gained a 3.1x WMMA drafter
-but **still refuses beside `--pipeline-windows`** — the lanes stay on MTP. On the serve side, Claude Code's
+any switch set in `STRATA_SET` still wins (none of ours collide). `PcieAuto` stays default-on for discrete RDNA3
+and the bare `--prefill auto` prompt-chunk ceiling is 32,768 on Linux. New in 0.2.22 for the lanes:
+**`STRATA_SPLIT_LEND_RESERVE`** (#7089) — the 2-card split reserves RAM for the prompt-path lend regions before
+filling the coldest experts (in since 0.1.66; the default keeps that behavior), and `=0` fills the expert
+complement first (upstream: +5.5–9% decode, a cold 18K-token prompt 4.6–17% slower); a Qwen prompt-reading
+accuracy fix (#6776) means answers can differ slightly from the 0.2.19 engine after a few tokens (speed
+unchanged); the engine's READY wait moves while the engine shows progress, so a slow start is not cut off at 15
+minutes (#7060); and the RDNA2-4 Wave32 WMMA/DP4A HIP kernel round rode along (K-quants, IQ3_XXS, IQ4_XS, NVFP4
+first-class; IQ3_S has partial coverage — measured, not assumed). A request that names no sampling keeps the model
+card's values under MTP (0.2.20's greedy default was fixed for Flash-Next, #7070); Control's RAM-based
+conversation-cache auto-sizing (#7044) is kept out by the lanes' explicit `conversation-cache-mib=8192`. DFlash2
+**still refuses beside `--pipeline-windows`** — the lanes stay on MTP. On the serve side, Claude Code's
 per-request `x-anthropic-billing-header` stamp is pinned llama.cpp-style, so agent prompts keep their
 conversation-cache reuse past the first 16K; `preserve_thinking` is still silently dropped by the OpenAI path (the
-0.2.17 `:npt` finding, [notes/strata.md](../../notes/strata.md) 20261121). The 0.2.18 Hy4-Flash round rode along in
-between (engines 0.1.64, skipped): Hy4-Flash's and Inkling 2 Mini's shape engines live in the signed feed but are
-**not** staged into this image. The layer split still trims each card's dense weights (#4522) and cuts long prompts
-into equal ≥5,400/6,144-token pieces.
+0.2.17 `:npt` finding, [notes/strata.md](../../notes/strata.md) 20261121, re-checked on 0.2.22). Hy4-Flash's and
+Inkling 2 Mini's shape engines live in the signed feed but are **not** staged into this image. The layer split
+still trims each card's dense weights (#4522) and cuts long prompts into equal ≥5,400/6,144-token pieces.
 
 We build our own image because upstream publishes no Docker images. See "Building the image" and the pins below;
 historical context and upgrade records are in [notes/strata.md](../../notes/strata.md). (Until 2026-11-04 the image
@@ -32,13 +40,14 @@ also carried our gfx110x `strata-dsv41` DeepSeek engine; the DeepSeek lane moved
 
 ## Pins
 
-Current image: `ghcr.io/hurui200320/llm-ops-strata:0.2.19-rocm-gfx110x` (Terminal `v0.2.19` / Control `0.1.65`,
-engine `0.1.65` rx7900; the 0.2.19 feed — sequence 131 — lists the 0.1.65 packages as assets of the same release,
-which is what the workflow's `ENGINE_RELEASE` resolves them through; Control and the engines share one number).
+Current image: `ghcr.io/hurui200320/llm-ops-strata:0.2.22-rocm-gfx110x` (Terminal `v0.2.22` / Control `0.1.69`,
+engine `0.1.69` rx7900; the 0.2.22 feed — sequence 136 — lists the 0.1.69 packages as assets of the same release,
+which is what the workflow's `ENGINE_RELEASE` resolves them through; Control and the Qwen engine share one number,
+while the Inkling AMD/Intel/Apple and Hy4 packages stay 0.1.67).
 Digests, package hashes, and verification records are in
 [notes/strata.md](../../notes/strata.md); the workflow `env:` block pins the build inputs.
 
-- **Engine folder**: `/opt/strata/components/engine/0.1.65-linux-x86_64-hip-rx7900` (upstream names
+- **Engine folder**: `/opt/strata/components/engine/0.1.69-linux-x86_64-hip-rx7900` (upstream names
   the folder without the `strata-engine-` prefix; reference the engine as `component:strata-engine`,
   never by path).
 - **Package inventory**: the rx7900 package is verified by the workflow gate (archs gfx1100/1101/1102, manifest,
@@ -50,7 +59,7 @@ Digests, package hashes, and verification records are in
   hipBLASLt 1.2.0; the workflow gate pins this version until a package re-tunes it). On gfx1100 the table is
   **opt-in**: pass `STRATA_HIPBLASLT_TABLE=on` as a **container environment variable** (`-e`), **not** inside
   `STRATA_SET` (see "The hipBLASLt tuning table").
-- **gfx11 default suites (engine 0.1.65)**: on gfx1100 the engine applies its discrete-RDNA3 exact + WMMA switch
+- **gfx11 default suites (engine 0.1.69)**: on gfx1100 the engine applies its discrete-RDNA3 exact + WMMA switch
   suites by itself and logs them at start (`gfx11 (RDNA3): N … switches on by default`). Nothing in the lanes'
   `STRATA_SET` collides — a switch we set is kept — so no lane change is needed. To A/B the matrix-core half:
   `STRATA_GFX11_WMMA_DEFAULTS=0` (container env); to A/B everything: `STRATA_GFX11_DEFAULTS=0`.
@@ -86,7 +95,7 @@ docker run -d --name strata-init --init --rm \
   -e VISION_TOKENS=8192 -e VISION_MIN_TOKENS=1024 \
   -e DRAFTING=mtp \
   -e STRATA_SET="kv=fp16 vram-reserve-mib=1536 vram-reserve-later-mib=1024 resident-budget-gib=28 prompt-cache-spread=on conversation-cache-mib=8192 conversation-cache-slots=8 pipeline-windows=2 layer-split=26 trim-stage-weights=on spec-min-p=0.7 STRATA_SCORES_THREAD=1" \
-  ghcr.io/hurui200320/llm-ops-strata:0.2.19-rocm-gfx110x
+  ghcr.io/hurui200320/llm-ops-strata:0.2.22-rocm-gfx110x
 docker logs -f strata-init    # wait for one-time setup to finish, then stop the container
 ```
 
@@ -142,7 +151,7 @@ docker run -it --rm \
   --group-add "$(getent group video | cut -d: -f3)" \
   --group-add "$(getent group render | cut -d: -f3)" \
   -v /mnt/unenc-xfs/strata/ISTA-DASLab-Flash-Next:/data -v /mnt/unenc-xfs/models:/models:z \
-  ghcr.io/hurui200320/llm-ops-strata:0.2.19-rocm-gfx110x sh
+  ghcr.io/hurui200320/llm-ops-strata:0.2.22-rocm-gfx110x sh
 ```
 
 Any command replaces the server start (`docker run … image strata launch --help`, `… image sh`).
@@ -179,7 +188,7 @@ summary carries the digests, which are recorded in [notes/strata.md](../../notes
 `tools/docker/build.sh` stages the Terminal's `metal/tools` scripts itself (upstream `5d37280d`, in since v0.2.12)
 and the vendored gguf-py folder itself (in since v0.2.17). v0.2.16's packages bundle
 `libatomic.so.1` themselves (`tools/packaging/notices/libatomic.txt`), so the 0.2.15 verify-gate patch is gone. The
-Terminal sources pair with the sequence-131 signed feed, whose engine packages are assets of the `v0.2.19` release;
+Terminal sources pair with the sequence-136 signed feed, whose engine packages are assets of the `v0.2.22` release;
 the feed's hy4/inkling2 shape packages download into `pkgs/shapes/` but nothing stages them.
 
 A local build is those same steps run by hand (Docker + network, no GPU): run upstream's
@@ -188,11 +197,11 @@ A local build is those same steps run by hand (Docker + network, no GPU): run up
 A plain upstream image (what the workflow produces) builds with:
 
 ```sh
-git -C <strata-checkout> worktree add /tmp/strata-v0.2.19 v0.2.19
-tar -xzf strata-engine-0.1.65-linux-x86_64-hip-rx7900.tar.gz -C <empty-dir>
-/tmp/strata-v0.2.19/tools/docker/build.sh --flavor hip \
-  --engine <empty-dir> --repo /tmp/strata-v0.2.19 \
-  --version 0.2.19 --tag strata:0.2.19-rocm-gfx110x-local
+git -C <strata-checkout> worktree add /tmp/strata-v0.2.22 v0.2.22
+tar -xzf strata-engine-0.1.69-linux-x86_64-hip-rx7900.tar.gz -C <empty-dir>
+/tmp/strata-v0.2.22/tools/docker/build.sh --flavor hip \
+  --engine <empty-dir> --repo /tmp/strata-v0.2.22 \
+  --version 0.2.22 --tag strata:0.2.22-rocm-gfx110x-local
 ```
 
 Needs network (base image + the terminal's pinned CPython 3.12 and hash-locked wheels). `--ctx-only` keeps the
@@ -302,7 +311,7 @@ then restart the lane. Nothing is repacked and no GGUF is re-downloaded. A start
 the next start installs the repo copy. After a template change on a Qwen lane, verify a short chat, a
 declared tool call and the `:npt` alias. (`:npt` suppresses per-request thinking via `enable_thinking`, but its
 `preserve_thinking` — stripping historical thinking — is silently dropped by Strata's OpenAI request path,
-0.2.16–0.2.19 alike; recorded in [notes/strata.md](../../notes/strata.md) 20261121.)
+0.2.16–0.2.22 alike; recorded in [notes/strata.md](../../notes/strata.md) 20261121.)
 
 ## Vision token budget
 
