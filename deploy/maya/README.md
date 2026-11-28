@@ -223,9 +223,10 @@ The engine knobs on that lane, in one line each (they exist only as engine envir
 `--reserve-mib 1664` is the headroom knob, not a speed knob: the engine subtracts it per GPU before placing
 experts. Since 1.1.73 (#1026) the reserve is kept free for the whole run, and the engine's measured post-pool
 allocations (`late`, from `<pack>/vram-late.txt`: 64 MiB a card at load, 416 after 512k serving on this lane)
-are kept **beside** it from the next start - free-with-loaded read 1640/1620 MiB on 1.1.74, and the pool places
-~45 fewer experts a card (~4,460 of ~4,550), measured at no speed cost (notes/maya.md 20261123). Raising it
-still costs ~12 experts a card per 100 MiB; lowering it eats the desktop's headroom first.
+are kept **beside** it from the next start - the 1.1.84 tune-tree starts read 1716/1706 MiB free with a 64 MiB
+late and 2036/2028 with 384 MiB (reserve 1664), and the pool places ~45 fewer experts a card (~4,460 of ~4,550),
+measured at no speed cost (notes/maya.md 20261123/20261128). Raising it still costs ~12 experts a card per
+100 MiB; lowering it eats the desktop's headroom first.
 
 ### The GLM lane (Maya-M)
 
@@ -248,53 +249,49 @@ the same need with off = 100% vanilla. Record: [notes/glm/5.3-flash.md](../../no
 | `--kv int8` | **int8 KV** (deployed 2026-11-06): halves the latent cache to 544 B/position/layer (3.22 -> 1.71 GB a card) and the VRAM window (0.20 -> 0.11 GB), freeing 3 GiB of pinned RAM (`MemAvailable` ~10 -> ~13 GiB) and ~11 more experts. Measured pp identical and tg unchanged within +-3 %. **The slot identity does not include the KV format**, so clear `<pack>/slots` when switching (`--kv fp16` reverts). 1.1.55 defaults GLM to int8, so the flag is pinned here explicitly |
 | `--prefill 16384`, `MAYA_GLM_PREFILL_MB=6144` | the prompt chunk. Auto caps a split at 8192; the engine's chunk buffers overlay expert slots between prompts, so a bigger chunk costs nothing at decode. 16K measured **+16 % pp at 40 % and +23 % at 85 %**; 32K added only ~2 % more and cost 2.7 GiB of MemAvailable plus swap. `PREFILL_MB=6144` is the loan cap that lets a 16K chunk fit (the measured borrow is 3.6-4.2 GB a card) |
 | `MAYA_GLM_PRESTAGE=160` | the prompt **prestage ring** (deployed 2026-11-07). The engine skips it on a split by default (`ring_max = has_moe && n_parts_ == 1 ? kPreSlots : 0`); 160 experts of the next layer's most routed RAM-tier ones are copied into a pool-tail buffer while attention runs, when the PCIe link is otherwise idle. Costs 1,371 MB of the prompt borrow (3,381/3,994 -> 4,751/5,365 MB a card, still under the 6,144 cap) and nothing at decode: **+8.0 % pp at 40 % and +5.4-7.3 % at 85 %** (screening 973.7 / 1012.7 t/s, 2-rep final 968.5 / 994.9, controls 901.7 / 944.2); tg, floors (271 MiB other / 434 MiB monitor) and `MemAvailable` (12.8-13.1 GiB) unchanged, swap flat. 240 experts brushes CUDA1's borrow cap and measures 0.6 % slower. Mechanism: RAM-sourced demand staging 17.5 -> 0.10 GB a chunk, total PCIe 33.7 -> 17.7 GB |
-| `MAYA_GLM_RESERVE_MB=1200` | headroom kept free on the **monitor** card, sizing its expert pool. Since 1.1.74 (#1026) the reserve is kept free for the whole run and the engine's measured post-pool allocations (32 MiB at load, 224 after serving; `<pack>/vram-late.txt`) sit beside it: free-with-loaded 1196 MiB on 1.1.74, the next start places ~28 fewer experts on this card at no measured cost (notes/maya.md 20261123). It stays 1200 because the picture turn is lent from the pool, not the reserve: **527 MiB idle, 1164 MiB during a 4K picture turn** (with `VISION_FOOTPRINT_MB` below; without it the encoder's shortfall dipped the turn to 28-35 MiB) |
-| `MAYA_GLM_RESERVE_LATER_MB=650` | the same for the later (x4, no-display) card: free-with-loaded 646 MiB (the 224 MiB `late` beside it) on 1.1.74. The asymmetric reserve is why the x4 card's pool can grow without over-reserving the monitor |
-| `MAYA_GLM_MLA_ATTN2=h64lvc`, `MAYA_GLM_DSA_SCORE2=rl2b4` | the decode-only "take-two" kernels for the F32 MLA split attention and the sparse indexer (MLA_MMA is compiled out on HIP). **Bit-exact**; +1 % at 52K and +5-10 % tg at 200-450K, pp untouched |
+| `MAYA_GLM_RESERVE_MB=1200` | headroom kept free on the **monitor** card, sizing its expert pool. Since 1.1.74 (#1026) the reserve is kept free for the whole run and the engine's measured post-pool allocations (32 MiB at load, 224 after serving; `<pack>/vram-late.txt`) sit beside it: free-with-loaded 1436 MiB on 1.1.84 (reserve 1200 + 224 `late`), the next start places ~28 fewer experts on this card at no measured cost (notes/maya.md 20261123/20261128). It stays 1200 because the picture turn is lent from the pool, not the reserve: **527 MiB idle, 1164 MiB during a 4K picture turn** (with `VISION_FOOTPRINT_MB` below; without it the encoder's shortfall dipped the turn to 28-35 MiB) |
+| `MAYA_GLM_RESERVE_LATER_MB=650` | the same for the later (x4, no-display) card: free-with-loaded 872 MiB (the 224 MiB `late` beside it) on 1.1.84. The asymmetric reserve is why the x4 card's pool can grow without over-reserving the monitor |
+| `MAYA_GLM_MLA_ATTN2=h64lvc`, `MAYA_GLM_DSA_SCORE2=rl2b4` | the decode-only "take-two" kernels for the F32 MLA split attention and the sparse indexer (MLA_MMA is compiled out on HIP); since 1.1.84 a window's tokens take `DSA_SCORE2` too. **Bit-exact**; +1 % at 52K and +5-10 % tg at 200-450K, pp untouched |
 | `MAYA_GLM_RAM_GB=36` | fixed pinned RAM expert tier - the DeepSeek lane's `--ssd-cache 36` analogue. Measured: 35.98 GB across the parts (17.57 + 18.41); the rest of the off-card experts stream from the SSD. 40 GB buys ~5 % tg at 85 % but costs ~5 % pp and ~3 GB of swap on this 62 GiB host |
 | `MAYA_GLM_SLOTS=4`, `MAYA_GLM_SLOT_GB=16` | conversation slots on **disk** (`<pack>/slots`). GLM has no RAM-slot tier: one 512k fp16 slot is ~5.9 GB of KV, so the DS4 lane's RAM parking (`MAYA_DS4_SLOT_RAM_GB=6`) would hold a single slot. 16 GB holds ~2 full-context slots, more when shorter |
 | `MAYA_GLM_SLOT_KEEP=1` | slots survive a llama-swap stop/restart (the engine writes them at QUIT; `docker stop -t 120` covers `MAYA_ENGINE_QUIT_S` 50) |
+| `MAYA_GLM_SAME_ANSWERS` (default on since 1.1.75) | the same greedy answers on every start: the CPU-lane timing is taken once per PC and kept (`MAYA_GLM_CPU_CAL`), tier moves go live at fixed boundaries, prompts take the stable products (`MAYA_GLM_PREFILL_STABLE`, ~2-5 % prompt speed) and drafting keeps one measured length (`MAYA_GLM_MTP_FIXED`; 2 until a calibration). `0` = the timing-led choices of v1.1.74. Kept at the default (2026-11-28): determinism for the byte-identical A/B practice and agentic reproducibility; the 1.1.84 probes reproduce the canonical `9eec69b5...` hash |
 | `vision.max_tokens=12288` | the picture budget (prompt tokens) `maya-vision` resizes each image to. GLM's tower is 1 token per 28x28 px (patch 14 x merge 2 = 784 px), so a naive 4K (3840x2160) needs **10,549** tokens and 4096x2160 needs 11,244; 12288 feeds both un-downscaled. Unset, the server auto-fits 4096/2048/1024 by the encoder's measured VRAM (15% rule) - 4096 on these cards, which downscales 4K to ~2380x1344. The Qwen3.8-Flash-Next strata reference (`VISION_TOKENS=8192`) is **not** enough here: its tower is 1 token per 1024 px (patch 16), GLM's is ~30% denser |
 | `VISION_FOOTPRINT_MB=4711` | the episode's other half: the encoder's VRAM lend. The server sizes it from `maya-vision --measure`, whose warm-up is a fixed 2048x2048 picture (**5,329 tokens** here), so at 12288 the measurement covers only half a 4K picture's patches and under-covers the peak by ~750 MiB - the encoder then dips into the monitor reserve (28-35 MiB free at a 4K turn). The entrypoint pins the cached footprint to **4711 MiB** (a real 4K picture's peak measured ~4.14 GB plus slack) under the key the server would use, so the engine lends ~4.6 GiB from the expert pool's tail only while a picture encodes: the 4K turn then keeps **1164 MiB** free on the monitor card and the reserve stays 1200 (the monitor pool keeps 2,265 experts, +90 over the 1950 reserve, back to the 1.1.55 level). Drop the pin when the upstream warm-up scales with the budget ([notes/TODO.md](../../notes/TODO.md)) |
 
-Kept slots and pack rebuilds: the GLM session identity carries the session ABI (`engine=0.1.27`) **and the pack
-files' sizes** (`index.txt`, `dense.bin`, `native_experts.txt`), so an engine bump alone keeps the conversations but a
-pack rebuild clears them - the #861 F32-bias repack made 1.1.56 remove 2 stale conversations (227 MB) on this
-lane. The DeepSeek identity carries the ABI plus `ds4.txt`/`engram.bin`/
-`tensors.txt` and the shard sizes (no pack rebuilds in practice): its 117 conversations (7.21 GB) survived the
-1.1.55 -> 1.1.56 bump and its 134 (11.51 GB), the GLM lane's 4, survived 1.1.57 -> 1.1.58 (no pack or ABI
-change). Records: [notes/maya.md](../../notes/maya.md) 20261107/20261111.
+Kept slots: the session identity carries the session ABI (`engine=0.1.27`) and the pack files' sizes (GLM:
+`index.txt`, `dense.bin`, `native_experts.txt`; DS: `ds4.txt`/`engram.bin`/`tensors.txt` + the shard sizes), so an
+engine bump alone keeps the conversations but a pack rebuild clears them. Slots also expire after 7 days unused
+(`MAYA_DS4_SLOT_DAYS` / `MAYA_GLM_SLOT_DAYS`, default 7): the 1.1.84 bump kept the main DS lane 5 conversations /
+0.11 GB and GLM 1 / 0.24 GB (the rest aged out; the abiray lane kept 23 / 1.12 GB), and the aged conversations
+re-prefill on return. Records: [notes/maya.md](../../notes/maya.md) 20261107/20261111/20261123/20261128.
 
-Measured on the deployed config (2026-11-23, Maya 1.1.74): the 1.1.74 bump was verified with the 7/7 functional
+Measured on the deployed config (2026-11-28, Maya 1.1.84): the 1.1.84 bump was verified with the 7/7 functional
 gates on all three maya lanes plus the `:ablation` alias on the GLM lane (6/6 + 4K plain and through the alias;
 chat, tool call, `reasoning_effort: none`, primes, fenced code, 420x420 and 3840x2160 pictures): 4K
 `prompt_tokens` 10,579 on the GLM lane plain and through the alias (the 137x77 grid, no downscale) and 1,146 on
-both DS lanes (the canonical count for the deterministic gate image). Cold starts 27 / 49 / 29 s (DS / GLM /
-abiray). Slots kept across the bump: the main DS lane 82 conversations / 12.39 GB, GLM 3 / 5.83 GB, abiray
-1 / 0.01 GB - each lane removed exactly one stale slot ("not this model's or incomplete"; cache state only, the
-conversations re-prefill on return). Live configs clean, no entrypoint diff lines. The release's headline here is
-**#1026 (1.1.73 DS / 1.1.74 GLM): the VRAM reserve is now kept for the whole run** - the engine measures its
-post-pool allocations (`late`: 64/64 MiB DS and 32/32 GLM at load; 416/416, 384/416 and 224/224 respectively
-after 512k + picture serving) into `<pack>/vram-late.txt` and keeps that free **beside** the reserve from the
-next start, so the pools place ~89 (DS) / ~56 (GLM) fewer VRAM experts (the conditional one-time engine
-self-restart never fired here; the A/B below measured no speed cost - the displaced experts land in the RAM
-tier's coldest slots). Also active: the GLM drafting-stall fix (#860, a regression since 1.1.53; this lane drafts
-MTP on a 36 GB RAM tier - zero `glm stall:` lines, acceptance 0.72-0.78), the DS two-AMD-GPU hang fix
-(#1086/#1027; we never needed `--no-expert-cache`) and the DS unbuffered-read recovery (#1076). Interleaved 512k
-A/B vs 1.1.70 on the tune trees (`cache_n 0`; DS 2 points per arm + 1 extra, GLM 2): **both engines at parity** —
-DS pp -0.5 / +0.4 %, tg -3.1 / +3.8 % at 40 / 85 % (the 1.1.70 arms' 40 % tg draws sat at the top of the lane's
-band; the 1.1.74 mean is the historical 25.8 t/s), GLM pp -1.0 / -1.1 %, tg -1.7 / +4.4 % (every point inside
-the lane's bands; the pp dip concentrates in the reduced-pool arm point - the same-pool point is -0.4 %).
-Answer identity: the DS 1.1.74 arms are byte-identical to the canonical `a68ac5c2...` hash of the 1.1.64-1.1.70
-rounds (one of three diverged - the lane's documented boot-to-boot variance), and all four GLM arms are
-byte-identical to the canonical `9eec69b5...`. Inert on these lanes (checked in the upstream diff, the pair-decode
-knob probed): `MAYA_DS4_AR2_DECODE` (#1094, "no group of two - not used" on the `DS4_SPLIT=18,22` layer split),
-`DS4_INDEX_TC_GFX12` (#1097, RDNA 4), the DS NUMA copies (#1083, single-node host), and all the Hy4-Flash and
-maya-ik2 (Inkling 2 Mini) work (not built; ik2's RDNA 3 support is an experiment candidate, notes/TODO.md).
-Earlier bump records (1.1.53-1.1.70: the 1.1.61 RDNA3 expert-unpack prefill gain, the 1.1.67 GLM expert-tier
-correctness fix this `MAYA_GLM_RAM_GB=36` lane relies on, the 1.1.70 DS picture-turn restore points and GLM
-pinned bounce, and the interleaved A/Bs at each step):
-[notes/maya.md](../../notes/maya.md) 20261104-20261121.
+both DS lanes (the canonical count for the deterministic gate image). Cold starts 22 / 40 / 22 s (DS / GLM /
+abiray). Live configs clean, no entrypoint diff lines (no `MAYA_GLM_MTP_FIXED` rewrite landed). Slots kept across
+the bump: DS 5 conversations / 0.11 GB, GLM 1 / 0.24 GB, abiray 23 / 1.12 GB (the rest aged past the 7-day slot
+TTL). Reserves read honest: DS `late` 416/416, GLM 224/224 beside 1200/650 (free-with-loaded 1436/872); the GLM
+engine log shows zero `glm stall:` lines, int8 KV and the `rl2b4` take-two kernels on both cards. Vision budgets
+unchanged (1140 DS, 12288 + the 4711 MiB footprint GLM). Interleaved 512k A/B on the tune trees (`cache_n 0`;
+baseline the recorded 1.1.74 arms, post-upgrade arms only): **GLM at parity/up** (pp 956.1 / 984.7 vs
+956.5 / 972.5, tg 18.6 / 18.2 vs 17.5 / 17.7) and **DS at tg parity** (25.9 / 27.1 vs 25.5 / 27.1) but
+**prefill down 7-12 %** (pp 1,207 / 1,170 vs 1,368 / 1,260; an interleaved same-hour 1.1.74 control reproduced
+the old numbers, so it is a real 1.1.84 effect - #1252 the top suspect, accepted because 85 % pp 1,174 still
+clears the >= 1000 t/s target; tracked in [notes/TODO.md](../../notes/TODO.md)). Answer identity: DS
+byte-identical to the canonical `a68ac5c2...` hash in all points, GLM to `9eec69b5...` (`MAYA_GLM_SAME_ANSWERS`
+on, no rewording). The release's headline here is the gfx1100 RDNA kernel work (register warp sums,
+`mv_rows`/`mv_heads`, IQ2_XXS PAIR) and the GLM int8-latent 16-value loads + `MAYA_GLM_DSA_SCORE2` covering
+window tokens. Also active: #1206/#1207 (DS turn no longer empty after thinking), #1203 (DS calibration on kept
+conversations), #1114 (DS router row), #1182 (GLM ~6.4 GB of file mappings released), #1220 (loop guard for
+13-100-call rounds). Inert on these lanes (checked in the upstream diff): #1023 (the 744B model's KV-streaming
+opt-in), `DS4_FLOW_COPY_DMA` (#910, one AMD GPU), `MAYA_PREFILL_FAST_DEQUANT` (#1225, NVIDIA), and all Hy4-Flash
+/ maya-ling / maya-ik2 work. Earlier bump records (1.1.53-1.1.74: the 1.1.61 RDNA3 expert-unpack prefill gain,
+the 1.1.67 GLM expert-tier correctness fix this `MAYA_GLM_RAM_GB=36` lane relies on, the 1.1.70 DS picture-turn
+restore points and GLM pinned bounce, the 1.1.74 #1026 VRAM-reserve honesty + #860 drafting-stall fix, and the
+interleaved A/Bs at each step): [notes/maya.md](../../notes/maya.md) 20261104-20261128.
 With the prestage ring (2-rep final, 2026-11-07 on 1.1.56):
 **pp 968.5 / 994.9 t/s, tg 19.75 / 20.65 t/s at 40 / 85 %**, `cache_n` 0 on
 every rep, acceptance 0.760 / 0.788; auto split [0,24) / [24,45)+MTP, int8 KV, 16K chunks, **min free VRAM
@@ -310,9 +307,9 @@ repack and the picture budget: [notes/maya.md](../../notes/maya.md) 20261107. St
 The lane's own bring-up (2026-11-06, the config above) measured the same within noise: auto split `[0,24)` /
 `[24,45)+MTP`, 2,265 + 2,304 = 4,569 experts, int8 KV, 16K chunks, 35.98 GB RAM tier; ready in 28 s; 7/7
 functional gates including the 4K picture (`prompt_tokens` 10,579, no downscale); min free VRAM 445 / 286 MiB,
-13.5 GiB `MemAvailable`, swap flat. Its 1.1.74 restart repeats the 7/7 gates plus the `:ablation` alias
+13.5 GiB `MemAvailable`, swap flat. Its 1.1.84 restart repeats the 7/7 gates plus the `:ablation` alias
 (10,579 picture tokens) on the new image. Record:
-[notes/maya.md](../../notes/maya.md) 20261106/20261107/20261110-20261123.
+[notes/maya.md](../../notes/maya.md) 20261106/20261107/20261110-20261128.
 
 The kept knobs above are what moves this lane; the rejected ones (per-card CPU lanes, promotion limits,
 `SPEC_WIN`, `MV_RDNA`, `GU22_TUNED`, DFlash2, no MTP at all (`MAYA_GLM_NO_MTP`, -19 % tg), the disk-skip

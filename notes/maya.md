@@ -590,3 +590,105 @@ starts stayed at 27-49 s.
   `4c85720`, "maya build 1.1.74"); llama-swap's config watcher picked it up, the lanes ran the gates above, and
   they are left unloaded (lazy start on demand). The tune-tree scripts (`ab74_point.sh` / `ab74_run.sh`,
   `glm74_point.sh` / `glm74_run.sh`, arms `a70`/`b74`) live next to the 1.1.70 ones.
+
+# 20261128 Maya 1.1.84 upgrade: RDNA warp sums, int8 latent loads, DSA_SCORE2 windows; DS prefill -7 to -11 %, both engines' answers unchanged
+
+- **Scope**: `v1.1.74` -> `v1.1.84` (294 commits, releases 1.1.75-1.1.84). The build inputs that did not move:
+  llama.cpp stays `3cf03257f219afbe7334045ff7c6a06ac68c627d` (v1.1.84's `setup.py` still pins it; the workflow's
+  gate passed), the gfx1100 hipBLASLt `100202` table and the ROCm 7.2.1 base are unchanged, and upstream's
+  `tools/stamps.py` did not change (our fork stays compatible; `.strata-pip.json` is still the installer's record).
+  Workflow run 46109192571 (commit `f594c58` "maya build 1.1.84"), image
+  `ghcr.io/hurui200320/llm-ops-maya:1.1.84-rocm-gfx1100`, digest
+  `sha256:0d64854b3df8c764487b131c855e9f3aef4fe61373f7759e1f6e9c25ad0a75e7`.
+- **Build options renamed `STRATA_*` -> `MAYA_*`** (1.1.75; the old spelling still works through
+  `cmake/maya_old_names.cmake` with a deprecation line). The Dockerfile migrated all of them as one change:
+  `MAYA_ENABLE_HIP/CUDA`, `MAYA_PREFILL_MMQ`, `MAYA_NATIVE_EXPERTS`, `MAYA_BUILD_TESTS`, `MAYA_PORTABLE` (engine +
+  vision), `MAYA_GGML_DIR`, `MAYA_VISION_HIP(_TARGETS)`; the ISA-portability assert (GGML_NATIVE OFF, AVX2 on)
+  is unchanged and still pins the portable build. `-DSTRATA_X` would still be translated, so no flag was lost.
+- **DS engine (HIP path; `src/ds4/ds4_iq.cu` compiles for gfx1100 - the `DS4_ROCWMMA` guard covers gfx1100/11/12)**:
+  - **RDNA warp sums in registers instead of `ds_bpermute`** (bdaeba1c, #1164): `ds4_gguf.cu` + `ds4_iq.cu`
+    (and Hy4) reduce with DPP/permlane moves, the same xor order (16, 8, 4, 2, 1) so the bits are unchanged;
+    upstream measured +1.6 % decode on 3x RX 7900 XTX, the same text at 5 seeds. `STRATA_XOR_BPERMUTE` opt-out.
+  - **`mv_rows_kernel` 2 rows a warp for Q6_K/Q8_0 GEMVs** (#1292/#1308; 1-6 columns, rows >= 8192 take 2 rows a
+    warp) and **`mv_heads_rows_kernel` on by default for gfx1100** (#1315: upstream's 3x RX 7900 XTX k_b/v_b GEMVs
+    a third faster, a window 0.5 %), **IQ2_XXS gate/up PAIR default-on** (#1314 - our quant; one-entry experts keep
+    RW 1's bits, more entries stay a row a warp). All bit-exact; `MAYA_IQ_MV_ROWS` / `MAYA_IQ_MV_HOLD` /
+    `MAYA_IQ_GU_PAIR` / `MAYA_IQ_MV_RW` are the per-kernel opt-outs. #1294/#1296 (set_tc_kernel) are NVIDIA-only;
+    the 1.1.84 release's `ds4_iq` GEMV set was measured on V100s, the same-bits defaults above apply on HIP.
+- **GLM engine (`src/kernels/cuda/glm_fast.cu` is in the HIP build)**:
+  - **The MLA split attention reads INT8 latent records 16 values a load** (0df10dde, #1138/#1139): vectorized
+    loads + steps issued before use, the same values (the old loop was ~44 µs a chunk against the FP16 path's 50,
+    and 128 dependent rounds a thread). This is our deployed int8-KV decode path.
+  - **`MAYA_GLM_DSA_SCORE2` now covers a window's tokens too** (51a70bd2, #1139 family), bit-exact; the 1.1.84
+    log reads `glm dsa scores: CUDA0 / CUDA1 on the take-two kernels rl2b4` on both cards.
+  - **#1182**: ~6.4 GB of GLM file mappings are released once the model is loaded on Linux (RAM headroom win).
+  - #1023's KV-streaming opt-in is the **full GLM-5.3 (744B)**; the Flash setup default stays KV streaming on and
+    our config pins `--kv-streaming on` anyway. #1254's `--prefill auto` retry is inert here (`--prefill 16384`).
+- **Other DS fixes in the range**: #1206/#1207 (a turn that ended empty after thinking, and a tool call written
+  inside the thinking now read out of it, 1.1.78), #1203 (speed calibration no longer fooled by a kept
+  conversation), #1114 (a router row with no finite score no longer reads out of range), #1276 (`--tp 2` pairs
+  identical GPUs when the boot card reports a few MiB less - **relevant on paper, we pass `--tp 2`**; our twins
+  have identical total VRAM so the pairing is the same), #1197 (`--ppl`/`--dump-logits` through decode windows),
+  #1239 (`DS4_PROF` per GPU), #684 (draft metrics split). **#1252 raised the AVX-512 non-K-quant prompt-rows
+  reuse from 4 to 16 tokens** - this lane computes ~71 % of prompt experts on the CPU lane, and it is the top
+  suspect of the DS prefill regression below.
+- **Server/robustness**: #1220 (loop guard for repeated rounds of 13-100 tool calls: a note after 3 rounds, calls
+  blocked after 5), #1290 (a request with no messages is a 400 on every API), #1271 (per-request prompt
+  progress), #1156 (the #1026 "late" extra is capped at 1 GiB, can never refuse a model, says its switch
+  `MAYA_VRAM_LATE_MB=0`) - **inert here**: our late stayed 224-416 MiB, well under the cap.
+  `MAYA_VRAM_RESERVE_SETUP_MB` and the setup-reserve handling are setup-side (our lanes pin their reserves).
+- **Inert on these lanes** (checked in the diff/code): all Hy4-Flash work (kept conversations #1274, PSTREAM /
+  STREAM_PIPE - opt-in in the final tag after a brief default-on, HY4_LAT16 opt-in), maya-ling (#1224 and the
+  1.1.82/1.1.83/1.1.84 follow-ups), maya-ik2 (session cache #1130, `IK2_*` switches), maya-mm3, the 744B GLM DSA
+  pack tooling, `DS4_FLOW_COPY_DMA` (#910, single-AMD-GPU opt-in) and `MAYA_PREFILL_FAST_DEQUANT` (#1225,
+  NVIDIA-only opt-in). **No lossy optimization is default-on for `maya`/`maya-ds4`** - every new default-on kernel
+  in the range is bit-exact. The one default change is **`MAYA_GLM_SAME_ANSWERS` on** (1.1.75): deterministic
+  greedy answers (CPU-lane timing per PC, fixed tier-move boundaries, `MAYA_GLM_PREFILL_STABLE` ~2-5 % pp cost,
+  one drafting length). Kept at the default (decision 20261128: determinism for the byte-identical A/B practice
+  and agentic reproducibility); `=0` returns the timing-led choices.
+- **Verification (production lanes through llama-swap, all on the 1.1.84 image)**: all 3 lanes passed the 7/7
+  functional gates (6/6 `gate.py`-family + the 4K picture gate; GLM plain **and** through `:ablation`): 4K
+  `prompt_tokens` 10,579 on GLM plain and through the alias (no downscale) and 1,146 on both DS lanes - all
+  identical to the 1.1.74 records. Cold starts 22 / 40 / 22 s (DS / GLM / abiray; 1.1.74: 27 / 49 / 29). Live
+  configs match the repo copies exactly on all three lanes (no extra/missing keys, same args/env - no
+  `MAYA_GLM_MTP_FIXED` rewrite landed; the setup-time drafting calibration did not run on these trees). GLM
+  engine log: **zero `glm stall:` lines** (the #860 fix holds), int8 latent cache 544 B a position and layer,
+  32,768 positions of the 6 DSA layers in VRAM (0.11 GB) + 1.71 GB pinned, late 224/224 beside the 1200/650
+  reserves (free-with-loaded 1436/872 MiB). DS `vram-late.txt`: 416/416 at ctx 524288 seqs 1 tp 2.
+  **Slots across the bump** (ABI 0.1.27 and the pack sizes unchanged): the main DS lane 5 conversations /
+  0.11 GB (77 removed), GLM 1 / 0.24 GB (2 removed), abiray 23 / 1.12 GB - the removals are the upstream
+  **7-day slot TTL** (`MAYA_DS4_SLOT_DAYS` / `MAYA_GLM_SLOT_DAYS`, default 7; the refusal message aggregates age
+  with "not this model's or incomplete"), not an identity break; the aged conversations re-prefill on return.
+- **Post-upgrade 512k A/B (tune trees, `cache_n 0`, `run_longctx --ctx 524288 --in-pcts 40,85 --out-pct 1
+  --reps 1`; baseline = the recorded 1.1.74 arms of 20261123, no pre-upgrade re-run unless a delta is
+  unexplained)**:
+
+  | Lane / level | 1.1.74 (r1 / r2 / r3) | 1.1.84 (r1 / r2 / r3 / r4) | Mean Δ | Notes |
+  | --- | ---: | ---: | ---: | --- |
+  | **DS** pp 40 % | 1,370.6 / 1,360.5 / 1,374.0 (1,368.4) | 1,242.8 / 1,149.9 / 1,256.4 / 1,178.9 (1,207.0) | **−11.8 %** | real regression, see the drift check |
+  | **DS** tg 40 % | 25.7 / 25.0 / 25.9 (25.5) | 25.7 / 26.1 / 25.9 / 26.1 (26.0) | +1.8 % | parity, band 25.0-26.5 |
+  | **DS** pp 85 % | 1,257.4 / 1,265.8 / 1,256.9 (1,260.0) | 1,177.2 / 1,176.9 / 1,152.1 / 1,174.3 (1,170.1) | **−7.1 %** | real regression |
+  | **DS** tg 85 % | 26.9 / 27.2 / 27.2 (27.1) | 26.9 / 27.8 / 27.1 / 26.7 (27.1) | ±0 % | parity |
+  | **GLM** pp 40 % | 963.4 / 949.5 (956.5) | 963.5 / 948.6 (956.1) | −0.04 % | identical, in the 943-978 band |
+  | **GLM** tg 40 % | 18.0 / 17.0 (17.5) | 18.3 / 18.9 (18.6) | +6.3 % | acceptance-led (0.771 / 0.793 vs 0.778 / 0.765) |
+  | **GLM** pp 85 % | 977.6 / 967.4 (972.5) | 994.0 / 975.3 (984.7) | +1.3 % | — |
+  | **GLM** tg 85 % | 16.8 / 18.6 (17.7) | 19.4 / 16.9 (18.2) | +2.5 % | acceptance 0.795 / 0.757 vs 0.729 / 0.761 |
+
+  **The DS prefill drop is a real 1.1.84 effect, not host drift** - the interleaved same-hour control (the
+  user's re-run rule): 1.1.74 at 14:58 read pp 1,372.8 / 1,264.1 (tg 26.4 / 27.8) - the 20261123 record within
+  noise - against 1.1.84 at 15:14 reading pp 1,178.9 / 1,174.3 (tg 26.1 / 26.7). GLM at exact parity in the
+  same window confirms the host. Suspects, in order: **#1252** (the AVX-512 prompt-rows reuse 4 -> 16 tokens;
+  this lane computes ~71 % of prompt experts on the CPU lane and pp is its compute signal), then #1164 (RDNA
+  warp sums - though upstream measured it *decode* +1.6 % on this GPU family) and #1143 (the prompt-ring
+  one-a-batch band, only a 1.0-1.1 ms sliver). **Accepted 2026-11-28**: 85 % pp 1,174 still clears the
+  >= 1000 t/s guideline, tg and answers are untouched, so the lane stays on 1.1.84; the regression is tracked in
+  `notes/TODO.md` (bisect with a #1252 revert build, or report upstream with these numbers).
+- **Answer identity**: DS - all four points byte-identical to the canonical `a68ac5c2...` hash of the
+  1.1.64-1.1.74 rounds; GLM - both points byte-identical to the canonical `9eec69b5...` hash and to each other
+  (`MAYA_GLM_SAME_ANSWERS` on did not re-word the probes; the same-answers path reproduced the old canonical
+  output in this round). No version effect.
+- **Deployment**: the three `deploy/llama-swap.config.yaml` lanes point at `1.1.84-rocm-gfx1100` (commit
+  `f594c58`); llama-swap's config watcher picked it up and the lanes ran the gates above; left unloaded (lazy
+  start on demand). Tune-tree scripts: `ab84_point.sh` / `ab84_run.sh`, `glm84_point.sh` / `glm84_run.sh`
+  (arms `a70`/`b74`/`b84`; tags are lane-prefixed `ds-*`/`glm-*` - the 1.1.74 scripts shared one tag namespace
+  and the GLM run overwrote the DS r1/r2 JSONs, which is why only 5 of that round's files remain).
