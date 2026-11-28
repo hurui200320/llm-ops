@@ -62,8 +62,8 @@ shutil.move(str(next(pathlib.Path('_unpack').iterdir())), 'llama.cpp')"; \
 
 # The GLM engine and DeepSeek's: compile_engine_hip's configure line (maya.py, Linux branch) with gfx1100 only.
 # Jobs as maya.py sizes them for HIP builds (half the cores, at most 4: each clang takes 2-4 GB).
-# STRATA_PORTABLE=ON: the image must run on every host maya accepts (maya.py's check_pc floor is AVX2), so ggml
-# must not inherit the build host's ISA: maya's CMakeLists forces GGML_NATIVE per platform and STRATA_PORTABLE
+# MAYA_PORTABLE=ON: the image must run on every host maya accepts (maya.py's check_pc floor is AVX2), so ggml
+# must not inherit the build host's ISA: maya's CMakeLists forces GGML_NATIVE per platform and MAYA_PORTABLE
 # switches it to explicit AVX/AVX2/FMA/F16C/BMI2 (the same switch upstream's Windows HIP package build passes).
 # Without it, an image built on an AVX-512-capable builder SIGILLs in ggml_cpu_init on AVX2-only hosts at the
 # first model load (notes/maya.md 20261104). The assertion below pins this at build time.
@@ -75,12 +75,12 @@ RUN set -eux; \
     jobs=$(( $(nproc) / 2 )); [ "$jobs" -ge 1 ] || jobs=1; [ "$jobs" -le 4 ] || jobs=4; \
     cmake -S /opt/maya -B /opt/maya/build-hip -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
-        -DSTRATA_ENABLE_HIP=ON -DSTRATA_ENABLE_CUDA=OFF \
-        -DSTRATA_PREFILL_MMQ=ON -DSTRATA_NATIVE_EXPERTS=ON -DSTRATA_BUILD_TESTS=OFF \
-        -DSTRATA_PORTABLE=ON \
+        -DMAYA_ENABLE_HIP=ON -DMAYA_ENABLE_CUDA=OFF \
+        -DMAYA_PREFILL_MMQ=ON -DMAYA_NATIVE_EXPERTS=ON -DMAYA_BUILD_TESTS=OFF \
+        -DMAYA_PORTABLE=ON \
         -DCMAKE_HIP_ARCHITECTURES="${HIP_ARCH}" \
         -DCMAKE_HIP_COMPILER="$clang" -DCMAKE_PREFIX_PATH=/opt/rocm \
-        -DSTRATA_GGML_DIR=/opt/maya/third_party/llama.cpp; \
+        -DMAYA_GGML_DIR=/opt/maya/third_party/llama.cpp; \
     for target in $(printf '%s' "$ENGINES" | tr ',' ' '); do \
         cmake --build /opt/maya/build-hip --target "$target" -j "$jobs"; \
     done
@@ -94,13 +94,13 @@ RUN set -eux; \
     cmake -S tools/vision -B build-vision -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DLLAMA_DIR=/opt/maya/third_party/llama.cpp \
-        -DSTRATA_VISION_HIP=ON -DSTRATA_VISION_HIP_TARGETS="${HIP_ARCH}" \
-        -DSTRATA_PORTABLE=ON \
+        -DMAYA_VISION_HIP=ON -DMAYA_VISION_HIP_TARGETS="${HIP_ARCH}" \
+        -DMAYA_PORTABLE=ON \
         -DAMDGPU_TARGETS="${HIP_ARCH}" -DCMAKE_HIP_ARCHITECTURES="${HIP_ARCH}" \
         -DCMAKE_EXE_LINKER_FLAGS=-no-pie; \
     cmake --build build-vision --target maya-vision -j "$jobs"
 
-# The build must be ISA-portable: assert the ggml options took STRATA_PORTABLE's values (GGML_NATIVE OFF,
+# The build must be ISA-portable: assert the ggml options took MAYA_PORTABLE's values (GGML_NATIVE OFF,
 # AVX2 on) - one CMakeCache per configure tree (add_subdirectory shares it) - so a future maya bump that
 # changes the mechanism fails here instead of at a user's first load.
 RUN set -eux; \

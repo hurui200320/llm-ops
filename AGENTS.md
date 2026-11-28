@@ -51,9 +51,10 @@ Write facts to **one** canonical place and link to them from everywhere else. Ne
 
 ## Optimization guidelines
 
-DO NOT trade VRAM with kv cache quant. The models will be used for coding and agentic loops. And kv cache quant will
-hurt the performance of the model, and increase the tool call error rate. The final deployment should never use kv 
-cache quant, unless verification has been performed to show kv cache quant will not hurt performance.
+DO NOT trade speed/VRAM with quality. The models will be used for coding and agentic loops. And lossy optimization will
+hurt the performance of the model, and increase the tool call error rate. The final deployment should never adopt them,
+unless verification has been performed to show such optimization will not hurt performance. (For example, official API uses
+the same kv cache quant, or the KL introduced by the optimiaztion is tiny or with-in noise)
 
 For speed, try to target pp >= 1000 t/s and tg >= 25 t/s at 85% of context (longctx bench).
 
