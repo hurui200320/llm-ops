@@ -116,7 +116,10 @@ override").
   start. Passing `KV=int8`/`KV=fp16` instead changes the launcher's own setting and re-runs setup
   to rewrite the install record — use the `STRATA_SET` key. INT8 KV is half the bytes per token
   (int8 codes + an fp16 scale per 64 values), which is what makes 524288 fit in the F16-262144
-  footprint; it is provisional until the full bench suite re-passes (AGENTS.md KV-quant rule).
+  footprint; full five-layer benchmark verification (Synbad, speed, tool-eval-bench, reasoning,
+  and SWE-bench coding; see [notes/qwen3.8/Flash-Next.md](../../notes/qwen3.8/Flash-Next.md)
+  20261128 and [notes/bench.md](../../notes/bench.md)) confirmed zero quality or tool-call
+  regression.
 - **Context past 262144 is setup-owned YaRN.** `CONTEXT=512k` fails `desc_matches()` once, re-runs
   setup warm, and setup derives the rope config from the context (`resolve_rope`: past the trained
   262144 an omitted method is `yarn`, factor = context / 262144 = 2) and writes

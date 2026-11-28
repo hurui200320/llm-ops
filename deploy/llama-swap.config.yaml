@@ -342,14 +342,14 @@ models:
 
 
   # Qwen3.8 Flash-Next IQ3_S on Strata.
-  # 512K context with YaRN x2 and INT8 KV (2026-11-27; provisional until the full
-  # bench suite re-passes): CONTEXT=512k makes setup re-run once and derive the
+  # 512K context with YaRN x2 and INT8 KV (adopted 2026-11-28 after full bench
+  # verification): CONTEXT=512k makes setup re-run once and derive the
   # rope config itself — past the trained 262144 it writes `--rope-scaling yarn
   # --rope-scale 2` with the factor taken as context / 262144, so do not pin
   # rope flags in STRATA_SET. kv=int8 is the install record's own value (setup's
-  # default; kv=fp16 overrode it from 2026-10-22 until now): at int8 the
+  # default; kv=fp16 overrode it from 2026-10-22 until 2026-11-27): at int8 the
   # 524288-token slot takes about the VRAM the F16 262144 slot took. History:
-  # notes/qwen3.8/Flash-Next.md 20261127.
+  # notes/qwen3.8/Flash-Next.md 20261127-20261128.
   # Picture reader budget (entrypoint fork change 4): 8192 image tokens at most,
   # 1024 at least — one token per 1024 px, so a 4K picture fits. See notes/strata.md.
   # DRAFTING=mtp pins the drafter explicitly (upstream's entrypoint env since 0.2.16):

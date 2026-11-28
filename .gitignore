@@ -5,6 +5,3 @@ bench/.cache/
 bench/runs/
 bench/data/
 .playwright-mcp/
-
-.playwright-mcp/
-/maya/

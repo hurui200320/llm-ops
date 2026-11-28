@@ -36,6 +36,10 @@ Inspect `git log` and `git diff` across `<old_ref>..<new_ref>` and evaluate four
 4. **New CLI options or knobs that may benefit us**:
    - Are there newly introduced flags or features for performance tuning, memory saving, or quality/capability improvements that fit our optimization guidelines in `AGENTS.md`?
    - Could any upstream changes make previously rejected tuning options (recorded in `notes/`) worth revisiting?
+5. **Lossy optimization enabled by default**:
+   - This repo explicity forbid lossy optimization which trade quality for speed.
+   - Some inference engine like Strata and Project maya, etc., will enable lossy optimization by default in new versions.
+   - You MUST list all lossy optimization switches/flags to user and explicity ask if they want to keep them or revert to disable.
 
 ### 4. Report & Suggest Follow-Up Tests
 Before modifying files or pulling/building images, present a concise upgrade report covering the four areas above:

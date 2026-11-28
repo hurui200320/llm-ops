@@ -723,8 +723,55 @@ Smoke and speed both pass; at matched depths the 512K lane is faster on prompt (
 neutral on decode (within the box's spread). The open gate is quality: **INT8 KV + YaRN x2 is
 provisional** until the full bench suite (tool calling, reasoning, coding) re-runs against the 512K
 lane; per AGENTS.md the change only stays if that manual re-run shows no regression. SC117 mirrors
-the config but was not re-measured (same quant/geometry; its pack differs only in the transplanted
-tensors). Fallback if the full bench regresses: `CONTEXT=256k` + `kv=fp16` (setup re-runs once and
-the F16 256K placement returns). Next record: the full bench re-run in [`notes/bench.md`](../bench.md)
-and this entry's "provisional" line replaced with the result.
+the config (same quant/geometry; its pack differs only in the transplanted tensors). Fallback if the
+full bench regresses: `CONTEXT=256k` + `kv=fp16` (setup re-runs once and the F16 256K placement
+returns).
+
+# 20261128 512K context (YaRN x2) + INT8 KV — full quality bench verification (adopted)
+
+Both lanes (`qwen3.8-flash-next-iq3s` and `qwen3.8-flash-next-sc117-iq3s`) completed the full
+five-layer benchmark suite on Strata 0.2.22 with `CONTEXT=512k` (YaRN x2) and `kv=int8`. Full per-run
+breakdown: [`notes/bench.md`](../bench.md).
+
+- **Synbad (serving gate, 10+10 runs per mode)**: Both lanes passed all 4 reasoning evals 10/10 in
+  `plain` and `stream` and 12/13 overall in each mode (129/130 individual runs per mode), matching the
+  ~1% stochastic `IQ3_S` CoT glitch rate of the 256K + F16 KV baseline with zero increase in tool-call
+  error rate.
+- **Speed (`run_longctx.sh`, 512K, 20/40/60/85% in, 10% out, 2 reps)**:
+  - `qwen3.8-flash-next-iq3s`: 20% 3,220.95 / 75.00 t/s (accept 0.671), 40% 3,414.40 / 72.40 (0.6868),
+    60% 3,399.55 / 68.85 (0.6885), 85% 3,315.10 / 66.05 (0.6977).
+  - `qwen3.8-flash-next-sc117-iq3s`: 20% 3,072.60 / 75.85 t/s (accept 0.6633), 40% 3,374.40 / 70.85
+    (0.6721), 60% 3,409.80 / 68.70 (0.6892), 85% 3,322.85 / 66.35 (0.7153).
+  - Both lanes clear the 85%-depth targets (pp ≥ 1,000, tg ≥ 25) by >3.3× on prefill and >2.6× on
+    decode, with draft acceptance holding at 0.66–0.72 across the entire 512K window.
+- **Tool calling (`tool-eval-bench`, 69 scenarios)**:
+  - `qwen3.8-flash-next-iq3s`: **94/100 (130/138 points)**, Deployability 79/100, 3.5 s median turn
+    latency (812.1 s total), 100% across 12/15 categories — the highest overall score and deployability
+    in the benchmark suite, improving over the 256K + F16 KV baseline (91/100, 125/138 overall;
+    123/130 vs 121/130 excluding TC-65..69).
+  - `qwen3.8-flash-next-sc117-iq3s`: **90/100 (124/138 points)**, Deployability 77/100, 3.4 s median
+    turn latency (766.3 s total), 100% across 11/15 categories — retaining identical non-`response_format`
+    points (117/130, 90.0%) to the 256K + F16 KV baseline while rising from 88/100 (121/138) overall.
+- **Reasoning gate (10 problems: `l12`, 3 AIME 2026, 6 zebra)**: Both lanes passed **10/10**, including
+  both near-impossible anchors (`aime26-15` and `zebra-6x6-01`), matching the 256K + F16 KV baseline.
+- **Agentic coding (SWE-bench Multilingual 20-task pilot)**:
+  - `qwen3.8-flash-next-iq3s`: **18/20 resolved** (Java 8/8, JS/TS 7/8, C++ 3/4) in 2:04:47 across 757
+    API calls (21.56M cumulative prompt tokens, up to 91.1K single-turn context). 18/19 submitted
+    patches passed (the sole unresolved submission being `axios-6539`'s upstream `#6543` revert mismatch),
+    and on its only 75-step capped task (`fmt-2457`) it had already applied a working fix to `/testbed`
+    and passed all 18 C++17/C++20 CMake `ctest` suites by step 68 before spending the final 7 steps
+    inspecting upstream commit history (`19/20` in patch correctness).
+  - `qwen3.8-flash-next-sc117-iq3s`: **17/20 resolved** (Java 7/8, JS/TS 6/8, C++ 4/4) in 1:39:09 across
+    749 API calls (21.24M cumulative prompt tokens, up to 98.2K single-turn context), plus a working
+    4-file fix already verified by Vitest, `tsc --noEmit`, and `prettier`/`eslint` on its sole step-capped
+    task (`vue-11739`).
+  - Zero tool-call parse errors, missing tool calls, or command timeouts occurred across all 1,506
+    assistant turns.
+
+## Verdict
+
+**Keep 512K context (YaRN x2) + INT8 KV as the permanent production configuration on both Qwen lanes.**
+Per the AGENTS.md KV-cache quantization policy, verification across all five benchmark layers shows zero
+quality or tool-calling degradation from `kv=int8` + YaRN x2 while doubling the usable context window to
+524,288 tokens and boosting prompt prefill speed to ~3,300–3,400 t/s.
 
